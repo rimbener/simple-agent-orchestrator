@@ -232,7 +232,13 @@ Mustache-style `{{...}}` string substitution only — no logic, no filters:
   node and runner subprocess as `SAO_BASE_REF`, `SAO_BRANCH`, `SAO_RUN_ID`, `SAO_WORKTREE`)
 
 `sao validate` fails on references to undeclared inputs or unknown/not-yet-run node ids
-(i.e. a node may only reference nodes it transitively depends on).
+(i.e. a node may only reference nodes it transitively depends on). It also fails when a
+template references an optional input that has no `default:` — such an input may be
+unset at run time, so any referenced input must be `required` or carry a default.
+
+Interpolation is raw text substitution. In bash nodes, quote interpolated values —
+`{{nodes.<id>.output}}` can contain shell metacharacters (AI output becomes shell text
+by design; the workflow author owns that boundary).
 
 ### MCP servers & tool allowlists
 
