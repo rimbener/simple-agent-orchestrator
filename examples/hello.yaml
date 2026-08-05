@@ -1,0 +1,32 @@
+# hello — smallest useful sao workflow; good for a first end-to-end run.
+#
+#   sao run examples/hello.yaml "greet the team"
+
+name: hello
+description: Plan a greeting, check the shell works, summarize
+
+inputs:
+  - name: audience
+    default: world
+
+defaults:
+  runner: claude
+  model: haiku            # cheap + fast; this workflow is a smoke test
+
+nodes:
+  - id: plan
+    prompt: |
+      In one short line, plan how to: {{task}} (audience: {{audience}}).
+      Reply with the plan only.
+
+  - id: check
+    depends_on: [plan]
+    bash: "echo shell ok: {{audience}}"
+
+  - id: summarize
+    depends_on: [plan, check]
+    prompt: |
+      Combine into a single friendly sentence:
+      plan: {{nodes.plan.output}}
+      check: {{nodes.check.output}}
+      Reply with the sentence only.
