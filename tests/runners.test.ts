@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { chmodSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildClaudeArgs, ClaudeStreamCollector, claudeRunner } from "../src/runners/claude";
+import { buildClaudeArgs, ClaudeStreamCollector, claudeRunner, findExecutableOnPath } from "../src/runners/claude";
 import { getRunner } from "../src/runners/types";
 import { SaoError } from "../src/errors";
 
@@ -613,6 +613,48 @@ wait
     } finally {
       process.env.PATH = oldPath;
     }
+  });
+});
+
+describe("findExecutableOnPath / preflight", () => {
+  test("finds an executable in a PATH dir, skipping empty and missing entries", () => {
+    const dir = mkdtempSync(join(tmpdir(), "sao-path-"));
+    const bin = join(dir, "mytool");
+    writeFileSync(bin, "#!/bin/sh\n");
+    chmodSync(bin, 0o755);
+    expect(findExecutableOnPath("mytool", `:/nope:${dir}`)).toBe(bin);
+  });
+
+  test("returns undefined when nothing on the PATH matches", () => {
+    expect(findExecutableOnPath("definitely-not-a-real-binary", "/nope:/also-nope")).toBeUndefined();
+  });
+
+  test("a non-executable file does not count", () => {
+    const dir = mkdtempSync(join(tmpdir(), "sao-path-"));
+    writeFileSync(join(dir, "mytool"), "not executable");
+    chmodSync(join(dir, "mytool"), 0o644);
+    expect(findExecutableOnPath("mytool", dir)).toBeUndefined();
+  });
+
+  test("claudeRunner.preflight throws a SaoError when claude is missing from PATH", () => {
+    const realPath = process.env.PATH;
+    // An existing-but-claude-less dir: a lookup for "" would resolve the dir itself
+    // (dirs are X_OK), so this also pins that preflight searches for "claude" exactly.
+    process.env.PATH = mkdtempSync(join(tmpdir(), "sao-no-claude-"));
+    try {
+      claudeRunner.preflight!();
+      throw new Error("should have thrown");
+    } catch (err) {
+      expect(err).toBeInstanceOf(SaoError);
+      expect((err as SaoError).message).toBe("claude CLI not found on PATH");
+      expect((err as SaoError).hint).toContain("install Claude Code");
+    } finally {
+      process.env.PATH = realPath;
+    }
+  });
+
+  test("claudeRunner.preflight passes on this machine (claude installed)", () => {
+    expect(() => claudeRunner.preflight!()).not.toThrow();
   });
 });
 

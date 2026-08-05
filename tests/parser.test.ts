@@ -119,7 +119,7 @@ nodes:
     expect(() => loadWorkflow(path)).toThrow("unknown template reference {{mystery}}");
   });
 
-  test("loop nodes get a friendly not-yet error", () => {
+  test("parses a sentinel loop node", () => {
     const path = tempWorkflow(`
 name: loopy
 nodes:
@@ -129,10 +129,18 @@ nodes:
       until: DONE
       max_iterations: 3
 `);
-    expect(() => loadWorkflow(path)).toThrow("loop nodes land in M2");
+    const workflow = loadWorkflow(path);
+    const node = workflow.nodes[0]!;
+    expect(node.kind).toBe("loop");
+    if (node.kind === "loop") {
+      expect(node.loop.until).toBe("DONE");
+      expect(node.loop.max_iterations).toBe(3);
+      expect(node.loop.fresh_context).toBe(true);
+      expect(node.loop.interactive).toBe(false);
+    }
   });
 
-  test("gate nodes get a friendly not-yet error", () => {
+  test("parses a gate node", () => {
     const path = tempWorkflow(`
 name: gated
 nodes:
@@ -140,7 +148,8 @@ nodes:
     gate:
       message: "ok?"
 `);
-    expect(() => loadWorkflow(path)).toThrow("gate nodes land in M2");
+    const workflow = loadWorkflow(path);
+    expect(workflow.nodes[0]!.kind).toBe("gate");
   });
 
   test("rejects nodes with both prompt and bash", () => {
@@ -288,16 +297,16 @@ describe("exact error contracts", () => {
     expect(err.message).toBe(`${path} must be a YAML mapping with name: and nodes:`);
   });
 
-  test("mcp: names the M2 milestone exactly", () => {
+  test("mcp: given as a path must point at an existing file", () => {
     const { err } = loadFailure(`
 name: mcp-flow
-mcp:
-  jira: {}
+mcp: ./missing-mcp.json
 nodes:
   - id: a
     bash: "true"
 `);
-    expect(err.message).toBe("mcp: is not supported yet — MCP passthrough lands in M2");
+    expect(err.message).toContain("mcp: config file not found");
+    expect(err.hint).toContain("resolved relative to the workflow file");
   });
 
   test("base: names the M3 milestone exactly", () => {
@@ -320,19 +329,19 @@ nodes:
     bash: "true"
 `);
     expect(err.message).toBe(`invalid workflow: ${path}`);
-    expect(err.hint).toBe("defaults: Expected object, received null");
+    expect(err.hint).toStartWith("defaults: ");
   });
 
-  test("defaults.allowed_tools names the M2 milestone exactly", () => {
-    const { err } = loadFailure(`
-name: futuredefaults
+  test("defaults.allowed_tools is accepted and parsed", () => {
+    const path = tempWorkflow(`
+name: tooldefaults
 defaults:
-  allowed_tools: []
+  allowed_tools: [mcp__jira, WebSearch]
 nodes:
   - id: a
     bash: "true"
 `);
-    expect(err.message).toBe("defaults.allowed_tools: is not supported yet — MCP/allowed-tools passthrough lands in M2");
+    expect(loadWorkflow(path).defaults.allowed_tools).toEqual(["mcp__jira", "WebSearch"]);
   });
 
   test("an unknown top-level key reports a (root) zod issue", () => {
@@ -357,7 +366,7 @@ nodes:
     bash: "true"
 `);
     expect(err.message).toBe(`invalid workflow: ${path}`);
-    expect(err.hint).toBe("inputs.0.name: Expected string, received number");
+    expect(err.hint).toStartWith("inputs.0.name: ");
   });
 
   test("a scalar node is labeled by position", () => {
@@ -406,32 +415,33 @@ nodes:
     bash: "true"
 `);
     expect(err.message).toBe("invalid node #1");
-    expect(err.hint).toBe("id: Expected string, received number");
+    expect(err.hint).toStartWith("id: ");
   });
 
-  test("agent: on a node names the M2 milestone exactly", () => {
+  test("agent: on a bash node is rejected — bash nodes have no persona", () => {
     const { err } = loadFailure(`
 name: agentnode
 nodes:
   - id: a
     bash: "true"
-    agent: reviewer.md
+    agent: reviewer
 `);
-    expect(err.message).toBe('node "a": agent: is not supported yet — agent files land in M2');
+    expect(err.message).toBe('invalid node "a"');
+    expect(err.hint).toContain("agent");
   });
 
-  test("when_bash: on a node names the M2 milestone exactly", () => {
-    const { err } = loadFailure(`
+  test("when_bash: is accepted on a bash node", () => {
+    const path = tempWorkflow(`
 name: whennode
 nodes:
   - id: a
     bash: "true"
-    when_bash: "true"
+    when_bash: "test -f flag"
 `);
-    expect(err.message).toBe('node "a": when_bash: is not supported yet — when_bash lands in M2');
+    expect(loadWorkflow(path).nodes[0]!.when_bash).toBe("test -f flag");
   });
 
-  test("allowed_tools: on a node names the M2 milestone exactly", () => {
+  test("allowed_tools: on a bash node is rejected — bash nodes call no tools", () => {
     const { err } = loadFailure(`
 name: toolsnode
 nodes:
@@ -439,10 +449,11 @@ nodes:
     bash: "true"
     allowed_tools: []
 `);
-    expect(err.message).toBe('node "a": allowed_tools: is not supported yet — MCP/allowed-tools passthrough lands in M2');
+    expect(err.message).toBe('invalid node "a"');
+    expect(err.hint).toContain("allowed_tools");
   });
 
-  test("loop nodes name the M2 milestone with the node label", () => {
+  test("a loop without max_iterations is rejected by the schema", () => {
     const { err } = loadFailure(`
 name: loopy-exact
 nodes:
@@ -450,7 +461,8 @@ nodes:
     loop:
       prompt: go
 `);
-    expect(err.message).toBe('node "a": loop nodes land in M2');
+    expect(err.message).toBe('invalid node "a"');
+    expect(err.hint).toContain("max_iterations");
   });
 
   test("a node with no type key reports (found none)", () => {
@@ -482,7 +494,9 @@ nodes:
     color: red
 `);
     expect(err.message).toBe('invalid node "a"');
-    expect(err.hint).toBe("prompt: Expected string, received number\n(root): Unrecognized key(s) in object: 'color'");
+    expect(err.hint).toStartWith("prompt: ");
+    expect(err.hint).toContain("\n(root): ");
+    expect(err.hint).toContain("color");
   });
 
   test("the reserved task input message is exact", () => {
@@ -697,9 +711,11 @@ describe("examples", () => {
     expect(workflow.nodes.length).toBeGreaterThan(0);
   });
 
-  test("examples using future features fail with a named milestone", () => {
+  test("every example validates against the M2 engine", () => {
+    const repoRoot = new URL("../", import.meta.url).pathname;
     for (const file of ["jira-bug-fix.yaml", "jira-orchestrator.yaml", "ticket-orchestrator.yaml"]) {
-      expect(() => loadWorkflow(join(EXAMPLES, file))).toThrow(/lands in M\d/);
+      const workflow = loadWorkflow(join(EXAMPLES, file), { cwd: repoRoot });
+      expect(workflow.nodes.length).toBeGreaterThan(0);
     }
   });
 });

@@ -62,6 +62,73 @@ nodes:
   });
 });
 
+describe("sao run gates (real stdin)", () => {
+  test("an approval typed on stdin lets the run succeed", () => {
+    const { dir, path } = tempWorkflow(`
+name: gate-stdin
+nodes:
+  - id: ship
+    gate:
+      message: "Ship it?"
+  - id: after
+    depends_on: [ship]
+    bash: "echo shipped"
+`);
+    const result = spawnSync("bun", ["run", CLI, "run", path], { cwd: dir, encoding: "utf8", input: "a\n", timeout: 30000 });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("Ship it?");
+    expect(result.stdout).toContain("succeeded");
+  });
+
+  test("EOF on stdin fails the gate (exit 1) instead of silently exiting 0", () => {
+    const { dir, path } = tempWorkflow(`
+name: gate-eof
+nodes:
+  - id: ship
+    gate:
+      message: "Ship it?"
+`);
+    // input: "" closes stdin immediately — the CI / `< /dev/null` case.
+    const result = spawnSync("bun", ["run", CLI, "run", path], { cwd: dir, encoding: "utf8", input: "", timeout: 30000 });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("stdin closed");
+  });
+
+  test("two piped gate replies never produce a silent exit 0 — the second prompt fails loudly", () => {
+    // One pipe chunk carrying both replies: the first readline consumes (and
+    // discards) both lines. The second prompt must fail with a real error and
+    // exit 1 — never drain the event loop into a false-success exit 0.
+    const { dir, path } = tempWorkflow(`
+name: gate-two
+nodes:
+  - id: first
+    gate:
+      message: "First?"
+  - id: second
+    depends_on: [first]
+    gate:
+      message: "Second?"
+`);
+    const result = spawnSync("bun", ["run", CLI, "run", path], { cwd: dir, encoding: "utf8", input: "a\na\n", timeout: 30000 });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("stdin closed");
+    expect(result.stdout).toContain("✓ first"); // the first gate did approve
+  });
+
+  test("a rejection typed on stdin halts the run as rejected", () => {
+    const { dir, path } = tempWorkflow(`
+name: gate-stdin-reject
+nodes:
+  - id: ship
+    gate:
+      message: "Ship it?"
+`);
+    const result = spawnSync("bun", ["run", CLI, "run", path], { cwd: dir, encoding: "utf8", input: "r\n", timeout: 30000 });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('rejected at node "ship"');
+  });
+});
+
 describe("sao run", () => {
   test("executes a bash-only workflow end to end", () => {
     const { dir, path } = tempWorkflow(`

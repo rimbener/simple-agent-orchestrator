@@ -22,12 +22,29 @@ describe("interpolate", () => {
     expect(interpolate("nothing here", ctx)).toBe("nothing here");
   });
 
+  test("loop refs resolve when a loop context is present", () => {
+    const loopCtx = { ...ctx, loop: { feedback: "tighten it", iteration: 4 } };
+    expect(interpolate("{{loop.feedback}} @ {{loop.iteration}}", loopCtx)).toBe("tighten it @ 4");
+  });
+
+  test("loop refs outside a loop context throw the loop-scoping error", () => {
+    expect(() => interpolate("{{loop.feedback}}", ctx)).toThrow(
+      "{{loop.feedback}} is only available inside loop nodes",
+    );
+    expect(() => interpolate("{{loop.iteration}}", ctx)).toThrow("only available inside loop nodes");
+  });
+
   test("throws on unknown reference", () => {
     expect(() => interpolate("{{nope}}", ctx)).toThrow('unknown template reference {{nope}}');
   });
 
   test("throws when a node output is not available yet", () => {
     expect(() => interpolate("{{nodes.missing.output}}", ctx)).toThrow('has not produced output');
+  });
+
+  test("never reads node outputs off the prototype chain", () => {
+    expect(() => interpolate("{{nodes.constructor.output}}", ctx)).toThrow("has not produced output");
+    expect(() => interpolate("{{nodes.hasOwnProperty.output}}", ctx)).toThrow("has not produced output");
   });
 });
 

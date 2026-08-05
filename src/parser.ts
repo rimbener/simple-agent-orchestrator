@@ -1,39 +1,42 @@
 import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { parse as parseYaml, YAMLParseError } from "yaml";
 import { ZodError } from "zod";
+import { loadAgents } from "./agents";
 import { SaoError } from "./errors";
 import {
   type AiNode,
+  type AiStep,
   type BashNode,
+  type BashStep,
+  type GateNode,
+  type LoopNode,
+  type LoopStep,
   type Workflow,
   type WorkflowNode,
   aiNodeSchema,
+  aiStepSchema,
   bashNodeSchema,
+  bashStepSchema,
+  gateNodeSchema,
+  loopNodeSchema,
   workflowTopSchema,
 } from "./schema";
-import { collectRefs, nodeOutputRef } from "./template";
+import { collectRefs, isLoopRef, nodeOutputRef } from "./template";
 
 const NODE_TYPE_KEYS = ["prompt", "bash", "loop", "gate"] as const;
-const UNIMPLEMENTED: Record<string, string> = {
-  loop: "loop nodes land in M2",
-  gate: "gate nodes land in M2",
-};
 const FUTURE_TOP_KEYS: Record<string, string> = {
-  mcp: "MCP passthrough lands in M2",
   base: "worktree-per-run lands in M3",
 };
 /** Run-metadata names ({{base}} etc., SAO_* env) arrive with worktrees in M3. */
 const METADATA_NAMES = new Set(["base", "branch", "run_id"]);
-const FUTURE_DEFAULTS_KEYS: Record<string, string> = {
-  allowed_tools: "MCP/allowed-tools passthrough lands in M2",
-};
-const FUTURE_NODE_KEYS: Record<string, string> = {
-  agent: "agent files land in M2",
-  when_bash: "when_bash lands in M2",
-  allowed_tools: "MCP/allowed-tools passthrough lands in M2",
-};
 
-export function loadWorkflow(path: string): Workflow {
+export interface LoadWorkflowOptions {
+  /** Repo root used to resolve plain `agent:` names (default: process.cwd()). */
+  cwd?: string;
+}
+
+export function loadWorkflow(path: string, opts: LoadWorkflowOptions = {}): Workflow {
   let raw: string;
   try {
     raw = readFileSync(path, "utf8");
@@ -56,13 +59,6 @@ export function loadWorkflow(path: string): Workflow {
   for (const [key, message] of Object.entries(FUTURE_TOP_KEYS)) {
     if (key in record) throw new SaoError(`${key}: is not supported yet — ${message}`);
   }
-  if (record.defaults !== null && typeof record.defaults === "object") {
-    for (const [key, message] of Object.entries(FUTURE_DEFAULTS_KEYS)) {
-      if (key in (record.defaults as Record<string, unknown>)) {
-        throw new SaoError(`defaults.${key}: is not supported yet — ${message}`);
-      }
-    }
-  }
 
   let top;
   try {
@@ -74,13 +70,52 @@ export function loadWorkflow(path: string): Workflow {
   }
 
   const nodes = top.nodes.map((node, index) => classifyNode(node, index));
-  const workflow: Workflow = { ...top, nodes };
+
+  let mcpConfigPath: string | undefined;
+  let mcpServers: Record<string, unknown> | undefined;
+  if (typeof top.mcp === "string") {
+    mcpConfigPath = resolve(dirname(path), top.mcp);
+    let mcpRaw: string;
+    try {
+      // Stryker disable next-line StringLiteral: mutating "utf8" to "" yields a Buffer, which JSON.parse coerces via toString() (utf8) to the identical text
+      mcpRaw = readFileSync(mcpConfigPath, "utf8"); // also rejects directories (EISDIR)
+    } catch {
+      throw new SaoError(`mcp: config file not found: ${mcpConfigPath}`, "the path is resolved relative to the workflow file");
+    }
+    try {
+      JSON.parse(mcpRaw);
+    } catch (err) {
+      throw new SaoError(`mcp: config file is not valid JSON: ${mcpConfigPath}`, String(err));
+    }
+  } else if (
+    // Stryker disable next-line ConditionalExpression: equivalent — with mcp undefined, the branch body stringifies undefined (a no-op) and re-assigns undefined
+    top.mcp !== undefined
+  ) {
+    try {
+      JSON.stringify(top.mcp); // validate-and-run must agree: the engine serializes this at run time
+    } catch {
+      throw new SaoError("mcp: inline servers must be JSON-serializable", "YAML aliases that form cycles cannot be forwarded to the runner");
+    }
+    mcpServers = top.mcp;
+  }
+
+  const workflow: Workflow = {
+    name: top.name,
+    description: top.description,
+    inputs: top.inputs,
+    defaults: top.defaults,
+    nodes,
+    mcpConfigPath,
+    mcpServers,
+    agents: loadAgents(nodes, path, opts.cwd ?? process.cwd()),
+  };
   runStaticChecks(workflow);
   return workflow;
 }
 
 function classifyNode(raw: unknown, index: number): WorkflowNode {
   const label = () =>
+    // Stryker disable next-line ConditionalExpression: forcing the typeof-object clause true is equivalent — no YAML scalar has a string .id property, so the id clause still fails
     raw !== null && typeof raw === "object" && typeof (raw as { id?: unknown }).id === "string"
       ? `node "${(raw as { id: string }).id}"`
       : `node #${index + 1}`;
@@ -90,15 +125,7 @@ function classifyNode(raw: unknown, index: number): WorkflowNode {
   }
   const record = raw as Record<string, unknown>;
 
-  for (const [key, message] of Object.entries(FUTURE_NODE_KEYS)) {
-    if (key in record) throw new SaoError(`${label()}: ${key}: is not supported yet — ${message}`);
-  }
-
   const typeKeys = NODE_TYPE_KEYS.filter((key) => key in record);
-  for (const key of typeKeys) {
-    const pending = UNIMPLEMENTED[key];
-    if (pending) throw new SaoError(`${label()}: ${pending}`);
-  }
   if (typeKeys.length !== 1) {
     throw new SaoError(
       `${label()} must have exactly one of prompt: | bash: | loop: | gate: (found ${typeKeys.length === 0 ? "none" : typeKeys.join(", ")})`,
@@ -106,15 +133,99 @@ function classifyNode(raw: unknown, index: number): WorkflowNode {
   }
 
   try {
-    if (typeKeys[0] === "prompt") {
-      return { ...aiNodeSchema.parse(record), kind: "ai" } satisfies AiNode;
+    switch (typeKeys[0]) {
+      case "prompt":
+        return { ...aiNodeSchema.parse(record), kind: "ai" } satisfies AiNode;
+      case "bash":
+        return { ...bashNodeSchema.parse(record), kind: "bash" } satisfies BashNode;
+      case "gate":
+        return { ...gateNodeSchema.parse(record), kind: "gate" } satisfies GateNode;
+      default:
+        return classifyLoopNode(record, label);
     }
-    return { ...bashNodeSchema.parse(record), kind: "bash" } satisfies BashNode;
   } catch (err) {
     // Stryker disable next-line ConditionalExpression: zod .parse only throws ZodError, so forcing this guard true is unobservable
     if (err instanceof ZodError) throw new SaoError(`invalid ${label()}`, formatZod(err));
     throw err;
   }
+}
+
+function classifyLoopNode(record: Record<string, unknown>, label: () => string): LoopNode {
+  const parsed = loopNodeSchema.parse(record);
+  const body = parsed.loop;
+
+  if ((body.prompt === undefined) === (body.steps === undefined)) {
+    throw new SaoError(`${label()}: loop must have exactly one of prompt: | steps:`);
+  }
+  if ((body.until === undefined) === (body.until_bash === undefined)) {
+    throw new SaoError(`${label()}: loop must have exactly one of until: | until_bash:`);
+  }
+  if (body.interactive && body.until === undefined) {
+    throw new SaoError(
+      `${label()}: interactive loops require until: (a sentinel signal)`,
+      "the human approves on a signaled iteration; until_bash: has no signal to approve",
+    );
+  }
+  if (!body.fresh_context && body.steps !== undefined) {
+    throw new SaoError(
+      `${label()}: fresh_context: false requires a single-prompt loop`,
+      "steps run as separate sessions, so there is no one conversation to resume",
+    );
+  }
+
+  const steps = body.steps?.map((step, stepIndex) => classifyStep(step, stepIndex, label));
+  if (body.until !== undefined && steps !== undefined && !steps.some((step) => step.kind === "ai")) {
+    throw new SaoError(`${label()}: until: needs at least one AI step to emit the signal`);
+  }
+
+  return { ...parsed, kind: "loop", loop: { ...body, steps } };
+}
+
+function classifyStep(raw: unknown, stepIndex: number, label: () => string): LoopStep {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new SaoError(`${label()}: step #${stepIndex + 1} must be a mapping`);
+  }
+  const record = raw as Record<string, unknown>;
+  const hasPrompt = "prompt" in record;
+  const hasBash = "bash" in record;
+  if (hasPrompt === hasBash) {
+    throw new SaoError(`${label()}: step #${stepIndex + 1} must have exactly one of prompt: | bash:`);
+  }
+  try {
+    if (hasPrompt) return { ...aiStepSchema.parse(record), kind: "ai" } satisfies AiStep;
+    return { ...bashStepSchema.parse(record), kind: "bash" } satisfies BashStep;
+  } catch (err) {
+    // Stryker disable next-line ConditionalExpression: zod .parse only throws ZodError, so forcing this guard true is unobservable
+    if (err instanceof ZodError) throw new SaoError(`invalid ${label()} step #${stepIndex + 1}`, formatZod(err));
+    throw err;
+  }
+}
+
+/** Every templated text in a node, with whether loop-only refs are legal there. */
+function templatedTexts(node: WorkflowNode): Array<{ text: string; inLoopBody: boolean }> {
+  const texts: Array<{ text: string; inLoopBody: boolean }> = [];
+  if (node.when_bash) texts.push({ text: node.when_bash, inLoopBody: false });
+  switch (node.kind) {
+    case "ai":
+      texts.push({ text: node.prompt, inLoopBody: false });
+      break;
+    case "bash":
+      texts.push({ text: node.bash, inLoopBody: false });
+      break;
+    case "gate":
+      texts.push({ text: node.gate.message, inLoopBody: false });
+      break;
+    case "loop": {
+      if (node.loop.prompt) texts.push({ text: node.loop.prompt, inLoopBody: true });
+      for (const step of node.loop.steps ?? []) {
+        texts.push({ text: step.kind === "ai" ? step.prompt : step.bash, inLoopBody: true });
+        if (step.when_bash) texts.push({ text: step.when_bash, inLoopBody: true });
+      }
+      if (node.loop.until_bash) texts.push({ text: node.loop.until_bash, inLoopBody: true });
+      break;
+    }
+  }
+  return texts;
 }
 
 function runStaticChecks(workflow: Workflow): void {
@@ -152,44 +263,62 @@ function runStaticChecks(workflow: Workflow): void {
 
   const transitiveDeps = buildTransitiveDeps(workflow);
   for (const node of workflow.nodes) {
-    const text = node.kind === "ai" ? node.prompt : node.bash;
-    for (const ref of collectRefs(text)) {
-      if (ref === "task") continue;
-      if (METADATA_NAMES.has(ref)) {
-        throw new SaoError(`node "${node.id}": {{${ref}}} is run metadata — templating for it lands in M3`);
+    for (const { text, inLoopBody } of templatedTexts(node)) {
+      checkTemplateRefs(node, text, inLoopBody, byId, transitiveDeps, inputsByName);
+    }
+  }
+}
+
+function checkTemplateRefs(
+  node: WorkflowNode,
+  text: string,
+  inLoopBody: boolean,
+  byId: Map<string, WorkflowNode>,
+  transitiveDeps: Map<string, Set<string>>,
+  inputsByName: Map<string, Workflow["inputs"][number]>,
+): void {
+  for (const ref of collectRefs(text)) {
+    if (ref === "task") continue;
+    if (isLoopRef(ref)) {
+      if (!inLoopBody) {
+        throw new SaoError(`node "${node.id}": {{${ref}}} is only available inside a loop's prompt, steps, or until_bash`);
       }
-      const nodeId = nodeOutputRef(ref);
-      if (nodeId !== undefined) {
-        if (!byId.has(nodeId)) {
-          throw new SaoError(`node "${node.id}": {{${ref}}} references unknown node "${nodeId}"`);
-        }
-        if (!transitiveDeps.get(node.id)!.has(nodeId)) {
-          throw new SaoError(
-            `node "${node.id}": {{${ref}}} references a node it does not depend on`,
-            `add "${nodeId}" to depends_on (directly or transitively) so its output exists when "${node.id}" runs`,
-          );
-        }
-        continue;
+      continue;
+    }
+    if (METADATA_NAMES.has(ref)) {
+      throw new SaoError(`node "${node.id}": {{${ref}}} is run metadata — templating for it lands in M3`);
+    }
+    const nodeId = nodeOutputRef(ref);
+    if (nodeId !== undefined) {
+      if (!byId.has(nodeId)) {
+        throw new SaoError(`node "${node.id}": {{${ref}}} references unknown node "${nodeId}"`);
       }
-      if (ref.includes(".")) {
+      if (!transitiveDeps.get(node.id)!.has(nodeId)) {
         throw new SaoError(
-          `node "${node.id}": unknown template reference {{${ref}}}`,
-          "node outputs are referenced as {{nodes.<id>.output}}",
+          `node "${node.id}": {{${ref}}} references a node it does not depend on`,
+          `add "${nodeId}" to depends_on (directly or transitively) so its output exists when "${node.id}" runs`,
         );
       }
-      const input = inputsByName.get(ref);
-      if (!input) {
-        throw new SaoError(
-          `node "${node.id}": unknown template reference {{${ref}}}`,
-          `declare it under inputs: or pass it as the task text via {{task}}`,
-        );
-      }
-      if (!input.required && input.default === undefined) {
-        throw new SaoError(
-          `node "${node.id}": {{${ref}}} references optional input "${ref}", which may be unset at run time`,
-          `mark it required: true or give it a default: so the reference always has a value`,
-        );
-      }
+      continue;
+    }
+    if (ref.includes(".")) {
+      throw new SaoError(
+        `node "${node.id}": unknown template reference {{${ref}}}`,
+        "node outputs are referenced as {{nodes.<id>.output}}",
+      );
+    }
+    const input = inputsByName.get(ref);
+    if (!input) {
+      throw new SaoError(
+        `node "${node.id}": unknown template reference {{${ref}}}`,
+        `declare it under inputs: or pass it as the task text via {{task}}`,
+      );
+    }
+    if (!input.required && input.default === undefined) {
+      throw new SaoError(
+        `node "${node.id}": {{${ref}}} references optional input "${ref}", which may be unset at run time`,
+        `mark it required: true or give it a default: so the reference always has a value`,
+      );
     }
   }
 }

@@ -4,22 +4,14 @@ import { existsSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SaoError } from "../src/errors";
-import { executeAiNode, executeBashNode, trimBuffer, withRetries } from "../src/nodes";
-import type { AiNode, BashNode } from "../src/schema";
+import { evaluateWhenBash, executeAiNode, executeBashScript, runShell, trimBuffer, withRetries } from "../src/nodes";
+import type { AiExecConfig } from "../src/nodes";
 import type { Runner, RunnerRequest } from "../src/runners/types";
 
 const cwd = () => mkdtempSync(join(tmpdir(), "sao-nodes-"));
 
 // Mirrors MAX_BUFFER_CHARS in src/nodes.ts.
 const MAX_BUFFER_CHARS = 4 << 20;
-
-function bashNode(script: string, extra: Partial<BashNode> = {}): BashNode {
-  return { kind: "bash", id: "b", depends_on: [], retries: 0, bash: script, ...extra };
-}
-
-function aiNode(extra: Partial<AiNode> = {}): AiNode {
-  return { kind: "ai", id: "a", depends_on: [], retries: 0, prompt: "hi", ...extra };
-}
 
 function fakeRunner(result: { output?: string; sessionId?: string; exitCode?: number }, calls: RunnerRequest[] = []): Runner {
   return {
@@ -31,10 +23,14 @@ function fakeRunner(result: { output?: string; sessionId?: string; exitCode?: nu
   };
 }
 
-describe("executeBashNode", () => {
+function config(runner: Runner, extra: Partial<AiExecConfig> = {}): AiExecConfig {
+  return { runner, ...extra };
+}
+
+describe("executeBashScript", () => {
   test("captures stdout and stderr, streaming to log", async () => {
     const logged: string[] = [];
-    const output = await executeBashNode(bashNode("echo out; echo err >&2"), "echo out; echo err >&2", {
+    const output = await executeBashScript("echo out; echo err >&2", {
       cwd: cwd(),
       log: (chunk) => logged.push(chunk),
     });
@@ -45,7 +41,7 @@ describe("executeBashNode", () => {
 
   test("keeps only the last 100 output lines", async () => {
     const script = 'i=1; while [ $i -le 150 ]; do echo "line$i"; i=$((i+1)); done';
-    const output = await executeBashNode(bashNode(script), script, { cwd: cwd(), log: () => {} });
+    const output = await executeBashScript(script, { cwd: cwd(), log: () => {} });
     const lines = output.split("\n");
     expect(lines).toHaveLength(100);
     expect(lines[0]).toBe("line51");
@@ -58,7 +54,7 @@ describe("executeBashNode", () => {
     // too few lines could not rebuild the 100-line tail and this test would fail.
     const pad = "x".repeat(5000);
     const script = `awk 'BEGIN { for (i = 1; i <= 860; i++) printf "line%04d-%s\\n", i, "${pad}" }'`;
-    const output = await executeBashNode(bashNode(script), script, { cwd: cwd(), log: () => {} });
+    const output = await executeBashScript(script, { cwd: cwd(), log: () => {} });
     const lines = output.split("\n");
     expect(lines).toHaveLength(100);
     expect(lines[0]).toBe(`line0761-${pad}`);
@@ -68,7 +64,7 @@ describe("executeBashNode", () => {
   test("trailing blank lines don't eat into the 100-line tail when trimming", async () => {
     const pad = "y".repeat(5000);
     const script = `awk 'BEGIN { for (i = 1; i <= 1000; i++) printf "row%04d-%s\\n", i, "${pad}"; for (i = 0; i < 150; i++) print "" }'`;
-    const output = await executeBashNode(bashNode(script), script, { cwd: cwd(), log: () => {} });
+    const output = await executeBashScript(script, { cwd: cwd(), log: () => {} });
     const lines = output.split("\n");
     expect(lines).toHaveLength(100);
     expect(lines[0]).toBe(`row0901-${pad}`);
@@ -76,15 +72,16 @@ describe("executeBashNode", () => {
   });
 
   test("rejects on non-zero exit with the code", async () => {
-    await expect(executeBashNode(bashNode("exit 5"), "exit 5", { cwd: cwd(), log: () => {} })).rejects.toThrow(
+    await expect(executeBashScript("exit 5", { cwd: cwd(), log: () => {} })).rejects.toThrow(
       "command exited with code 5",
     );
   });
 
   test("kills the process on timeout", async () => {
-    const node = bashNode("sleep 5", { timeout: 1 });
     const started = Date.now();
-    await expect(executeBashNode(node, "sleep 5", { cwd: cwd(), log: () => {} })).rejects.toThrow("timed out after 1s");
+    await expect(executeBashScript("sleep 5", { cwd: cwd(), timeoutSec: 1, log: () => {} })).rejects.toThrow(
+      "timed out after 1s",
+    );
     expect(Date.now() - started).toBeLessThan(3000);
   });
 
@@ -94,9 +91,10 @@ describe("executeBashNode", () => {
       // perl setsid()s into its own session, out of reach of the group kill, while
       // still holding the stdio pipes — the rejection must come from the timer, not close.
       const script = "perl -MPOSIX -e 'POSIX::setsid(); sleep 8' & wait";
-      const node = bashNode(script, { timeout: 1 });
       const started = Date.now();
-      await expect(executeBashNode(node, script, { cwd: cwd(), log: () => {} })).rejects.toThrow("timed out after 1s");
+      await expect(executeBashScript(script, { cwd: cwd(), timeoutSec: 1, log: () => {} })).rejects.toThrow(
+        "timed out after 1s",
+      );
       expect(Date.now() - started).toBeLessThan(4000);
     },
     10000,
@@ -108,31 +106,30 @@ describe("executeBashNode", () => {
       // "; true" stops sh from exec-replacing itself, so sleep is a grandchild that
       // holds the stdio pipes — killing only sh would hang this until sleep exits.
       const script = "sleep 30; true";
-      const node = bashNode(script, { timeout: 1 });
       const started = Date.now();
-      await expect(executeBashNode(node, script, { cwd: cwd(), log: () => {} })).rejects.toThrow("timed out after 1s");
+      await expect(executeBashScript(script, { cwd: cwd(), timeoutSec: 1, log: () => {} })).rejects.toThrow(
+        "timed out after 1s",
+      );
       expect(Date.now() - started).toBeLessThan(5000);
     },
     10000,
   );
 
-  test("runs the script in ctx.cwd", async () => {
+  test("runs the script in the given cwd", async () => {
     const dir = cwd();
-    const output = await executeBashNode(bashNode("pwd"), "pwd", { cwd: dir, log: () => {} });
+    const output = await executeBashScript("pwd", { cwd: dir, log: () => {} });
     expect(output).toBe(realpathSync(dir));
   });
 
   test("stdin comes from /dev/null, so readers see EOF instead of hanging on a pipe", async () => {
     // With stdin ignored, `cat` hits EOF immediately; a dangling stdin pipe would
     // block it until the 2s timeout rejected this node.
-    const script = "cat; echo fin";
-    const output = await executeBashNode(bashNode(script, { timeout: 2 }), script, { cwd: cwd(), log: () => {} });
+    const output = await executeBashScript("cat; echo fin", { cwd: cwd(), timeoutSec: 2, log: () => {} });
     expect(output).toBe("fin");
   });
 
   test("a fast script under a generous timeout succeeds (timeout is seconds, not milliseconds)", async () => {
-    const script = "sleep 0.5; echo done";
-    const output = await executeBashNode(bashNode(script, { timeout: 5 }), script, { cwd: cwd(), log: () => {} });
+    const output = await executeBashScript("sleep 0.5; echo done", { cwd: cwd(), timeoutSec: 5, log: () => {} });
     expect(output).toBe("done");
   });
 
@@ -144,8 +141,9 @@ describe("executeBashNode", () => {
       const dir = cwd();
       const marker = join(dir, "marker.txt");
       const script = `(sleep 2; echo alive > "${marker}") & wait`;
-      const node = bashNode(script, { timeout: 1 });
-      await expect(executeBashNode(node, script, { cwd: dir, log: () => {} })).rejects.toThrow("timed out after 1s");
+      await expect(executeBashScript(script, { cwd: dir, timeoutSec: 1, log: () => {} })).rejects.toThrow(
+        "timed out after 1s",
+      );
       await new Promise((resolve) => setTimeout(resolve, 2500));
       expect(existsSync(marker)).toBe(false);
     },
@@ -155,7 +153,7 @@ describe("executeBashNode", () => {
   test("rejects with SaoError when the shell cannot spawn", async () => {
     const missing = join(cwd(), "does-not-exist");
     try {
-      await executeBashNode(bashNode("echo hi"), "echo hi", { cwd: missing, log: () => {} });
+      await executeBashScript("echo hi", { cwd: missing, log: () => {} });
       throw new Error("should have thrown");
     } catch (err) {
       expect(err).toBeInstanceOf(SaoError);
@@ -167,7 +165,7 @@ describe("executeBashNode", () => {
     "clears the timeout timer on settle so the process can exit promptly",
     async () => {
       // Touch the timer path in-process first so per-test mutant coverage sees it.
-      await executeBashNode(bashNode("true", { timeout: 5 }), "true", { cwd: cwd(), log: () => {} });
+      await executeBashScript("true", { cwd: cwd(), timeoutSec: 5, log: () => {} });
 
       // An uncleared 5s timer would keep the child process's event loop alive long
       // after the node resolves — observable as wall-clock exit time.
@@ -176,9 +174,8 @@ describe("executeBashNode", () => {
       const scriptPath = join(dir, "exit-fast.ts");
       writeFileSync(
         scriptPath,
-        `import { executeBashNode } from ${JSON.stringify(nodesPath)};\n` +
-          `const node = { kind: "bash", id: "t", depends_on: [], retries: 0, bash: "echo ok", timeout: 5 };\n` +
-          `const output = await executeBashNode(node, "echo ok", { cwd: process.cwd(), log: () => {} });\n` +
+        `import { executeBashScript } from ${JSON.stringify(nodesPath)};\n` +
+          `const output = await executeBashScript("echo ok", { cwd: process.cwd(), timeoutSec: 5, log: () => {} });\n` +
           `console.log("RESOLVED:" + output);\n`,
       );
       const started = Date.now();
@@ -195,7 +192,7 @@ describe("executeBashNode", () => {
     const script =
       'i=1; while [ $i -le 200 ]; do echo "line$i"; i=$((i+1)); done; ' +
       "i=0; while [ $i -lt 950 ]; do echo; i=$((i+1)); done";
-    const output = await executeBashNode(bashNode(script), script, { cwd: cwd(), log: () => {} });
+    const output = await executeBashScript(script, { cwd: cwd(), log: () => {} });
     const lines = output.split("\n");
     expect(lines).toHaveLength(100);
     expect(lines[0]).toBe("line101");
@@ -208,7 +205,7 @@ describe("executeBashNode", () => {
     const dir = cwd();
     const line = (i: number) => `line${String(i).padStart(4, "0")} ` + "a".repeat(65526) + "\n";
     writeFileSync(join(dir, "big.txt"), Array.from({ length: 100 }, (_, i) => line(i + 1)).join(""));
-    const output = await executeBashNode(bashNode("cat big.txt"), "cat big.txt", { cwd: dir, log: () => {} });
+    const output = await executeBashScript("cat big.txt", { cwd: dir, log: () => {} });
     const lines = output.split("\n");
     expect(lines).toHaveLength(64);
     expect(lines[0]).toBe(line(37).trimEnd());
@@ -226,11 +223,39 @@ describe("executeBashNode", () => {
     const content = filler + real + blanks;
     expect(content).toHaveLength(MAX_BUFFER_CHARS);
     writeFileSync(join(dir, "exact.txt"), content);
-    const output = await executeBashNode(bashNode("cat exact.txt"), "cat exact.txt", { cwd: dir, log: () => {} });
+    const output = await executeBashScript("cat exact.txt", { cwd: dir, log: () => {} });
     const lines = output.split("\n");
     expect(lines).toHaveLength(100);
     expect(lines[0]).toBe("line0101");
     expect(lines[99]).toBe("line0200");
+  });
+});
+
+describe("runShell / evaluateWhenBash", () => {
+  test("runShell resolves with the exit code instead of throwing", async () => {
+    const { code, output } = await runShell("echo probe; exit 3", { cwd: cwd(), log: () => {} });
+    expect(code).toBe(3);
+    expect(output).toBe("probe");
+  });
+
+  test("evaluateWhenBash is true on exit 0", async () => {
+    expect(await evaluateWhenBash("true", { cwd: cwd(), log: () => {} })).toBe(true);
+  });
+
+  test("evaluateWhenBash is false on non-zero exit", async () => {
+    expect(await evaluateWhenBash("exit 1", { cwd: cwd(), log: () => {} })).toBe(false);
+  });
+
+  test("evaluateWhenBash streams predicate output to the log", async () => {
+    const logged: string[] = [];
+    await evaluateWhenBash("echo probe-out", { cwd: cwd(), log: (chunk) => logged.push(chunk) });
+    expect(logged.join("")).toContain("probe-out");
+  });
+
+  test("evaluateWhenBash still throws on timeout — a broken predicate must not silently skip", async () => {
+    await expect(evaluateWhenBash("sleep 5", { cwd: cwd(), timeoutSec: 1, log: () => {} })).rejects.toThrow(
+      "timed out after 1s",
+    );
   });
 });
 
@@ -278,48 +303,65 @@ describe("trimBuffer", () => {
 });
 
 describe("executeAiNode", () => {
-  test("passes prompt, cwd, timeout, and permission mode to the runner", async () => {
+  test("passes prompt, cwd, and every config field to the runner", async () => {
     const calls: RunnerRequest[] = [];
     const dir = cwd();
-    await executeAiNode(aiNode({ timeout: 42 }), "the prompt", fakeRunner({}, calls), { permissionMode: "plan" }, { cwd: dir, log: () => {} });
-    expect(calls[0]!.prompt).toBe("the prompt");
-    expect(calls[0]!.cwd).toBe(dir);
-    expect(calls[0]!.timeoutSec).toBe(42);
-    expect(calls[0]!.permissionMode).toBe("plan");
+    await executeAiNode(
+      "the prompt",
+      config(fakeRunner({}, calls), {
+        model: "haiku",
+        permissionMode: "plan",
+        systemPrompt: "be terse",
+        allowedTools: ["mcp__jira"],
+        mcpConfigPath: "/run/mcp.json",
+        resumeSessionId: "s-1",
+        timeoutSec: 42,
+      }),
+      { cwd: dir, log: () => {} },
+    );
+    const req = calls[0]!;
+    expect(req.prompt).toBe("the prompt");
+    expect(req.cwd).toBe(dir);
+    expect(req.model).toBe("haiku");
+    expect(req.permissionMode).toBe("plan");
+    expect(req.systemPrompt).toBe("be terse");
+    expect(req.allowedTools).toEqual(["mcp__jira"]);
+    expect(req.mcpConfigPath).toBe("/run/mcp.json");
+    expect(req.resumeSessionId).toBe("s-1");
+    expect(req.timeoutSec).toBe(42);
   });
 
-  test("node model overrides the workflow default model", async () => {
+  test("leaves optional fields undefined when the config has none", async () => {
     const calls: RunnerRequest[] = [];
-    await executeAiNode(aiNode({ model: "opus" }), "p", fakeRunner({}, calls), { model: "sonnet" }, { cwd: cwd(), log: () => {} });
-    expect(calls[0]!.model).toBe("opus");
-  });
-
-  test("falls back to the workflow default model", async () => {
-    const calls: RunnerRequest[] = [];
-    await executeAiNode(aiNode(), "p", fakeRunner({}, calls), { model: "sonnet" }, { cwd: cwd(), log: () => {} });
-    expect(calls[0]!.model).toBe("sonnet");
+    await executeAiNode("p", config(fakeRunner({}, calls)), { cwd: cwd(), log: () => {} });
+    const req = calls[0]!;
+    expect(req.model).toBeUndefined();
+    expect(req.systemPrompt).toBeUndefined();
+    expect(req.allowedTools).toBeUndefined();
+    expect(req.mcpConfigPath).toBeUndefined();
+    expect(req.resumeSessionId).toBeUndefined();
   });
 
   test("returns output and session id", async () => {
-    const result = await executeAiNode(aiNode(), "p", fakeRunner({ output: "answer", sessionId: "s9" }), {}, { cwd: cwd(), log: () => {} });
+    const result = await executeAiNode("p", config(fakeRunner({ output: "answer", sessionId: "s9" })), {
+      cwd: cwd(),
+      log: () => {},
+    });
     expect(result).toEqual({ output: "answer", sessionId: "s9" });
   });
 
   test("throws when the runner exits non-zero", async () => {
-    await expect(executeAiNode(aiNode(), "p", fakeRunner({ exitCode: 2 }), {}, { cwd: cwd(), log: () => {} })).rejects.toThrow(
+    await expect(executeAiNode("p", config(fakeRunner({ exitCode: 2 })), { cwd: cwd(), log: () => {} })).rejects.toThrow(
       "fake exited with code 2",
     );
   });
 
   test("non-zero exit surfaces the result text as the error hint", async () => {
     try {
-      await executeAiNode(
-        aiNode(),
-        "p",
-        fakeRunner({ output: "Invalid model name: claude-nope", exitCode: 2 }),
-        {},
-        { cwd: cwd(), log: () => {} },
-      );
+      await executeAiNode("p", config(fakeRunner({ output: "Invalid model name: claude-nope", exitCode: 2 })), {
+        cwd: cwd(),
+        log: () => {},
+      });
       throw new Error("should have thrown");
     } catch (err) {
       expect(err).toBeInstanceOf(SaoError);
@@ -329,7 +371,7 @@ describe("executeAiNode", () => {
 
   const failHint = async (output: string): Promise<string | undefined> => {
     try {
-      await executeAiNode(aiNode(), "p", fakeRunner({ output, exitCode: 2 }), {}, { cwd: cwd(), log: () => {} });
+      await executeAiNode("p", config(fakeRunner({ output, exitCode: 2 })), { cwd: cwd(), log: () => {} });
       throw new Error("should have thrown");
     } catch (err) {
       expect(err).toBeInstanceOf(SaoError);

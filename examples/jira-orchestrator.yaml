@@ -13,7 +13,7 @@
 name: jira-orchestrator
 description: One Jira ticket to a validated, PR-ready feature with a single human approval
 
-base: main                     # ref the run worktree/branch is cut from; override with --base
+# base: main                   # ref the run worktree/branch is cut from (uncomment when M3 lands)
 
 inputs:
   - name: ticket               # Jira issue id, e.g. PROJ-123
@@ -236,6 +236,6 @@ nodes:
     depends_on: [finalize]
     prompt: |
       Using the jira MCP tools, transition {{ticket}} to "In Review" and add a
-      comment: branch {{branch}} is pr_ready; include a 3-line summary taken from
-      docs/features/{{feature}}/spec.md. Do not transition to Done — the human
-      merges the PR.
+      comment: the {{feature}} branch is pr_ready (name the current git branch);
+      include a 3-line summary taken from docs/features/{{feature}}/spec.md.
+      Do not transition to Done — the human merges the PR.
