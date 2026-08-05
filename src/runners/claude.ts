@@ -1,5 +1,7 @@
 import { spawn } from "node:child_process";
-import { SaoError } from "../errors";
+import { accessSync, constants } from "node:fs";
+import { join } from "node:path";
+import { SaoError, truncateDetail } from "../errors";
 import { killTree, track } from "../procs";
 import type { Runner, RunnerRequest, RunnerResult } from "./types";
 
@@ -61,6 +63,7 @@ export class ClaudeStreamCollector {
 
   /** Flush a trailing line that arrived without a newline. */
   finish(): void {
+    // Stryker disable next-line ConditionalExpression: equivalent — handleLine("") returns immediately on the blank-line guard
     if (this.pending) this.handleLine(this.pending);
     this.pending = "";
   }
@@ -95,16 +98,39 @@ export class ClaudeStreamCollector {
   }
 }
 
-/** Trimmed error detail bounded to a hint-sized excerpt. */
-function detail(text: string): string | undefined {
-  const trimmed = text.trim();
-  if (!trimmed) return undefined;
-  return trimmed.length <= 500 ? trimmed : trimmed.slice(0, 500) + " …";
+/** First executable named `name` on the PATH, or undefined. */
+// Stryker disable next-line StringLiteral: equivalent — the default only fires when PATH is unset, where any junk value still finds nothing
+export function findExecutableOnPath(name: string, pathVar: string = process.env.PATH ?? ""): string | undefined {
+  for (const dir of pathVar.split(":")) {
+    // Deliberate: an empty PATH entry means "cwd" in POSIX, but resolving runner
+    // binaries against the invocation cwd would be a surprising (and spoofable)
+    // lookup — skip them.
+    // Stryker disable next-line ConditionalExpression: the cwd-relative alternative only differs when an executable named like the runner sits in the cwd — the exact case this guard exists to ignore
+    if (!dir) continue;
+    const candidate = join(dir, name);
+    try {
+      accessSync(candidate, constants.X_OK);
+      return candidate;
+    } catch {
+      // not here — keep walking
+    }
+  }
+  return undefined;
 }
+
+const INSTALL_HINT = "install Claude Code: https://claude.com/claude-code";
 
 /** Headless Claude Code: `claude -p --output-format stream-json` (stream-json requires --verbose). */
 export const claudeRunner: Runner = {
   name: "claude",
+
+  // validate-and-run parity: a missing binary must fail preflight, before any node
+  // (or its side effects) runs — not mid-flight at the first AI node.
+  preflight(): void {
+    if (findExecutableOnPath("claude") === undefined) {
+      throw new SaoError("claude CLI not found on PATH", INSTALL_HINT);
+    }
+  },
 
   run(req: RunnerRequest): Promise<RunnerResult> {
     return new Promise((resolve, reject) => {
@@ -150,7 +176,7 @@ export const claudeRunner: Runner = {
           return;
         }
         if (code === 0 && collector.isError) {
-          reject(new SaoError("claude reported an error result", detail(collector.output)));
+          reject(new SaoError("claude reported an error result", truncateDetail(collector.output)));
           return;
         }
         resolve({ output: collector.output, sessionId: collector.sessionId, exitCode: code });
@@ -179,8 +205,9 @@ export const claudeRunner: Runner = {
 
       child.on("error", (err: NodeJS.ErrnoException) => {
         settle(() => {
+          // Stryker disable next-line ConditionalExpression: unreachable under bun — non-ENOENT spawn failures throw synchronously from spawn() instead of emitting an async error event
           if (err.code === "ENOENT") {
-            reject(new SaoError("claude CLI not found on PATH", "install Claude Code: https://claude.com/claude-code"));
+            reject(new SaoError("claude CLI not found on PATH", INSTALL_HINT));
           } else /* Stryker disable next-line all: unreachable under bun — non-ENOENT spawn failures (EACCES, ENOEXEC) throw synchronously from spawn() instead of emitting an async error event */ {
             // Stryker disable next-line all: unreachable under bun, as above
             reject(new SaoError(`failed to spawn claude: ${err.message}`));

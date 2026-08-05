@@ -116,10 +116,15 @@ nodes:
    see Loop semantics), plus exactly one of:
   - `until: SIGNAL_NAME` — sentinel self-report (see below)
   - `until_bash: "cmd"` — after each iteration the command runs; exit 0 ends the loop
-   Options: `max_iterations` (required, hard cap), `fresh_context` (default `true`),
-   `interactive` (default `false`, see below). Loop nodes also accept node-level
-   `agent`, applied to every iteration (individual steps may override it).
+   Options: `max_iterations` (required, hard cap), `fresh_context` (default `true`,
+   single-prompt loops only — steps run as separate sessions), `interactive`
+   (default `false`, requires `until:` — see below). Loop nodes also accept
+   node-level `agent`, applied to every iteration (individual steps may override
+   it), and `retries` — which re-runs the **whole loop from iteration 1**, with
+   iteration logs appended across attempts, never truncated.
 4. **Gate node** — `gate:` with `message`. Pauses and prompts in the terminal.
+   Accepts `timeout` to bound its `when_bash` predicate; the human wait itself is
+   never time-boxed.
 
 Any node — and any loop step — may set `when_bash: "cmd"`: the command runs in the
 worktree first, and the node/step executes only if it exits 0; otherwise it is marked
@@ -225,9 +230,11 @@ Mustache-style `{{...}}` string substitution only — no logic, no filters:
 - `{{task}}` — positional freeform text from the CLI
 - `{{<input>}}` — declared inputs (from `--var` or `default`)
 - `{{nodes.<id>.output}}` — a completed node's captured final output
-- `{{loop.feedback}}`, `{{loop.iteration}}` — inside loop prompts only
-  (`loop.feedback` interpolates to the empty string when there is none yet,
-  e.g. on the first iteration)
+- `{{loop.feedback}}`, `{{loop.iteration}}` — inside a loop's body only: its prompt,
+  its steps (prompts, bash, when_bash), and its until_bash. (`loop.feedback`
+  interpolates to the empty string when there is none yet, e.g. on the first
+  iteration.) Human feedback is raw text under the same author-owned quoting rules
+  as node outputs.
 - `{{base}}`, `{{branch}}`, `{{run_id}}` — run metadata (also exported to every bash
   node and runner subprocess as `SAO_BASE_REF`, `SAO_BRANCH`, `SAO_RUN_ID`, `SAO_WORKTREE`)
 
@@ -284,7 +291,9 @@ export interface Runner {
 }
 ```
 
-**claude adapter** — spawns `claude -p <prompt> --output-format stream-json` with
+**claude adapter** — spawns `claude -p --output-format stream-json --verbose`
+(stream-json requires --verbose), piping the prompt over **stdin** — never argv,
+where it would be `ps`-visible, flag-injectable, and ARG_MAX-bounded — with
 `--model`, `--permission-mode` (default `acceptEdits`), `--resume`,
 `--append-system-prompt <systemPrompt>`, `--mcp-config <mcpConfigPath>`, and
 `--allowedTools <allowedTools>` as applicable.
@@ -301,7 +310,9 @@ in a static map. No dynamic plugin loading in v1.
 ## Execution semantics
 
 1. `sao run workflow.yaml "add dark mode" --var issue=123`
-2. Parse + validate (zod schema, dependency cycle check, template references, runner availability).
+2. Parse + validate (zod schema, dependency cycle check, template references, runner
+  availability — registry lookup and binary-on-PATH, so a missing CLI fails before
+  any node's side effects).
 3. Create run: id `2026-08-03-1432-fix-issue-a1b2`, dir `.sao/runs/<id>/` in the
   **main repo** (`.sao/` auto-appended to `.git/info/exclude`, never the user's
   .gitignore; agents in `.agents/` are ordinary committed files).
@@ -316,7 +327,8 @@ in a static map. No dynamic plugin loading in v1.
   (subprocesses inherit the `SAO_*` env vars) → stream output live (prefixed
   `[node-id]`) → append to `.sao/runs/<id>/logs/<node-id>.log` (loops:
    `<node-id>.<iter>.log`) → persist state after every node/iteration transition.
-7. Failure (bash non-zero after retries, agent crash, loop cap, gate reject): halt,
+7. Failure (bash non-zero after retries, agent crash, loop cap — or a gate reject,
+  which marks the node and run `rejected` instead of `failed`): halt,
   mark node `failed`, print `sao resume <id>`, exit 1. Resume re-runs from the
    failed node/iteration with all prior state intact.
 8. Success: auto-commit any uncommitted worktree changes (`sao: finalize run <id>`).
@@ -341,10 +353,10 @@ in a static map. No dynamic plugin loading in v1.
   "worktree": ".sao/worktrees/<id>",
   "base": "main",
   "branch": "sao/<id>",
-  "status": "running | paused_gate | failed | rejected | succeeded",
+  "status": "running | succeeded | failed | rejected",
   "nodes": {
     "plan":      { "status": "succeeded", "output": "...", "sessionId": "...", "startedAt": "...", "endedAt": "..." },
-    "implement": { "status": "running", "iteration": 3, "outputs": ["...", "..."] }
+    "implement": { "status": "running", "iterations": 3, "sessionId": "...", "lastFeedback": "..." }
   }
 }
 ```
@@ -360,7 +372,7 @@ sao run <workflow.yaml> [task...] [--var k=v ...] [--base ref] [--branch name] [
 sao resume <run-id> [--force] [--auto-open-pr]
 sao list                      # scans .sao/runs/, table: id, workflow, status, age
 sao logs <run-id> [node-id] [--follow]
-sao validate <workflow.yaml>  # schema + dependency-graph + template check, no execution
+sao validate <workflow.yaml>  # schema + dependency-graph + template + runner checks, no execution
 sao clean [--all]             # remove worktrees/branches of finished runs (--all: also run dirs)
 ```
 
@@ -376,7 +388,7 @@ src/
   template.ts        # {{...}} interpolation
   agents.ts          # agent file resolution + frontmatter parsing
   engine.ts          # scheduler: dependency ordering, concurrency, node dispatch
-  nodes.ts           # ai / bash / loop / gate executors
+  nodes.ts           # ai / bash executors + shell helpers (loop/gate executors live in engine.ts)
   state.ts           # run dir layout, state.json persistence, resume logic
   worktree.ts        # git worktree lifecycle, finalize commit, gh PR
   gate.ts            # terminal prompts (node:readline)

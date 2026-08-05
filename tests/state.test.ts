@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createRun, createRunId, hashFile, initRunDir, saveState, type RunState } from "../src/state";
+import { createRun, createRunId, findRepoRoot, hashFile, initRunDir, saveState, type RunState } from "../src/state";
 
 const temp = () => mkdtempSync(join(tmpdir(), "sao-state-"));
 
@@ -246,6 +246,35 @@ describe("findGitDir via .git files", () => {
     writeFileSync(join(worktree, ".git"), "this file points nowhere\n");
     const paths = initRunDir(worktree, "run-1");
     expect(existsSync(paths.logsDir)).toBe(true);
+  });
+});
+
+describe("findRepoRoot", () => {
+  test("walks up from a subdirectory to the dir containing .git", () => {
+    const root = temp();
+    mkdirSync(join(root, ".git"));
+    const nested = join(root, "packages", "app", "src");
+    mkdirSync(nested, { recursive: true });
+    expect(findRepoRoot(nested)).toBe(root);
+  });
+
+  test("a .git file (linked worktree) also counts as the root", () => {
+    const root = temp();
+    writeFileSync(join(root, ".git"), "gitdir: /elsewhere\n");
+    const nested = join(root, "sub");
+    mkdirSync(nested);
+    expect(findRepoRoot(nested)).toBe(root);
+  });
+
+  test("returns the start dir when no repo is found", () => {
+    const dir = temp();
+    expect(findRepoRoot(dir)).toBe(dir);
+  });
+
+  test("the repo dir itself resolves to itself", () => {
+    const root = temp();
+    mkdirSync(join(root, ".git"));
+    expect(findRepoRoot(root)).toBe(root);
   });
 });
 

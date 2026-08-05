@@ -3,9 +3,10 @@ import { resolve } from "node:path";
 import { Command, InvalidArgumentError } from "commander";
 import pc from "picocolors";
 import pkg from "../package.json" with { type: "json" };
-import { preflightRunners, runWorkflow } from "./engine";
+import { preflightAiConfigs, runWorkflow } from "./engine";
 import { SaoError } from "./errors";
 import { loadWorkflow } from "./parser";
+import { findRepoRoot } from "./state";
 
 const program = new Command();
 program.name("sao").description("simple agent orchestrator — a minimal YAML workflow engine for AI coding agents").version(pkg.version);
@@ -17,20 +18,30 @@ program
   .argument("[task...]", "freeform task text, available as {{task}}")
   .option("--var <key=value>", "set a declared input (repeatable)", collectVar, Object.create(null) as Record<string, string>)
   .option("--runner <name>", "override the runner for every AI node")
-  .action(async (workflowPath: string, taskWords: string[], options: { var: Record<string, string>; runner?: string }) => {
-    await fail(async () => {
-      const path = resolve(workflowPath);
-      const workflow = loadWorkflow(path);
-      await runWorkflow({
-        workflow,
-        workflowPath: path,
-        task: taskWords.join(" "),
-        vars: options.var,
-        cwd: process.cwd(),
-        runnerOverride: options.runner,
+  .option("--concurrency <n>", "max nodes executing at once (default 2)", parseConcurrency)
+  .action(
+    async (
+      workflowPath: string,
+      taskWords: string[],
+      options: { var: Record<string, string>; runner?: string; concurrency?: number },
+    ) => {
+      await fail(async () => {
+        const path = resolve(workflowPath);
+        const repoRoot = findRepoRoot(process.cwd());
+        const workflow = loadWorkflow(path, { cwd: repoRoot });
+        await runWorkflow({
+          workflow,
+          workflowPath: path,
+          task: taskWords.join(" "),
+          vars: options.var,
+          cwd: process.cwd(),
+          runRoot: repoRoot, // SPEC step 3: the run dir lives in the main repo
+          concurrency: options.concurrency,
+          runnerOverride: options.runner,
+        });
       });
-    });
-  });
+    },
+  );
 
 program
   .command("validate")
@@ -38,11 +49,17 @@ program
   .argument("<workflow>", "path to a workflow YAML file")
   .action(async (workflowPath: string) => {
     await fail(async () => {
-      const workflow = loadWorkflow(resolve(workflowPath));
-      preflightRunners(workflow);
+      const workflow = loadWorkflow(resolve(workflowPath), { cwd: findRepoRoot(process.cwd()) });
+      preflightAiConfigs(workflow);
       console.log(pc.green(`✓ ${workflow.name}`) + pc.dim(` — ${workflow.nodes.length} nodes, valid`));
     });
   });
+
+function parseConcurrency(value: string): number {
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 1) throw new InvalidArgumentError("expects an integer >= 1");
+  return n;
+}
 
 function collectVar(pair: string, acc: Record<string, string>): Record<string, string> {
   const eq = pair.indexOf("=");
@@ -65,4 +82,6 @@ async function fail(fn: () => Promise<void>): Promise<void> {
   }
 }
 
-program.parseAsync(process.argv);
+// Awaited: a floating promise here lets a drained event loop (e.g. readline on an
+// exhausted stdin pipe) exit 0 mid-action without fail() ever running.
+await program.parseAsync(process.argv);

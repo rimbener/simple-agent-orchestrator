@@ -1,8 +1,7 @@
 import { spawn } from "node:child_process";
-import { SaoError } from "./errors";
+import { GateRejectedError, SaoError, truncateDetail } from "./errors";
 import { killTree, track } from "./procs";
 import type { Runner } from "./runners/types";
-import type { AiNode, BashNode } from "./schema";
 
 const BASH_OUTPUT_TAIL_LINES = 100;
 // Only the last 100 lines become node output, so cap the in-memory buffer instead of
@@ -24,37 +23,56 @@ export interface AiNodeResult {
   sessionId?: string;
 }
 
-export async function executeAiNode(
-  node: AiNode,
-  prompt: string,
-  runner: Runner,
-  opts: { model?: string; permissionMode?: string },
-  ctx: NodeExecContext,
-): Promise<AiNodeResult> {
-  const result = await runner.run({
+/** Everything a single AI execution needs beyond its prompt. */
+export interface AiExecConfig {
+  runner: Runner;
+  model?: string;
+  permissionMode?: string;
+  systemPrompt?: string;
+  allowedTools?: string[];
+  mcpConfigPath?: string;
+  resumeSessionId?: string;
+  timeoutSec?: number;
+}
+
+export async function executeAiNode(prompt: string, config: AiExecConfig, ctx: NodeExecContext): Promise<AiNodeResult> {
+  const result = await config.runner.run({
     prompt,
     cwd: ctx.cwd,
-    model: node.model ?? opts.model,
-    permissionMode: opts.permissionMode,
-    timeoutSec: node.timeout,
+    model: config.model,
+    permissionMode: config.permissionMode,
+    systemPrompt: config.systemPrompt,
+    allowedTools: config.allowedTools,
+    mcpConfigPath: config.mcpConfigPath,
+    resumeSessionId: config.resumeSessionId,
+    timeoutSec: config.timeoutSec,
     onOutput: ctx.log,
   });
   if (result.exitCode !== 0) {
     // No node-id prefix: the engine wraps every node error with the id already. The
     // useful failure message often lives only in the result text — surface it.
-    const detail = result.output.trim();
-    throw new SaoError(
-      `${runner.name} exited with code ${result.exitCode}`,
-      detail ? (detail.length <= 500 ? detail : detail.slice(0, 500) + " …") : undefined,
-    );
+    throw new SaoError(`${config.runner.name} exited with code ${result.exitCode}`, truncateDetail(result.output));
   }
   return { output: result.output, sessionId: result.sessionId };
 }
 
-export function executeBashNode(node: BashNode, script: string, ctx: NodeExecContext): Promise<string> {
+export interface ShellResult {
+  code: number;
+  /** Last 100 lines of combined stdout+stderr. */
+  output: string;
+}
+
+/**
+ * Run a shell script; resolves with the exit code (predicates need non-zero codes
+ * without throwing). Rejects only on spawn failure or timeout.
+ */
+export function runShell(
+  script: string,
+  opts: { cwd: string; timeoutSec?: number; log: (chunk: string) => void },
+): Promise<ShellResult> {
   return new Promise((resolve, reject) => {
     const child = spawn("sh", ["-c", script], {
-      cwd: ctx.cwd,
+      cwd: opts.cwd,
       stdio: ["ignore", "pipe", "pipe"],
       env: process.env,
       detached: true, // own process group, so a timeout can kill the whole tree
@@ -73,18 +91,18 @@ export function executeBashNode(node: BashNode, script: string, ctx: NodeExecCon
       if (timer) clearTimeout(timer);
       finish();
     };
-    const timer = node.timeout
+    const timer = opts.timeoutSec
       ? setTimeout(() => {
           killTree(child);
-          settle(() => reject(new SaoError(`timed out after ${node.timeout}s`)));
-        }, node.timeout * 1000)
+          settle(() => reject(new SaoError(`timed out after ${opts.timeoutSec}s`)));
+        }, opts.timeoutSec * 1000)
       : undefined;
 
     const collect = (chunk: Buffer) => {
       const text = chunk.toString();
       combined += text;
       if (combined.length > MAX_BUFFER_CHARS) combined = trimBuffer(combined);
-      ctx.log(text);
+      opts.log(text);
     };
     child.stdout.on("data", collect);
     child.stderr.on("data", collect);
@@ -94,15 +112,31 @@ export function executeBashNode(node: BashNode, script: string, ctx: NodeExecCon
     });
 
     child.on("close", (code) => {
-      settle(() => {
-        if (code !== 0) {
-          reject(new SaoError(`command exited with code ${code}`));
-          return;
-        }
-        resolve(tail(combined, BASH_OUTPUT_TAIL_LINES));
-      });
+      settle(() => resolve({ code: code ?? 1, output: tail(combined, BASH_OUTPUT_TAIL_LINES) }));
     });
   });
+}
+
+/** Bash node/step execution: non-zero exit is a failure. */
+export async function executeBashScript(
+  script: string,
+  opts: { cwd: string; timeoutSec?: number; log: (chunk: string) => void },
+): Promise<string> {
+  const { code, output } = await runShell(script, opts);
+  if (code !== 0) throw new SaoError(`command exited with code ${code}`);
+  return output;
+}
+
+/**
+ * when_bash predicate: exit 0 → run the node/step, anything else → skip it.
+ * Spawn failures and timeouts still throw — a broken predicate must not silently skip.
+ */
+export async function evaluateWhenBash(
+  script: string,
+  opts: { cwd: string; timeoutSec?: number; log: (chunk: string) => void },
+): Promise<boolean> {
+  const { code } = await runShell(script, opts);
+  return code === 0;
 }
 
 export async function withRetries<T>(retries: number, attempt: () => Promise<T>): Promise<T> {
@@ -111,6 +145,9 @@ export async function withRetries<T>(retries: number, attempt: () => Promise<T>)
     try {
       return await attempt();
     } catch (err) {
+      // A human's explicit rejection is a decision, not a flake — retrying it would
+      // re-run the whole node (interactive loops!) against their stated stop.
+      if (err instanceof GateRejectedError) throw err;
       lastError = err;
     }
   }
@@ -129,6 +166,7 @@ function tail(text: string, lines: number): string {
  */
 export function trimBuffer(text: string): string {
   let idx = text.length;
+  // Stryker disable ConditionalExpression,EqualityOperator,BlockStatement: boundary mutants here are equivalent — once idx reaches 0 (or found is -1 and idx becomes -1 without the break), the loop exits and both routes land in the idx <= 0 branch below with identical output
   for (let i = 0; i < TRIM_KEEP_SEGMENTS && idx > 0; i++) {
     const found = text.lastIndexOf("\n", idx - 1);
     if (found === -1) {
@@ -137,6 +175,8 @@ export function trimBuffer(text: string): string {
     }
     idx = found;
   }
+  // Stryker restore ConditionalExpression,EqualityOperator,BlockStatement
   const kept = idx <= 0 ? text : text.slice(idx + 1);
+  // Stryker disable next-line EqualityOperator: equivalent — at kept.length === MAX_BUFFER_CHARS the slice keeps the whole string either way
   return kept.length > MAX_BUFFER_CHARS ? kept.slice(kept.length - MAX_BUFFER_CHARS) : kept;
 }
