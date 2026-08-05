@@ -22,14 +22,9 @@ import {
   loopNodeSchema,
   workflowTopSchema,
 } from "./schema";
-import { collectRefs, isLoopRef, nodeOutputRef } from "./template";
+import { collectRefs, isLoopRef, isMetaRef, nodeOutputRef } from "./template";
 
 const NODE_TYPE_KEYS = ["prompt", "bash", "loop", "gate"] as const;
-const FUTURE_TOP_KEYS: Record<string, string> = {
-  base: "worktree-per-run lands in M3",
-};
-/** Run-metadata names ({{base}} etc., SAO_* env) arrive with worktrees in M3. */
-const METADATA_NAMES = new Set(["base", "branch", "run_id"]);
 
 export interface LoadWorkflowOptions {
   /** Repo root used to resolve plain `agent:` names (default: process.cwd()). */
@@ -53,11 +48,6 @@ export function loadWorkflow(path: string, opts: LoadWorkflowOptions = {}): Work
   }
   if (doc === null || typeof doc !== "object" || Array.isArray(doc)) {
     throw new SaoError(`${path} must be a YAML mapping with name: and nodes:`);
-  }
-
-  const record = doc as Record<string, unknown>;
-  for (const [key, message] of Object.entries(FUTURE_TOP_KEYS)) {
-    if (key in record) throw new SaoError(`${key}: is not supported yet — ${message}`);
   }
 
   let top;
@@ -102,6 +92,7 @@ export function loadWorkflow(path: string, opts: LoadWorkflowOptions = {}): Work
   const workflow: Workflow = {
     name: top.name,
     description: top.description,
+    base: top.base,
     inputs: top.inputs,
     defaults: top.defaults,
     nodes,
@@ -232,8 +223,8 @@ function runStaticChecks(workflow: Workflow): void {
   const inputsByName = new Map<string, Workflow["inputs"][number]>();
   for (const input of workflow.inputs) {
     if (input.name === "task") throw new SaoError(`input "task" is reserved for the CLI's positional task text`);
-    if (METADATA_NAMES.has(input.name)) {
-      throw new SaoError(`input "${input.name}" is reserved for run metadata (templating for it lands in M3)`);
+    if (isMetaRef(input.name)) {
+      throw new SaoError(`input "${input.name}" is reserved for run metadata ({{${input.name}}} is set by the engine)`);
     }
     if (inputsByName.has(input.name)) throw new SaoError(`duplicate input "${input.name}"`);
     inputsByName.set(input.name, input);
@@ -285,9 +276,7 @@ function checkTemplateRefs(
       }
       continue;
     }
-    if (METADATA_NAMES.has(ref)) {
-      throw new SaoError(`node "${node.id}": {{${ref}}} is run metadata — templating for it lands in M3`);
-    }
+    if (isMetaRef(ref)) continue; // run metadata — always available at run time
     const nodeId = nodeOutputRef(ref);
     if (nodeId !== undefined) {
       if (!byId.has(nodeId)) {

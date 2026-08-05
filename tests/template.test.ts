@@ -27,6 +27,15 @@ describe("interpolate", () => {
     expect(interpolate("{{loop.feedback}} @ {{loop.iteration}}", loopCtx)).toBe("tighten it @ 4");
   });
 
+  test("run-metadata refs resolve from ctx.meta", () => {
+    const metaCtx = { ...ctx, meta: { base: "abc123", branch: "sao/run-1", run_id: "run-1" } };
+    expect(interpolate("{{base}}|{{branch}}|{{run_id}}", metaCtx)).toBe("abc123|sao/run-1|run-1");
+  });
+
+  test("run-metadata refs without a meta context throw instead of crashing", () => {
+    expect(() => interpolate("{{run_id}}", ctx)).toThrow("{{run_id}} run metadata is not available in this context");
+  });
+
   test("loop refs outside a loop context throw the loop-scoping error", () => {
     expect(() => interpolate("{{loop.feedback}}", ctx)).toThrow(
       "{{loop.feedback}} is only available inside loop nodes",

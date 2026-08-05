@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { GateRejectedError, SaoError } from "../src/errors";
-import { parseGateReply } from "../src/gate";
+import { parseGateReply, parseLoopReply } from "../src/gate";
 
 describe("GateRejectedError", () => {
   test("is a SaoError with its own name, so rejections are distinguishable", () => {
@@ -34,5 +34,28 @@ describe("parseGateReply", () => {
 
   test("feedback that merely contains an approval word stays feedback", () => {
     expect(parseGateReply("yes but rename the flag")).toEqual({ kind: "feedback", text: "yes but rename the flag" });
+  });
+});
+
+describe("parseLoopReply", () => {
+  test.each([["a"], ["approve"], ["APPROVED"]])("explicit %p approves", (reply) => {
+    expect(parseLoopReply(reply)).toEqual({ kind: "approve" });
+  });
+
+  test.each([["r"], ["reject"], ["rejected"]])("explicit %p rejects", (reply) => {
+    expect(parseLoopReply(reply)).toEqual({ kind: "reject" });
+  });
+
+  test("natural-language yes/no is FEEDBACK in a loop — an interview answer, not a verdict", () => {
+    // The interview agent asked "should the endpoint be public?" — "no" must feed
+    // the next iteration, never halt the whole run as rejected.
+    expect(parseLoopReply("no")).toEqual({ kind: "feedback", text: "no" });
+    expect(parseLoopReply("yes")).toEqual({ kind: "feedback", text: "yes" });
+    expect(parseLoopReply("n")).toEqual({ kind: "feedback", text: "n" });
+    expect(parseLoopReply("y")).toEqual({ kind: "feedback", text: "y" });
+  });
+
+  test("empty replies still re-ask", () => {
+    expect(parseLoopReply("  ")).toEqual({ kind: "empty" });
   });
 });

@@ -13,7 +13,7 @@
 name: ticket-orchestrator
 description: One user story to a validated, PR-ready feature with a single human approval
 
-# base: main                   # ref the run worktree/branch is cut from (uncomment when M3 lands)
+base: main                     # ref the run worktree/branch is cut from (--base wins)
 
 inputs:
   - name: feature              # kebab name; story file = user-stories/pending/{{feature}}.md
@@ -28,6 +28,7 @@ nodes:
   - id: bootstrap
     bash: |
       pnpm install
+      echo "tmp/" >> "$(git rev-parse --git-path info/exclude)"   # scratch notes never reach the finalize commit
       mkdir -p docs/features/{{feature}} tmp/{{feature}}
       cp .agents/templates/spec.md  docs/features/{{feature}}/spec.md
       cp .agents/templates/tasks.md docs/features/{{feature}}/tasks.md

@@ -131,6 +131,11 @@ worktree first, and the node/step executes only if it exits 0; otherwise it is m
 `skipped` (dependents treat a skipped node as satisfied). This is the engine's only
 conditional mechanism — e.g. re-run a review only when a fix touched production source:
 `when_bash: "git diff --name-only $SAO_BASE_REF..HEAD | grep -qvE '\.test\.'"`.
+A node's predicate is evaluated at most once: when `sao resume` re-attempts a node
+whose earlier attempt already passed it (recorded in state), the body runs directly —
+the node's own partial work may have flipped the predicate, and skipping now would
+wipe loop progress or a gate's promised re-ask. Only if the predicate itself failed
+(e.g. timed out) is it evaluated again.
 
 ### Agents
 
@@ -188,6 +193,10 @@ a bare approve ends the loop, but only on an iteration where the agent emitted t
 signal (approving an unsignaled iteration just re-prompts). Combined with
 `fresh_context: false` this is a genuine multi-turn conversation — e.g. an agent
 interviewing the human one question per iteration until the spec is settled.
+Because these are conversations, only the explicit forms `a`/`approve`/`approved`
+and `r`/`reject`/`rejected` act as verdicts here — a natural-language "yes"/"no"
+(an answer to the agent's question) is treated as feedback. Plain gates keep the
+wider `y`/`yes`/`n`/`no` vocabulary.
 
 **Multi-step loops** (`steps:` instead of `prompt`): each iteration runs the steps
 in order. A step is an AI step (`prompt`, with optional `agent`/`runner`/`model`) or
@@ -315,7 +324,10 @@ in a static map. No dynamic plugin loading in v1.
   any node's side effects).
 3. Create run: id `2026-08-03-1432-fix-issue-a1b2`, dir `.sao/runs/<id>/` in the
   **main repo** (`.sao/` auto-appended to `.git/info/exclude`, never the user's
-  .gitignore; agents in `.agents/` are ordinary committed files).
+  .gitignore; agents in `.agents/` are ordinary committed files). Invoked from
+  inside ANY linked worktree — a run's own or the user's — sao follows the `.git`
+  file to the main checkout: `.sao/`, `.agents/` resolution, and the default base
+  (HEAD) all anchor there.
 4. `git worktree add .sao/worktrees/<id> -b <branch> <base>` — `<base>` from `--base`,
   else workflow `base:`, else current HEAD; `<branch>` defaults to `sao/<id>`,
   overridable with `--branch <name>` (`--no-worktree` runs in-place for trusted/quick
@@ -350,6 +362,7 @@ in a static map. No dynamic plugin loading in v1.
   "task": "add dark mode",
   "vars": { "issue": "123" },
   "autoOpenPr": false,
+  "createdAt": "2026-08-03T14:32:05.000Z",
   "worktree": ".sao/worktrees/<id>",
   "base": "main",
   "branch": "sao/<id>",
@@ -361,9 +374,17 @@ in a static map. No dynamic plugin loading in v1.
 }
 ```
 
-`resume` refuses to run if the workflow file's hash changed (override with `--force`).
-`autoOpenPr` is persisted from `sao run`; `sao resume` inherits it, and passing
-`--auto-open-pr` on resume turns it on for a run that started without it.
+`resume` refuses to run if the run's configuration hash changed — the workflow file,
+any referenced agent file, or a path-form mcp config (override with `--force`). It
+also refuses while another sao process owns the run (an `engine.lock` file in the
+run dir holds the owner's pid; the persisted `pid` is a second check). `--force`
+overrides the liveness refusals too — after a reboot the recorded pid is often
+recycled by an unrelated process.
+Execution parameters are persisted and reused on resume: `pid`, `concurrency`, a
+`--runner` override, and — for `--no-worktree` runs — the execution `cwd` (relative
+to the repo root), so a resume from a different directory still executes where the
+run started. `autoOpenPr` is persisted from `sao run`; `sao resume` inherits it, and
+passing `--auto-open-pr` on resume turns it on for a run that started without it.
 
 ## CLI
 
@@ -373,7 +394,10 @@ sao resume <run-id> [--force] [--auto-open-pr]
 sao list                      # scans .sao/runs/, table: id, workflow, status, age
 sao logs <run-id> [node-id] [--follow]
 sao validate <workflow.yaml>  # schema + dependency-graph + template + runner checks, no execution
-sao clean [--all]             # remove worktrees/branches of finished runs (--all: also run dirs)
+sao clean [--all]             # remove succeeded runs' worktrees; branches only once merged
+                              # elsewhere. Failed/rejected runs (resume targets), dirty worktrees,
+                              # and unmerged branches are kept. --all discards all of that
+                              # plus the run dirs; live runs are never touched.
 ```
 
 `--dry-run` prints the resolved execution plan (node order, interpolated prompts) without running anything.

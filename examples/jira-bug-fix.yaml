@@ -16,7 +16,7 @@
 name: jira-bug-fix
 description: One Jira bug ticket to a tested fix with an open PR and the ticket moved to Ready for Stage
 
-# base: main                   # ref the run worktree/branch is cut from (uncomment when M3 lands)
+base: main                     # ref the run worktree/branch is cut from (--base wins)
 
 inputs:
   - name: ticket               # Jira issue id, e.g. PROJ-123
@@ -33,8 +33,13 @@ defaults:
   allowed_tools: [mcp__jira]
 
 nodes:
+  # ── 0. Keep tmp/ scratch notes out of git — the finalize commit sweeps `git add -A`
+  - id: bootstrap
+    bash: 'echo "tmp/" >> "$(git rev-parse --git-path info/exclude)"'
+
   # ── 1. Fetch the ticket from Jira (MCP) — state on disk for every later node ──
   - id: fetch-ticket
+    depends_on: [bootstrap]
     prompt: |
       Using the jira MCP tools, fetch issue {{ticket}} — summary, description,
       steps to reproduce, expected vs actual behavior, environment, linked
