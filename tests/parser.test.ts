@@ -225,17 +225,20 @@ nodes:
     }
   });
 
-  test("run-metadata template refs point at M3", () => {
+  test("run-metadata template refs are accepted anywhere", () => {
     const path = tempWorkflow(`
 name: meta-ref
 nodes:
   - id: a
-    bash: "echo {{run_id}}"
+    bash: "echo {{run_id}} {{base}} {{branch}}"
+  - id: b
+    depends_on: [a]
+    prompt: "summarize run {{run_id}}"
 `);
-    expect(() => loadWorkflow(path)).toThrow("{{run_id}} is run metadata — templating for it lands in M3");
+    expect(loadWorkflow(path).name).toBe("meta-ref");
   });
 
-  test("base: gets a friendly not-yet error", () => {
+  test("base: is parsed onto the workflow", () => {
     const path = tempWorkflow(`
 name: based
 base: main
@@ -243,7 +246,18 @@ nodes:
   - id: a
     bash: "true"
 `);
-    expect(() => loadWorkflow(path)).toThrow("worktree-per-run lands in M3");
+    expect(loadWorkflow(path).base).toBe("main");
+  });
+
+  test("an empty base: is rejected", () => {
+    const path = tempWorkflow(`
+name: based-empty
+base: ""
+nodes:
+  - id: a
+    bash: "true"
+`);
+    expect(() => loadWorkflow(path)).toThrow("invalid workflow");
   });
 
   test("rejects timeouts beyond the setTimeout-safe cap", () => {
@@ -309,15 +323,14 @@ nodes:
     expect(err.hint).toContain("resolved relative to the workflow file");
   });
 
-  test("base: names the M3 milestone exactly", () => {
-    const { err } = loadFailure(`
-name: based-exact
-base: main
+  test("workflows without base: leave it undefined", () => {
+    const path = tempWorkflow(`
+name: baseless
 nodes:
   - id: a
     bash: "true"
 `);
-    expect(err.message).toBe("base: is not supported yet — worktree-per-run lands in M3");
+    expect(loadWorkflow(path).base).toBeUndefined();
   });
 
   test("a null defaults: falls through to schema validation instead of crashing", () => {
@@ -521,7 +534,7 @@ nodes:
   - id: a
     bash: "true"
 `);
-      expect(err.message).toBe(`input "${name}" is reserved for run metadata (templating for it lands in M3)`);
+      expect(err.message).toBe(`input "${name}" is reserved for run metadata ({{${name}}} is set by the engine)`);
     }
   });
 
@@ -600,14 +613,17 @@ nodes:
     expect(err.message).toBe("dependency cycle involving: a, b");
   });
 
-  test("metadata template refs name the M3 milestone with the node label", () => {
-    const { err } = loadFailure(`
-name: metaref
+  test("metadata refs inside loop bodies are accepted too", () => {
+    const path = tempWorkflow(`
+name: metaloop
 nodes:
   - id: a
-    bash: "echo {{base}}"
+    loop:
+      prompt: "iteration {{loop.iteration}} of run {{run_id}}"
+      until: DONE
+      max_iterations: 2
 `);
-    expect(err.message).toBe('node "a": {{base}} is run metadata — templating for it lands in M3');
+    expect(loadWorkflow(path).name).toBe("metaloop");
   });
 
   test("node output refs to unknown nodes are exact", () => {

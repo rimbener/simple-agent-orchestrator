@@ -127,6 +127,7 @@ export const workflowTopSchema = z
       .string()
       .regex(NODE_ID_PATTERN, "workflow name must start with a letter and use only letters, digits, - or _ (it becomes part of run ids and paths)"),
     description: z.string().optional(),
+    base: settingSchema, // ref the run worktree/branch is cut from (--base wins; default: current HEAD)
     mcp: mcpSchema.optional(),
     inputs: z.array(inputSchema).default([]),
     defaults: defaultsSchema.default({}),
@@ -170,6 +171,8 @@ export interface AgentSpec {
 export interface Workflow {
   name: string;
   description?: string;
+  /** Ref the run worktree/branch is cut from (--base wins; default: current HEAD). */
+  base?: string;
   inputs: WorkflowInput[];
   defaults: WorkflowDefaults;
   nodes: WorkflowNode[];

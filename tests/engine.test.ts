@@ -277,7 +277,9 @@ nodes:
       const { runId } = readRunState(dir);
       expect(err).toBeInstanceOf(SaoError);
       expect((err as SaoError).message).toBe(`run ${runId} failed at node "a": boom`);
-      expect((err as SaoError).hint).toBe(`try harder\n  full output: ${join(dir, ".sao", "runs", runId, "logs", "a.log")}`);
+      expect((err as SaoError).hint).toBe(
+        `try harder\n  full output: ${join(dir, ".sao", "runs", runId, "logs", "a.log")}\n  resume with: sao resume ${runId}`,
+      );
     }
   });
 
@@ -308,7 +310,7 @@ nodes:
     const { runId } = readRunState(dir);
     expect(err).toBeInstanceOf(SaoError);
     expect(err.message).toBe(`run ${runId} failed at node "a": boom-bare`);
-    expect(err.hint).toBe(`full output: ${join(dir, ".sao", "runs", runId, "logs", "a.log")}`);
+    expect(err.hint).toBe(`full output: ${join(dir, ".sao", "runs", runId, "logs", "a.log")}\n  resume with: sao resume ${runId}`);
   });
 
   test("a non-Error throw from a runner is stringified into the failure message", async () => {
@@ -337,7 +339,7 @@ nodes:
     );
     const { runId } = readRunState(dir);
     expect(err.message).toBe(`run ${runId} failed at node "a": boom-string`);
-    expect(err.hint).toBe(`full output: ${join(dir, ".sao", "runs", runId, "logs", "a.log")}`);
+    expect(err.hint).toBe(`full output: ${join(dir, ".sao", "runs", runId, "logs", "a.log")}\n  resume with: sao resume ${runId}`);
   });
 
   test("workflow defaults.model and permission_mode reach the runner request", async () => {

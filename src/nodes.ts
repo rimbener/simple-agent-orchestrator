@@ -16,6 +16,8 @@ export interface NodeExecContext {
   cwd: string;
   /** Receives every output chunk (streamed to the terminal and the node log). */
   log: (chunk: string) => void;
+  /** Extra environment (SAO_* run metadata) merged over process.env for subprocesses. */
+  env?: Record<string, string>;
 }
 
 export interface AiNodeResult {
@@ -39,6 +41,7 @@ export async function executeAiNode(prompt: string, config: AiExecConfig, ctx: N
   const result = await config.runner.run({
     prompt,
     cwd: ctx.cwd,
+    env: ctx.env,
     model: config.model,
     permissionMode: config.permissionMode,
     systemPrompt: config.systemPrompt,
@@ -68,13 +71,13 @@ export interface ShellResult {
  */
 export function runShell(
   script: string,
-  opts: { cwd: string; timeoutSec?: number; log: (chunk: string) => void },
+  opts: { cwd: string; timeoutSec?: number; log: (chunk: string) => void; env?: Record<string, string> },
 ): Promise<ShellResult> {
   return new Promise((resolve, reject) => {
     const child = spawn("sh", ["-c", script], {
       cwd: opts.cwd,
       stdio: ["ignore", "pipe", "pipe"],
-      env: process.env,
+      env: { ...process.env, ...opts.env }, // SAO_* run metadata rides along (SPEC step 6)
       detached: true, // own process group, so a timeout can kill the whole tree
     });
     track(child);
@@ -120,7 +123,7 @@ export function runShell(
 /** Bash node/step execution: non-zero exit is a failure. */
 export async function executeBashScript(
   script: string,
-  opts: { cwd: string; timeoutSec?: number; log: (chunk: string) => void },
+  opts: { cwd: string; timeoutSec?: number; log: (chunk: string) => void; env?: Record<string, string> },
 ): Promise<string> {
   const { code, output } = await runShell(script, opts);
   if (code !== 0) throw new SaoError(`command exited with code ${code}`);
@@ -133,7 +136,7 @@ export async function executeBashScript(
  */
 export async function evaluateWhenBash(
   script: string,
-  opts: { cwd: string; timeoutSec?: number; log: (chunk: string) => void },
+  opts: { cwd: string; timeoutSec?: number; log: (chunk: string) => void; env?: Record<string, string> },
 ): Promise<boolean> {
   const { code } = await runShell(script, opts);
   return code === 0;
