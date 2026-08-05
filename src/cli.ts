@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import { Command, InvalidArgumentError } from "commander";
 import pc from "picocolors";
 import pkg from "../package.json" with { type: "json" };
-import { preflightAiConfigs, runWorkflow } from "./engine";
+import { formatDryRun, preflightAiConfigs, runWorkflow } from "./engine";
 import { SaoError } from "./errors";
 import { loadWorkflow } from "./parser";
 import { cleanRuns, formatCleanSummary, formatRunList, makeLogPoller, printLogs } from "./runs";
@@ -24,6 +24,8 @@ program
   .option("--no-worktree", "run in place instead of an isolated git worktree")
   .option("--runner <name>", "override the runner for every AI node")
   .option("--concurrency <n>", "max nodes executing at once (default 2)", parseConcurrency)
+  .option("--auto-open-pr", "on success, push the run branch and open a draft PR via gh")
+  .option("--dry-run", "print the resolved execution plan (node order, interpolated prompts) without running anything")
   .action(
     async (
       workflowPath: string,
@@ -35,15 +37,34 @@ program
         worktree: boolean;
         runner?: string;
         concurrency?: number;
+        autoOpenPr?: boolean;
+        dryRun?: boolean;
       },
     ) => {
       await fail(async () => {
         if (!options.worktree && (options.base !== undefined || options.branch !== undefined)) {
           throw new SaoError("--base/--branch have no effect with --no-worktree", "they configure the run worktree — drop them or drop --no-worktree");
         }
+        if (!options.worktree && options.autoOpenPr === true) {
+          throw new SaoError("--auto-open-pr has no effect with --no-worktree", "a PR needs the run branch a worktree provides — drop one of the flags");
+        }
         const path = resolve(workflowPath);
         const repoRoot = findRepoRoot(process.cwd());
         const workflow = loadWorkflow(path, { cwd: repoRoot });
+        const worktree = options.worktree ? { base: options.base, branch: options.branch } : undefined;
+        if (options.dryRun === true) {
+          const plan = formatDryRun({
+            workflow,
+            task: taskWords.join(" "),
+            vars: options.var,
+            runRoot: repoRoot,
+            runnerOverride: options.runner,
+            worktree,
+            autoOpenPr: options.autoOpenPr,
+          });
+          for (const line of plan) console.log(line);
+          return;
+        }
         await runWorkflow({
           workflow,
           workflowPath: path,
@@ -53,7 +74,8 @@ program
           runRoot: repoRoot, // SPEC step 3: the run dir lives in the main repo
           concurrency: options.concurrency,
           runnerOverride: options.runner,
-          worktree: options.worktree ? { base: options.base, branch: options.branch } : undefined,
+          autoOpenPr: options.autoOpenPr,
+          worktree,
         });
       });
     },
@@ -64,7 +86,8 @@ program
   .description("re-run a halted run from its failed node/iteration")
   .argument("<run-id>", "run id (see sao list)")
   .option("--force", "resume even if the configuration changed, the recorded owner pid looks alive, or a live lock must be taken over")
-  .action(async (runId: string, options: { force?: boolean }) => {
+  .option("--auto-open-pr", "turn on draft-PR finalization for this halted run (already-succeeded runs cannot be resumed; open theirs with gh)")
+  .action(async (runId: string, options: { force?: boolean; autoOpenPr?: boolean }) => {
     await fail(async () => {
       const repoRoot = findRepoRoot(process.cwd());
       const { state, paths } = loadRun(repoRoot, runId);
@@ -79,6 +102,7 @@ program
         vars: state.vars,
         cwd: process.cwd(),
         runRoot: repoRoot,
+        autoOpenPr: options.autoOpenPr,
         resume: { state, paths, force: options.force === true },
       });
     });

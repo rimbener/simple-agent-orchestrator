@@ -39,6 +39,25 @@ describe("buildClaudeArgs", () => {
     expect(buildClaudeArgs({ prompt: "--help", cwd: "/tmp" })).not.toContain("--help");
   });
 
+  test("an option-shaped or malformed session id never reaches --resume argv", () => {
+    // claude's --resume takes an OPTIONAL value: a tampered state.json sessionId of
+    // "--dangerously-skip-permissions" would otherwise parse as a flag.
+    for (const bad of ["--dangerously-skip-permissions", "-x", "a b", "x;rm"]) {
+      try {
+        buildClaudeArgs({ prompt: "p", cwd: "/tmp", resumeSessionId: bad });
+        throw new Error("should have thrown");
+      } catch (err) {
+        expect(err).toBeInstanceOf(SaoError);
+        expect((err as SaoError).message).toBe(`invalid session id: ${bad}`);
+        expect((err as SaoError).hint).toBe("state.json's sessionId does not look like a claude session id — start a new run");
+      }
+    }
+    expect(flagValue(buildClaudeArgs({ prompt: "p", cwd: "/tmp", resumeSessionId: "a1b2c3d4-e5f6-7890-abcd-ef0123456789" }), "--resume")).toBe(
+      "a1b2c3d4-e5f6-7890-abcd-ef0123456789",
+    );
+    expect(flagValue(buildClaudeArgs({ prompt: "p", cwd: "/tmp", resumeSessionId: "s" }), "--resume")).toBe("s");
+  });
+
   test("maps every optional field to its flag", () => {
     const args = buildClaudeArgs({
       prompt: "p",
@@ -602,6 +621,21 @@ wait
     10000,
   );
 
+  test("a chunk boundary inside a multi-byte character does not corrupt the output", async () => {
+    const restore = withStubClaude(`#!/bin/sh
+cat > /dev/null
+printf '{"type":"result","result":"caf\\303'
+sleep 0.15
+printf '\\251"}\\n'
+`);
+    try {
+      const result = await claudeRunner.run({ prompt: "p", cwd: process.cwd() });
+      expect(result.output).toBe("café"); // per-chunk toString() would bake in U+FFFD
+    } finally {
+      restore();
+    }
+  }, 15000);
+
   test("a missing claude binary yields the install hint", async () => {
     const oldPath = process.env.PATH;
     process.env.PATH = mkdtempSync(join(tmpdir(), "sao-nopath-"));
@@ -663,15 +697,10 @@ describe("getRunner", () => {
     expect(getRunner("claude").name).toBe("claude");
   });
 
-  test("codex points at M4", () => {
-    try {
-      getRunner("codex");
-      throw new Error("should have thrown");
-    } catch (err) {
-      expect(err).toBeInstanceOf(SaoError);
-      expect((err as SaoError).message).toBe('unknown runner "codex"');
-      expect((err as SaoError).hint).toBe("the codex adapter lands in M4");
-    }
+  test("resolves the codex runner, which declares no session resume", () => {
+    expect(getRunner("codex").name).toBe("codex");
+    expect(getRunner("codex").supportsSessionResume).toBe(false);
+    expect(getRunner("claude").supportsSessionResume).toBeUndefined(); // unset means capable
   });
 
   test("prototype property names are not runners", () => {
@@ -687,7 +716,7 @@ describe("getRunner", () => {
     } catch (err) {
       expect(err).toBeInstanceOf(SaoError);
       expect((err as SaoError).message).toBe('unknown runner "nope"');
-      expect((err as SaoError).hint).toBe("available runners: claude");
+      expect((err as SaoError).hint).toBe("available runners: claude, codex");
     }
   });
 });

@@ -288,6 +288,8 @@ describe("saveState", () => {
       workflowHash: "sha256:x",
       task: "t",
       vars: { a: "1" },
+      autoOpenPr: false,
+      createdAt: "2026-08-05T00:00:00.000Z",
       status: "running",
       nodes: { n: { status: "pending" } },
     };
@@ -305,6 +307,8 @@ describe("saveState", () => {
       workflowHash: "sha256:x",
       task: "t",
       vars: {},
+      autoOpenPr: false,
+      createdAt: "2026-08-05T00:00:00.000Z",
       status: "succeeded",
       nodes: {},
     };

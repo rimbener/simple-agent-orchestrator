@@ -27,7 +27,14 @@ export function buildClaudeArgs(req: RunnerRequest): string[] {
   const args = ["-p", "--output-format", "stream-json", "--verbose"];
   args.push("--permission-mode", req.permissionMode ?? "acceptEdits");
   if (req.model) args.push("--model", req.model);
-  if (req.resumeSessionId) args.push("--resume", req.resumeSessionId);
+  if (req.resumeSessionId) {
+    // Defense in depth: session ids round-trip through state.json, and claude's
+    // --resume takes an OPTIONAL value — an option-shaped id would parse as a flag.
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9-]*$/.test(req.resumeSessionId)) {
+      throw new SaoError(`invalid session id: ${req.resumeSessionId}`, "state.json's sessionId does not look like a claude session id — start a new run");
+    }
+    args.push("--resume", req.resumeSessionId);
+  }
   if (req.systemPrompt) args.push("--append-system-prompt", req.systemPrompt);
   if (req.mcpConfigPath) args.push("--mcp-config", req.mcpConfigPath);
   if (req.allowedTools?.length) args.push("--allowedTools", req.allowedTools.join(","));
@@ -189,8 +196,13 @@ export const claudeRunner: Runner = {
           }, req.timeoutSec * 1000)
         : undefined;
 
-      child.stdout.on("data", (chunk: Buffer) => {
-        collector.push(chunk.toString());
+      // setEncoding: a chunk boundary splitting a multi-byte UTF-8 sequence must not
+      // corrupt the text — per-chunk toString() would bake U+FFFD into agent output
+      // that later feeds templates, state.json, and PR bodies.
+      child.stdout.setEncoding("utf8");
+      child.stderr.setEncoding("utf8");
+      child.stdout.on("data", (chunk: string) => {
+        collector.push(chunk);
         // Once the result event is in, don't depend on an optional timeout for a
         // process that hangs instead of exiting — grace-kill and settle with what we have.
         if (collector.sawResult && resultGrace === undefined && !settled) {
@@ -201,7 +213,7 @@ export const claudeRunner: Runner = {
           }, graceMs);
         }
       });
-      child.stderr.on("data", (chunk: Buffer) => req.onOutput?.(chunk.toString()));
+      child.stderr.on("data", (chunk: string) => req.onOutput?.(chunk));
 
       child.on("error", (err: NodeJS.ErrnoException) => {
         settle(() => {
