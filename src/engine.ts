@@ -9,14 +9,16 @@ import { evaluateWhenBash, executeAiNode, executeBashScript, withRetries } from 
 import { orderNodes } from "./parser";
 import { onShutdown } from "./procs";
 import { getRunner, type Runner, type RunnerResolver } from "./runners/types";
-import type { AgentSpec, GateNode, LoopNode, Workflow, WorkflowNode } from "./schema";
+import type { AgentSpec, GateNode, LoopNode, LoopStep, Workflow, WorkflowNode } from "./schema";
 import { acquireRunLock, createRun, isPidAlive, saveState, type NodeState, type RunPaths, type RunState } from "./state";
 import { interpolate, type RunMetaVars, type TemplateContext } from "./template";
 import {
   addWorktree,
   branchExists,
+  createDraftPr,
   finalizeWorktree,
   isUsableWorktree,
+  pushBranch,
   requireGitRepo,
   resolveHead,
   validateBranchName,
@@ -52,6 +54,8 @@ export interface RunWorkflowOptions {
   runRoot?: string;
   /** Max nodes executing at once (default 2). */
   concurrency?: number;
+  /** On success, push the run branch and open a draft PR via gh (SPEC step 8). On resume, true turns it on for the run. */
+  autoOpenPr?: boolean;
   runnerOverride?: string;
   resolveRunner?: RunnerResolver;
   /** Terminal prompt for gates and interactive loops (injectable for tests). */
@@ -152,6 +156,14 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunState> {
     state.status = "running";
     state.pid = process.pid;
     if (opts.concurrency !== undefined) state.concurrency = concurrency;
+    // One-way switch: --auto-open-pr on resume turns it on for a run that started
+    // without it; a resume WITHOUT the flag inherits whatever the run recorded.
+    // In-place runs have no branch to open a PR from — say so now, and do NOT
+    // persist, or every later resume would repeat the warning.
+    if (opts.autoOpenPr === true) {
+      if (state.worktree !== undefined) state.autoOpenPr = true;
+      else print(pc.yellow("⚠ --auto-open-pr ignored: this run has no branch (it ran with --no-worktree)"));
+    }
     // Nodes added by a --force'd edit start pending; entries for removed nodes drop.
     // hasOwn + null prototype: a node id like "constructor" must read the persisted
     // entry (or nothing), never Object.prototype — a prototype hit here makes the
@@ -167,7 +179,7 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunState> {
       workflowHash,
       task: opts.task,
       vars: inputs,
-      autoOpenPr: false, // the flag lands in M4; persisted now so resume carries it
+      autoOpenPr: opts.autoOpenPr === true, // persisted so resume carries it
       createdAt: new Date().toISOString(),
       pid: process.pid,
       concurrency,
@@ -281,7 +293,7 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunState> {
       // Stryker disable next-line ConditionalExpression,StringLiteral: forcing the hint-check true (or junking the unreachable else-branch) is equivalent — runOne attaches at least the log-path hint to every error it throws
       err.hint = (err.hint !== undefined ? err.hint + "\n  " : "") + `resume with: sao resume ${runId}`;
     }
-    // Stryker disable next-line BlockStatement,StatementRemoval: leaving the hook registered after a failure only causes a redundant re-save of already-failed state at teardown — unobservable
+    // Stryker disable next-line BlockStatement: leaving the hook registered after a failure only causes a redundant re-save of already-failed state at teardown — unobservable
     releaseShutdownHook();
     releaseRunLock();
     throw err;
@@ -292,14 +304,54 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunState> {
   // armed until the final save: a Ctrl-C during the finalize commit marks the run
   // failed, and resuming it re-runs nothing and simply retries the finalize.
   let finalized = false;
+  let finalizeFailed = false;
   if (state.worktree !== undefined) {
     try {
       finalized = finalizeWorktree(execCwd, runId);
     } catch (err) {
+      finalizeFailed = true;
       const message = err instanceof Error ? err.message : String(err);
       // Stryker disable next-line ConditionalExpression,LogicalOperator,EqualityOperator,StringLiteral: forcing the guard true is equivalent — finalizeWorktree only throws SaoErrors, and every one carries a hint (gitFailure always finds stderr detail or is given one)
       const hint = err instanceof SaoError && err.hint !== undefined ? ` (${err.hint})` : "";
       print(pc.yellow(`⚠ finalize commit failed: ${message}${hint}`));
+    }
+  }
+
+  // SPEC step 8 opt-in: push the branch and open a draft PR. Before the final save,
+  // with the shutdown hook still armed, for the same reason as finalize: a Ctrl-C
+  // mid-push marks the run failed, and resuming re-runs nothing — it just retries
+  // the finalize and this PR. A push/gh failure is a warning: the run succeeded,
+  // and the default report below already says how to open the PR by hand.
+  let prUrl: string | undefined;
+  if (state.autoOpenPr) {
+    if (finalizeFailed) {
+      // A PR now would silently omit whatever the finalize could not commit — the
+      // worktree still holds it, and a succeeded run cannot be resumed to retry.
+      print(pc.yellow("⚠ auto-open-pr skipped: the finalize commit failed, so the branch is missing the uncommitted work — commit it in the worktree, then push and open the PR by hand"));
+    } else if (state.worktree !== undefined && state.branch !== undefined) {
+      try {
+        pushBranch(execCwd, state.branch);
+        prUrl = createDraftPr(execCwd, {
+          branch: state.branch,
+          title: draftPrTitle(opts.workflow.name, opts.task),
+          body: lastAiNodeOutput(ordered, state.nodes) ?? `sao run ${runId} (workflow ${opts.workflow.name})`,
+          // Target the run's base when it names a branch, so a --base release run
+          // doesn't open a PR against the default branch carrying every release
+          // commit. A resolved-HEAD base is a SHA (40 hex, or 64 in sha256-object
+          // repos) — no PR base to name; gh defaults.
+          baseBranch: state.base !== undefined && !/^([0-9a-f]{40}|[0-9a-f]{64})$/.test(state.base) ? state.base : undefined,
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        // Stryker disable next-line ConditionalExpression,LogicalOperator,EqualityOperator,StringLiteral: forcing the guard true is equivalent — pushBranch/createDraftPr only throw SaoErrors, and every one carries a hint
+        const hint = err instanceof SaoError && err.hint !== undefined ? ` (${err.hint})` : "";
+        print(pc.yellow(`⚠ auto-open-pr failed: ${message}${hint}`));
+      }
+    } else {
+      // In-place runs never had a branch; a worktree run landing here had its
+      // recorded branch stripped from state.json — blame the right thing.
+      const why = state.worktree === undefined ? "it ran with --no-worktree" : "state.json no longer records its branch";
+      print(pc.yellow(`⚠ --auto-open-pr ignored: this run has no branch (${why})`));
     }
   }
 
@@ -314,9 +366,154 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunState> {
     print(`  worktree: ${state.worktree}`);
     print(pc.dim(`  review:   git diff ${state.base}...${state.branch}`));
     print(pc.dim(`  merge:    git merge ${state.branch}   (worktree kept until: sao clean)`));
-    print(pc.dim(`  pr:       git push -u origin ${state.branch} && gh pr create --head ${state.branch}`));
+    if (prUrl !== undefined) {
+      print(`  pr:       ${prUrl} (draft)`);
+    } else {
+      print(pc.dim(`  pr:       git push -u origin ${state.branch} && gh pr create --head ${state.branch}`));
+    }
   }
   return state;
+}
+
+/** Draft PR title from the workflow name and task (SPEC step 8). */
+export function draftPrTitle(workflowName: string, task: string): string {
+  // Titles are single-line; collapse whatever whitespace the task carried.
+  const flatTask = task.replace(/\s+/g, " ").trim();
+  return flatTask === "" ? `sao: ${workflowName}` : `${workflowName}: ${flatTask}`;
+}
+
+/** The last AI-produced output in dependency order — the draft PR body (SPEC step 8). */
+export function lastAiNodeOutput(ordered: WorkflowNode[], nodes: Record<string, NodeState>): string | undefined {
+  let last: string | undefined;
+  for (const node of ordered) {
+    if (node.kind !== "ai" && node.kind !== "loop") continue;
+    const output = nodes[node.id]?.output;
+    // Skipped nodes record output "" — the trim guard drops them along with silent nodes.
+    if (output !== undefined && output.trim() !== "") last = output;
+  }
+  return last;
+}
+
+/**
+ * `--dry-run`: the resolved execution plan — node order and interpolated prompts —
+ * built with the exact checks a real run would pass (inputs, AI configs, runner
+ * preflight, and the git/base/branch pre-checks when a worktree applies) and no
+ * side effects. Values that only exist once a run starts render as placeholders;
+ * loop bodies render their real first-iteration context; in-place runs render the
+ * empty base/branch metadata the engine would actually provide.
+ */
+export function formatDryRun(opts: {
+  workflow: Workflow;
+  task: string;
+  vars: Record<string, string>;
+  /** Repo root the run would anchor to; required for worktree-mode git checks. */
+  runRoot: string;
+  runnerOverride?: string;
+  resolveRunner?: RunnerResolver;
+  /** The run's isolation choice (--base/--branch), checked and echoed; omit for --no-worktree. */
+  worktree?: WorktreeRunOptions;
+  /** Echo the on-success push + draft-PR step into the plan. */
+  autoOpenPr?: boolean;
+}): string[] {
+  const inputs = resolveInputs(opts.workflow, opts.vars, false);
+  const ordered = orderNodes(opts.workflow);
+  const aiConfigs = preflightAiConfigs(opts.workflow, opts.runnerOverride, opts.resolveRunner ?? getRunner);
+  // Same pre-checks, same order, as runWorkflow — a plan that prints "worktree from
+  // base X" for a base the real run would reject is a false green light.
+  let base = "";
+  let branch = "";
+  if (opts.worktree !== undefined) {
+    requireGitRepo(opts.runRoot);
+    const givenBase = opts.worktree.base ?? opts.workflow.base;
+    if (givenBase === undefined) {
+      base = resolveHead(opts.runRoot);
+    } else {
+      verifyBaseRef(opts.runRoot, givenBase);
+      base = givenBase;
+    }
+    if (opts.worktree.branch !== undefined) {
+      validateBranchName(opts.runRoot, opts.worktree.branch);
+      verifyBranchIsNew(opts.runRoot, opts.worktree.branch);
+      branch = opts.worktree.branch;
+    } else {
+      branch = "sao/<run-id>";
+    }
+  }
+  const nodeOutputs = Object.create(null) as Record<string, string>;
+  for (const node of ordered) nodeOutputs[node.id] = `<output of ${node.id}>`;
+  // In place, base/branch are truly "" at run time (template.ts) — render that, not
+  // a fabricated placeholder a `git diff {{base}}` node would seem to satisfy.
+  const ctx: TemplateContext = { task: opts.task, inputs, nodeOutputs, meta: { base, branch, run_id: "<run-id>" } };
+  const loopCtx: TemplateContext = { ...ctx, loop: { feedback: "", iteration: 1 } };
+
+  const lines: string[] = [];
+  const emit = (indent: string, label: string, text: string, c: TemplateContext) => {
+    const head = `${indent}${label}: `;
+    const cont = " ".repeat(head.length);
+    interpolate(text, c)
+      .split("\n")
+      .forEach((line, i) => lines.push((i === 0 ? head : cont) + line));
+  };
+
+  lines.push(`dry run: ${opts.workflow.name} — ${ordered.length} nodes, nothing executes`);
+  lines.push(opts.worktree !== undefined ? `isolation: worktree from base ${base}, branch ${branch}` : "isolation: in place (--no-worktree)");
+  if (opts.autoOpenPr === true && opts.worktree !== undefined) {
+    lines.push("on success: push the branch and open a draft PR via gh (--auto-open-pr)");
+  }
+  if (opts.task !== "") lines.push(`task: ${opts.task}`);
+  for (const [index, node] of ordered.entries()) {
+    lines.push("");
+    const after = node.depends_on.length > 0 ? `  (after ${node.depends_on.join(", ")})` : "";
+    lines.push(`${index + 1}. ${node.id}  ${describePlanNode(node, aiConfigs)}${after}`);
+    if (node.when_bash !== undefined) emit("   ", "when_bash", node.when_bash, ctx);
+    if (node.kind === "ai") {
+      emit("   ", "prompt", node.prompt, ctx);
+    } else if (node.kind === "bash") {
+      emit("   ", "bash", node.bash, ctx);
+    } else if (node.kind === "gate") {
+      emit("   ", "gate", node.gate.message, ctx);
+    } else {
+      if (node.loop.until_bash !== undefined) emit("   ", "until_bash", node.loop.until_bash, loopCtx);
+      if (node.loop.prompt !== undefined) emit("   ", "prompt", node.loop.prompt, loopCtx);
+      if (node.loop.until !== undefined) {
+        lines.push(`   (each iteration also carries the ${sentinelToken(node.loop.until)} sentinel instruction)`);
+      }
+      for (const [stepIndex, step] of (node.loop.steps ?? []).entries()) {
+        lines.push(`   step ${stepIndex + 1}  ${describePlanStep(node, stepIndex, step, aiConfigs)}`);
+        if (step.when_bash !== undefined) emit("     ", "when_bash", step.when_bash, loopCtx);
+        if (step.kind === "ai") emit("     ", "prompt", step.prompt, loopCtx);
+        else emit("     ", "bash", step.bash, loopCtx);
+      }
+    }
+  }
+  return lines;
+}
+
+function describePlanNode(node: WorkflowNode, aiConfigs: Map<string, ResolvedAiConfig>): string {
+  if (node.kind === "ai") {
+    const parts = ["ai", `runner ${aiConfigs.get(node.id)!.runner.name}`];
+    if (node.agent !== undefined) parts.push(`agent ${node.agent}`);
+    return `[${parts.join(" · ")}]`;
+  }
+  if (node.kind === "loop") {
+    const parts = ["loop"];
+    if (node.loop.prompt !== undefined) parts.push(`runner ${aiConfigs.get(node.id)!.runner.name}`);
+    if (node.agent !== undefined) parts.push(`agent ${node.agent}`);
+    if (node.loop.until !== undefined) parts.push(`until ${node.loop.until}`);
+    if (node.loop.until_bash !== undefined) parts.push("until_bash");
+    if (node.loop.interactive) parts.push("interactive");
+    parts.push(`max ${node.loop.max_iterations}`);
+    return `[${parts.join(" · ")}]`;
+  }
+  return `[${node.kind}]`;
+}
+
+function describePlanStep(node: LoopNode, stepIndex: number, step: LoopStep, aiConfigs: Map<string, ResolvedAiConfig>): string {
+  if (step.kind === "bash") return "[bash]";
+  const parts = ["ai", `runner ${aiConfigs.get(`${node.id}#${stepIndex}`)!.runner.name}`];
+  const agent = step.agent ?? node.agent;
+  if (agent !== undefined) parts.push(`agent ${agent}`);
+  return `[${parts.join(" · ")}]`;
 }
 
 /**
@@ -398,6 +595,18 @@ export function preflightAiConfigs(
       // Stryker disable next-line ArrayDeclaration: equivalent — the fallback only fires for prompt loops (steps undefined), and any replacement array's entries fail the step.kind === "ai" check
       for (const [index, step] of (node.loop.steps ?? []).entries()) {
         if (step.kind === "ai") put(`${node.id}#${index}`, node.id, step, node);
+      }
+      // fresh_context: false needs session resume, which not every runner has (codex).
+      // Checked here — where the effective runner is known — so `sao validate`, a
+      // workflow `runner:` key, and a --runner override all fail identically, before
+      // any run state exists. (fresh_context: false implies a single-prompt loop, so
+      // the node-level config is the only one that matters.)
+      // Stryker disable next-line OptionalChaining: the parser rejects fresh_context: false on steps loops, so the prompt-level config always exists here; ?. only guards hand-built workflows that bypass loadWorkflow
+      if (node.loop.fresh_context === false && configs.get(node.id)?.runner.supportsSessionResume === false) {
+        throw new SaoError(
+          `node "${node.id}": the ${configs.get(node.id)!.runner.name} runner cannot resume sessions`,
+          "fresh_context: false requires session resume — use the claude runner, or drop fresh_context",
+        );
       }
     }
   }

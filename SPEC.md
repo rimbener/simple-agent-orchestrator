@@ -308,10 +308,16 @@ where it would be `ps`-visible, flag-injectable, and ARG_MAX-bounded — with
 `--allowedTools <allowedTools>` as applicable.
 Parses the stream for live output; `result` event supplies `output` + `session_id`.
 
-**codex adapter** — spawns `codex exec <prompt> --json` (non-interactive), prepending
-`systemPrompt` to the prompt as a role preamble. Maps the
-event stream to the same shape. No session resume in v1 → `fresh_context: false` with
-runner `codex` is a validation error.
+**codex adapter** — spawns `codex exec --json --sandbox workspace-write -` (non-interactive;
+the trailing `-` reads the prompt over **stdin**, same rationale as the claude adapter),
+prepending `systemPrompt` to the prompt as a role preamble. Maps the JSONL event stream to
+the same shape: the last completed `agent_message` item is the output, `thread.started`
+supplies the session id, and a `turn.failed`/`error` event fails the node even on exit 0.
+The fixed `workspace-write` sandbox is the codex equivalent of claude's default
+`acceptEdits` — agents edit files in their (isolated) worktree without prompting.
+No session resume in v1 → `fresh_context: false` with
+runner `codex` is a validation error (checked against the effective runner, so a
+`--runner codex` override fails preflight the same way).
 
 Adding a runner = one new file in `src/runners/` implementing the interface, registered
 in a static map. No dynamic plugin loading in v1.
@@ -345,10 +351,13 @@ in a static map. No dynamic plugin loading in v1.
    failed node/iteration with all prior state intact.
 8. Success: auto-commit any uncommitted worktree changes (`sao: finalize run <id>`).
   Default: print the branch, worktree path, and copy-paste next steps (diff, merge,
-   PR). With `--auto-open-pr`: additionally push `sao/<id>` and run
-   `gh pr create --draft` with title from workflow name/task and body from the last
-   AI node's output; if `gh` fails or is absent, fall back to the default report.
-   Worktree is kept until `sao clean`.
+   PR). With `--auto-open-pr`: additionally push `sao/<id>` (as an explicit
+   `refs/heads/x:refs/heads/x` refspec — a bare name is refspec syntax, where a
+   crafted value could force-push) and run `gh pr create --draft` with title from
+   workflow name/task, body from the last AI node's output, and `--base` set to the
+   run's base whenever it is not a resolved commit SHA (a base gh cannot use — a
+   tag, say — just degrades to the fallback); if the push or `gh` fails or is
+   absent, fall back to the default report. Worktree is kept until `sao clean`.
 
 
 
@@ -384,7 +393,9 @@ Execution parameters are persisted and reused on resume: `pid`, `concurrency`, a
 `--runner` override, and — for `--no-worktree` runs — the execution `cwd` (relative
 to the repo root), so a resume from a different directory still executes where the
 run started. `autoOpenPr` is persisted from `sao run`; `sao resume` inherits it, and
-passing `--auto-open-pr` on resume turns it on for a run that started without it.
+passing `--auto-open-pr` on resume turns it on for a run that started without it
+(only halted runs can be resumed — a run that already succeeded without the flag
+gets its PR opened by hand).
 
 ## CLI
 
@@ -400,7 +411,11 @@ sao clean [--all]             # remove succeeded runs' worktrees; branches only 
                               # plus the run dirs; live runs are never touched.
 ```
 
-`--dry-run` prints the resolved execution plan (node order, interpolated prompts) without running anything.
+`--dry-run` prints the resolved execution plan (node order, interpolated prompts)
+without running anything, after the same checks a real run makes before its first
+side effect: inputs, AI configs, runner preflight, and — when a worktree applies —
+the git repo / base ref / branch name pre-checks. In-place plans render the empty
+`{{base}}`/`{{branch}}` the engine would actually provide.
 
 ## Project structure
 

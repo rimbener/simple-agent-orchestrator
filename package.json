@@ -3,6 +3,22 @@
   "version": "0.1.0",
   "description": "sao — simple agent orchestrator: a minimal YAML workflow engine for AI coding agents",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rimbener/simple-agent-orchestrator.git"
+  },
+  "homepage": "https://github.com/rimbener/simple-agent-orchestrator#readme",
+  "bugs": "https://github.com/rimbener/simple-agent-orchestrator/issues",
+  "keywords": [
+    "agents",
+    "ai",
+    "claude",
+    "codex",
+    "orchestrator",
+    "workflow",
+    "yaml",
+    "cli"
+  ],
   "type": "module",
   "bin": {
     "sao": "./dist/cli.js"

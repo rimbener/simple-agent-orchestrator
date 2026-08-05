@@ -56,17 +56,49 @@ describe("sao validate", () => {
 
   test("checks runner availability, matching run's preflight", () => {
     const { path } = tempWorkflow(`
-name: codex-early
+name: no-such-runner
 defaults:
-  runner: codex
+  runner: nope
 nodes:
   - id: a
     prompt: "hi"
 `);
     const result = runCli(["validate", path]);
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain('node "a": unknown runner "codex"');
-    expect(result.stderr).toContain("M4");
+    expect(result.stderr).toContain('node "a": unknown runner "nope"');
+    expect(result.stderr).toContain("available runners: claude, codex");
+  });
+
+  test("--dry-run prints the plan, creates nothing, and exits 0", () => {
+    const { dir, path } = tempWorkflow(`
+name: cli-dry
+nodes:
+  - id: a
+    prompt: "hello {{task}}"
+  - id: b
+    depends_on: [a]
+    bash: "echo {{nodes.a.output}}"
+`);
+    gitify(dir);
+    const result = runCli(["run", path, "the", "task", "--dry-run"], dir);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("dry run: cli-dry — 2 nodes, nothing executes");
+    expect(result.stdout).toContain("prompt: hello the task");
+    expect(result.stdout).toContain("bash: echo <output of a>");
+    expect(existsSync(join(dir, ".sao"))).toBe(false); // no run dir, no worktree, no exclude edit
+  });
+
+  test("--auto-open-pr conflicts with --no-worktree, like --base/--branch", () => {
+    const { dir, path } = tempWorkflow(`
+name: cli-pr-conflict
+nodes:
+  - id: a
+    bash: "true"
+`);
+    const result = runCli(["run", path, "--no-worktree", "--auto-open-pr"], dir);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("--auto-open-pr has no effect with --no-worktree");
+    expect(existsSync(join(dir, ".sao"))).toBe(false);
   });
 
   test("surfaces hints for invalid workflows", () => {
@@ -396,7 +428,7 @@ describe("sao run in a worktree + resume/list/logs/clean", () => {
     const traversal = runCli(["resume", "../../etc"], dir);
     expect(traversal.status).toBe(1);
     expect(traversal.stderr).toContain("invalid run id");
-  });
+  }, 30000); // 2 spawned CLI subprocesses — same load headroom as the lifecycle test
 
   test("list with no runs says so", () => {
     const dir = mkdtempSync(join(tmpdir(), "sao-cli-"));
