@@ -6,3 +6,5 @@ dist/
 reports/
 
 .vscode/settings.json
+examples/jira-orchestrator.yaml
+examples/ticket-orchestrator.yaml
