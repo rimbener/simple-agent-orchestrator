@@ -1,0 +1,39 @@
+{
+  "name": "simple-agent-orchestrator",
+  "version": "0.1.0",
+  "description": "sao — simple agent orchestrator: a minimal YAML workflow engine for AI coding agents",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "sao": "./dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "os": [
+    "darwin",
+    "linux"
+  ],
+  "scripts": {
+    "dev": "bun run src/cli.ts",
+    "test": "bun test",
+    "test:mutation": "stryker run",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json",
+    "build": "bun build src/cli.ts --outdir dist --target node",
+    "prepack": "bun run build"
+  },
+  "devDependencies": {
+    "@hughescr/stryker-bun-runner": "^1.3.8",
+    "@stryker-mutator/core": "^9.6.1",
+    "@types/bun": "^1.1.14",
+    "@types/node": "^22.10.0",
+    "commander": "^12.1.0",
+    "picocolors": "^1.1.1",
+    "typescript": "^5.7.0",
+    "yaml": "^2.6.0",
+    "zod": "^3.23.8"
+  }
+}

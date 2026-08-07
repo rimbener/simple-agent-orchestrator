@@ -1,2 +1,8 @@
 
-.agents/rules/*
+node_modules/
+dist/
+.sao/
+.stryker-tmp*/
+reports/
+
+.vscode/settings.json

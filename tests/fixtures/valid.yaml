@@ -1,0 +1,24 @@
+name: valid
+description: three-node chain used across tests
+
+inputs:
+  - name: issue
+    required: true
+  - name: audience
+    default: world
+
+defaults:
+  runner: claude
+  model: sonnet
+
+nodes:
+  - id: plan
+    prompt: "Plan {{task}} for issue {{issue}}."
+
+  - id: check
+    depends_on: [plan]
+    bash: "echo checked for {{audience}}"
+
+  - id: summarize
+    depends_on: [check, plan]
+    prompt: "Summarize: {{nodes.plan.output}} / {{nodes.check.output}}"
