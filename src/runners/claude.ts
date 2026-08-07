@@ -138,7 +138,7 @@ export const claudeRunner: Runner = {
         cwd: req.cwd,
         // Stryker disable next-line ArrayDeclaration: equivalent — node/bun default missing stdio entries for fds 0-2 to "pipe"
         stdio: ["pipe", "pipe", "pipe"],
-        env: process.env,
+        env: { ...process.env, ...req.env }, // SAO_* run metadata rides along (SPEC step 6)
         detached: true, // own process group, so a timeout can kill the whole tree
       });
       track(child);

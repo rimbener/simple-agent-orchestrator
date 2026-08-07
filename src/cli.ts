@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { Command, InvalidArgumentError } from "commander";
 import pc from "picocolors";
@@ -6,7 +7,8 @@ import pkg from "../package.json" with { type: "json" };
 import { preflightAiConfigs, runWorkflow } from "./engine";
 import { SaoError } from "./errors";
 import { loadWorkflow } from "./parser";
-import { findRepoRoot } from "./state";
+import { cleanRuns, formatCleanSummary, formatRunList, makeLogPoller, printLogs } from "./runs";
+import { findRepoRoot, loadRun } from "./state";
 
 const program = new Command();
 program.name("sao").description("simple agent orchestrator — a minimal YAML workflow engine for AI coding agents").version(pkg.version);
@@ -17,15 +19,28 @@ program
   .argument("<workflow>", "path to a workflow YAML file")
   .argument("[task...]", "freeform task text, available as {{task}}")
   .option("--var <key=value>", "set a declared input (repeatable)", collectVar, Object.create(null) as Record<string, string>)
+  .option("--base <ref>", "ref to cut the run worktree/branch from (default: workflow base:, else HEAD)")
+  .option("--branch <name>", "branch name for the run worktree (default: sao/<run-id>)")
+  .option("--no-worktree", "run in place instead of an isolated git worktree")
   .option("--runner <name>", "override the runner for every AI node")
   .option("--concurrency <n>", "max nodes executing at once (default 2)", parseConcurrency)
   .action(
     async (
       workflowPath: string,
       taskWords: string[],
-      options: { var: Record<string, string>; runner?: string; concurrency?: number },
+      options: {
+        var: Record<string, string>;
+        base?: string;
+        branch?: string;
+        worktree: boolean;
+        runner?: string;
+        concurrency?: number;
+      },
     ) => {
       await fail(async () => {
+        if (!options.worktree && (options.base !== undefined || options.branch !== undefined)) {
+          throw new SaoError("--base/--branch have no effect with --no-worktree", "they configure the run worktree — drop them or drop --no-worktree");
+        }
         const path = resolve(workflowPath);
         const repoRoot = findRepoRoot(process.cwd());
         const workflow = loadWorkflow(path, { cwd: repoRoot });
@@ -38,10 +53,36 @@ program
           runRoot: repoRoot, // SPEC step 3: the run dir lives in the main repo
           concurrency: options.concurrency,
           runnerOverride: options.runner,
+          worktree: options.worktree ? { base: options.base, branch: options.branch } : undefined,
         });
       });
     },
   );
+
+program
+  .command("resume")
+  .description("re-run a halted run from its failed node/iteration")
+  .argument("<run-id>", "run id (see sao list)")
+  .option("--force", "resume even if the configuration changed, the recorded owner pid looks alive, or a live lock must be taken over")
+  .action(async (runId: string, options: { force?: boolean }) => {
+    await fail(async () => {
+      const repoRoot = findRepoRoot(process.cwd());
+      const { state, paths } = loadRun(repoRoot, runId);
+      if (!existsSync(state.workflow)) {
+        throw new SaoError(`workflow file is gone: ${state.workflow}`, "the original file is needed to resume");
+      }
+      const workflow = loadWorkflow(state.workflow, { cwd: repoRoot });
+      await runWorkflow({
+        workflow,
+        workflowPath: state.workflow,
+        task: state.task,
+        vars: state.vars,
+        cwd: process.cwd(),
+        runRoot: repoRoot,
+        resume: { state, paths, force: options.force === true },
+      });
+    });
+  });
 
 program
   .command("validate")
@@ -52,6 +93,57 @@ program
       const workflow = loadWorkflow(resolve(workflowPath), { cwd: findRepoRoot(process.cwd()) });
       preflightAiConfigs(workflow);
       console.log(pc.green(`✓ ${workflow.name}`) + pc.dim(` — ${workflow.nodes.length} nodes, valid`));
+    });
+  });
+
+program
+  .command("list")
+  .description("list runs under .sao/runs")
+  .action(async () => {
+    await fail(async () => {
+      for (const line of formatRunList(findRepoRoot(process.cwd()), new Date())) console.log(line);
+    });
+  });
+
+program
+  .command("logs")
+  .description("print a run's node logs")
+  .argument("<run-id>", "run id (see sao list)")
+  .argument("[node-id]", "only this node's logs (loops: every iteration)")
+  .option("--follow", "keep polling for new log output (Ctrl-C to stop)")
+  .action(async (runId: string, nodeId: string | undefined, options: { follow?: boolean }) => {
+    await fail(async () => {
+      const { state, paths } = loadRun(findRepoRoot(process.cwd()), runId);
+      const nodeOrder = Object.keys(state.nodes); // state.json keeps dependency order
+      const write = (text: string) => process.stdout.write(text);
+      if (options.follow === true) {
+        const poller = makeLogPoller(paths, nodeId, write, nodeOrder);
+        poller.poll();
+        // The interval keeps the event loop alive until Ctrl-C. Its callbacks run
+        // outside fail()'s try — route errors through the same printer, not a crash.
+        const timer = setInterval(() => {
+          try {
+            poller.poll();
+          } catch (err) {
+            clearInterval(timer);
+            printError(err);
+          }
+        }, 300);
+      } else {
+        printLogs(paths, nodeId, write, nodeOrder);
+      }
+    });
+  });
+
+program
+  .command("clean")
+  .description("remove worktrees and branches of finished runs")
+  .option("--all", "also remove the run dirs (state + logs) and worktrees with uncommitted changes")
+  .action(async (options: { all?: boolean }) => {
+    await fail(async () => {
+      const root = findRepoRoot(process.cwd());
+      const summary = cleanRuns(root, options.all === true, (line) => console.log(pc.yellow(line)));
+      console.log(formatCleanSummary(summary));
     });
   });
 
@@ -68,17 +160,21 @@ function collectVar(pair: string, acc: Record<string, string>): Record<string, s
   return acc;
 }
 
+function printError(err: unknown): void {
+  if (err instanceof SaoError) {
+    console.error(pc.red(`error: ${err.message}`));
+    if (err.hint) console.error(pc.dim(`  hint: ${err.hint}`));
+  } else {
+    console.error(pc.red(`unexpected error: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`));
+  }
+  process.exitCode = 1; // no hard exit: let pending stream writes drain
+}
+
 async function fail(fn: () => Promise<void>): Promise<void> {
   try {
     await fn();
   } catch (err) {
-    if (err instanceof SaoError) {
-      console.error(pc.red(`error: ${err.message}`));
-      if (err.hint) console.error(pc.dim(`  hint: ${err.hint}`));
-    } else {
-      console.error(pc.red(`unexpected error: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`));
-    }
-    process.exitCode = 1; // no hard exit: let pending stream writes drain
+    printError(err);
   }
 }
 

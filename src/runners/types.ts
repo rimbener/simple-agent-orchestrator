@@ -5,6 +5,8 @@ export interface RunnerRequest {
   prompt: string;
   systemPrompt?: string;
   cwd: string;
+  /** Extra environment (SAO_* run metadata) merged over process.env for the subprocess. */
+  env?: Record<string, string>;
   model?: string;
   permissionMode?: string;
   mcpConfigPath?: string;
