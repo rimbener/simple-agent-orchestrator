@@ -16,7 +16,7 @@
 name: jira-bug-fix
 description: One Jira bug ticket to a tested fix with an open PR and the ticket moved to Ready for Stage
 
-base: main                     # ref the run worktree/branch is cut from; override with --base
+# base: main                   # ref the run worktree/branch is cut from (uncomment when M3 lands)
 
 inputs:
   - name: ticket               # Jira issue id, e.g. PROJ-123

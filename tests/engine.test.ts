@@ -2,7 +2,7 @@ import { describe, expect, spyOn, test } from "bun:test";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { preflightRunners, runWorkflow } from "../src/engine";
+import { preflightAiConfigs, runWorkflow } from "../src/engine";
 import { SaoError } from "../src/errors";
 import { loadWorkflow } from "../src/parser";
 import { shutdownAll } from "../src/procs";
@@ -409,7 +409,7 @@ nodes:
     const lines = printed.map(stripAnsi);
     const logsDir = join(dir, ".sao", "runs", state.id, "logs");
     expect(lines).toHaveLength(5);
-    expect(lines[0]).toBe(`sao run ${state.id} (1 nodes, logs in ${logsDir})`);
+    expect(lines[0]).toBe(`sao run ${state.id} (1 nodes, concurrency 2, logs in ${logsDir})`);
     expect(lines[1]).toBe("→ a (bash)");
     expect(lines[2]).toBe("  [a] hello");
     const timing = /^✓ a \((\d+\.\d)s\)$/.exec(lines[3]!);
@@ -455,7 +455,7 @@ nodes:
         cwd: dir,
       });
       const logged = spy.mock.calls.map((call) => stripAnsi(String(call[0])));
-      expect(logged).toContain(`sao run ${state.id} (1 nodes, logs in ${join(dir, ".sao", "runs", state.id, "logs")})`);
+      expect(logged).toContain(`sao run ${state.id} (1 nodes, concurrency 2, logs in ${join(dir, ".sao", "runs", state.id, "logs")})`);
       expect(logged).toContain(`✓ run ${state.id} succeeded`);
     } finally {
       spy.mockRestore();
@@ -790,7 +790,7 @@ nodes:
   });
 });
 
-describe("preflightRunners", () => {
+describe("preflightAiConfigs", () => {
   function spyResolver(seen: string[]): (name: string) => Runner {
     return (name) => {
       seen.push(name);
@@ -809,9 +809,9 @@ nodes:
     bash: "echo ho"
 `);
     const seen: string[] = [];
-    const runners = preflightRunners(loadWorkflow(path), undefined, spyResolver(seen));
+    const configs = preflightAiConfigs(loadWorkflow(path), undefined, spyResolver(seen));
     expect(seen).toEqual([]);
-    expect(runners.size).toBe(0);
+    expect(configs.size).toBe(0);
   });
 
   test('falls back to exactly "claude" when nothing is configured', () => {
@@ -822,7 +822,7 @@ nodes:
     prompt: "hi"
 `);
     const seen: string[] = [];
-    preflightRunners(loadWorkflow(path), undefined, spyResolver(seen));
+    preflightAiConfigs(loadWorkflow(path), undefined, spyResolver(seen));
     expect(seen).toEqual(["claude"]);
   });
 
@@ -839,11 +839,11 @@ nodes:
     prompt: "hi"
 `);
     const seen: string[] = [];
-    preflightRunners(loadWorkflow(path), undefined, spyResolver(seen));
+    preflightAiConfigs(loadWorkflow(path), undefined, spyResolver(seen));
     expect(seen).toEqual(["noder", "defr"]);
 
     const overridden: string[] = [];
-    preflightRunners(loadWorkflow(path), "ovr", spyResolver(overridden));
+    preflightAiConfigs(loadWorkflow(path), "ovr", spyResolver(overridden));
     expect(overridden).toEqual(["ovr", "ovr"]);
   });
 
@@ -856,7 +856,7 @@ nodes:
 `);
     let caught: unknown;
     try {
-      preflightRunners(loadWorkflow(path), undefined, () => {
+      preflightAiConfigs(loadWorkflow(path), undefined, () => {
         throw new SaoError("no such runner", "install it");
       });
     } catch (err) {
@@ -876,7 +876,7 @@ nodes:
 `);
     let caught: unknown;
     try {
-      preflightRunners(loadWorkflow(path), undefined, () => {
+      preflightAiConfigs(loadWorkflow(path), undefined, () => {
         throw new Error("plain-fail");
       });
     } catch (err) {

@@ -2,13 +2,17 @@ import { createHash, randomBytes } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
-export type RunStatus = "running" | "succeeded" | "failed";
-export type NodeStatus = "pending" | "running" | "succeeded" | "failed";
+export type RunStatus = "running" | "succeeded" | "failed" | "rejected";
+export type NodeStatus = "pending" | "running" | "succeeded" | "failed" | "skipped" | "rejected";
 
 export interface NodeState {
   status: NodeStatus;
   output?: string;
   sessionId?: string;
+  /** Loop nodes: how many iterations ran. */
+  iterations?: number;
+  /** Interactive loops: the human feedback feeding the current iteration. */
+  lastFeedback?: string;
   startedAt?: string;
   endedAt?: string;
 }
@@ -76,6 +80,22 @@ export function saveState(paths: RunPaths, state: RunState): void {
   const tmp = paths.stateFile + ".tmp";
   writeFileSync(tmp, JSON.stringify(state, null, 2) + "\n");
   renameSync(tmp, paths.stateFile);
+}
+
+/**
+ * The working-tree root governing `start`: the closest ancestor containing a `.git`
+ * entry (dir or file). Falls back to `start` outside any repo. Anchors repo-level
+ * lookups like `.agents/agents/<name>.md`, so running sao from a subdirectory
+ * resolves the same files as running it from the root.
+ */
+export function findRepoRoot(start: string): string {
+  let dir = resolve(start);
+  while (true) {
+    if (existsSync(join(dir, ".git"))) return dir;
+    const parent = dirname(dir);
+    if (parent === dir) return resolve(start);
+    dir = parent;
+  }
 }
 
 /**

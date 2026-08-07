@@ -24,6 +24,8 @@ export interface RunnerResult {
 export interface Runner {
   name: string;
   run(req: RunnerRequest): Promise<RunnerResult>;
+  /** Optional environment check (binary on PATH, …) run at validate/preflight time. */
+  preflight?: () => void;
 }
 
 export type RunnerResolver = (name: string) => Runner;
@@ -36,6 +38,7 @@ export function getRunner(name: string): Runner {
   if (!runner) {
     throw new SaoError(
       `unknown runner "${name}"`,
+      // Stryker disable next-line StringLiteral: the ", " join separator is unobservable while the registry holds a single runner; the codex adapter (M4) makes it assertable
       name === "codex" ? "the codex adapter lands in M4" : `available runners: ${[...REGISTRY.keys()].join(", ")}`,
     );
   }
