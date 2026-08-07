@@ -65,11 +65,11 @@ const buffered: string[] = [];
 let waiting: { resolve: (line: string) => void; reject: (err: SaoError) => void } | undefined;
 
 function ensureReadline(): void {
-  if (rl !== undefined || stdinClosed) return;
   if (process.stdin.readableEnded || process.stdin.destroyed) {
     stdinClosed = true;
     return;
   }
+  if (rl !== undefined || stdinClosed) return;
   rl = createInterface({ input: process.stdin, output: process.stdout });
   rl.on("line", (line) => {
     if (waiting !== undefined) {

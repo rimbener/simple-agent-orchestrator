@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { accessSync, constants } from "node:fs";
 import { join } from "node:path";
 import { SaoError, truncateDetail } from "../errors";
-import { killTree, track } from "../procs";
+import { killTree, swallowStdinErrors, track } from "../procs";
 import type { Runner, RunnerRequest, RunnerResult } from "./types";
 
 interface StreamEvent {
@@ -149,7 +149,7 @@ export const claudeRunner: Runner = {
         detached: true, // own process group, so a timeout can kill the whole tree
       });
       track(child);
-      child.stdin.on("error", () => {}); // EPIPE if claude dies early — close reports it
+      swallowStdinErrors(child); // EPIPE if claude dies early — close reports it
       child.stdin.end(req.prompt);
 
       const collector = new ClaudeStreamCollector(req.onOutput);

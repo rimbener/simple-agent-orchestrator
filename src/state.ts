@@ -297,9 +297,10 @@ export function findRepoRoot(start: string): string {
       return dir;
     }
     const parent = dirname(dir);
-    if (parent === dir) return resolve(start);
+    if (parent === dir) break;
     dir = parent;
   }
+  return resolve(start);
 }
 
 /**
@@ -322,9 +323,10 @@ function findGitDir(start: string): string | undefined {
       return existsSync(commonFile) ? resolve(gitDir, readFileSync(commonFile, "utf8").trim()) : gitDir;
     }
     const parent = dirname(dir);
-    if (parent === dir) return undefined;
+    if (parent === dir) break;
     dir = parent;
   }
+  return undefined;
 }
 
 function ensureGitExclude(root: string): void {

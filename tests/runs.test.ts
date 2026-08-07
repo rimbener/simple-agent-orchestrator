@@ -200,6 +200,19 @@ describe("makeLogPoller", () => {
     expect(poll.poll()).toBe(true);
     expect(out.join("")).toContain("more\n");
   });
+
+  test("a directory squatting on a .log name is skipped — the stat→open race guard", () => {
+    const root = temp();
+    const logsDir = join(root, "logs");
+    mkdirSync(logsDir);
+    // A directory named like a log passes readdir and stat (size > 0) but openSync
+    // rejects it (EISDIR) — the same shape as a file vanishing between stat and open.
+    mkdirSync(join(logsDir, "fake.log"));
+    writeFileSync(join(logsDir, "fake.log", "x"), "x"); // guarantee a non-zero dir size
+    const { out, poll } = poller(logsDir);
+    expect(poll.poll()).toBe(false);
+    expect(out).toEqual([]);
+  });
 });
 
 describe("printLogs", () => {

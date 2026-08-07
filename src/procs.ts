@@ -19,6 +19,15 @@ export function track(child: ChildProcess): void {
 }
 
 /**
+ * Swallow EPIPE on the child's stdin when it closes the pipe early (a runner that
+ * exits without reading its prompt) — the outcome is reported by `close`/`exit`,
+ * and an unhandled stdin error would otherwise crash the whole process.
+ */
+export function swallowStdinErrors(child: ChildProcess): void {
+  child.stdin?.on("error", () => {});
+}
+
+/**
  * Register a synchronous hook to run when the process is torn down (signal, exit) —
  * e.g. persisting run state so state.json never claims "running" after a Ctrl-C.
  * Returns an unregister function; callers must unregister on normal completion.

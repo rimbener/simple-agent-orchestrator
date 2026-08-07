@@ -187,8 +187,8 @@ function classifyStep(raw: unknown, stepIndex: number, label: () => string): Loo
     return { ...bashStepSchema.parse(record), kind: "bash" } satisfies BashStep;
   } catch (err) {
     // Stryker disable next-line ConditionalExpression: zod .parse only throws ZodError, so forcing this guard true is unobservable
-    if (err instanceof ZodError) throw new SaoError(`invalid ${label()} step #${stepIndex + 1}`, formatZod(err));
-    throw err;
+    if (!(err instanceof ZodError)) throw err;
+    throw new SaoError(`invalid ${label()} step #${stepIndex + 1}`, formatZod(err));
   }
 }
 

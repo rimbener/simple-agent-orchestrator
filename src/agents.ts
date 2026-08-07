@@ -85,13 +85,11 @@ export function loadAgent(ref: string, path: string): AgentSpec {
         meta = frontmatterSchema.parse(doc);
       } catch (err) {
         // Stryker disable next-line ConditionalExpression: zod .parse only throws ZodError, so forcing this guard true is unobservable
-        if (err instanceof ZodError) {
-          throw new SaoError(
-            `agent "${ref}": invalid frontmatter in ${path}`,
-            err.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("\n"),
-          );
-        }
-        throw err;
+        if (!(err instanceof ZodError)) throw err;
+        throw new SaoError(
+          `agent "${ref}": invalid frontmatter in ${path}`,
+          err.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("\n"),
+        );
       }
     }
   }

@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { killTree, onShutdown, shutdownAll, track } from "../src/procs";
+import { killTree, onShutdown, shutdownAll, swallowStdinErrors, track } from "../src/procs";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -210,6 +210,22 @@ describe("track", () => {
     emitExit(); // the exit listener must drop it from the active set
     shutdownAll();
     expect(kills).toEqual([]);
+  });
+});
+
+describe("swallowStdinErrors", () => {
+  test("a stdin EPIPE from a child that exited early is swallowed, not a crash", () => {
+    const stdin = new EventEmitter();
+    const child = Object.assign(new EventEmitter(), { stdin }) as unknown as ChildProcess;
+    expect(() => {
+      swallowStdinErrors(child);
+      stdin.emit("error", Object.assign(new Error("EPIPE"), { code: "EPIPE" }));
+    }).not.toThrow();
+  });
+
+  test("a child without a stdin stream is tolerated", () => {
+    const child = fakeChild(1).child;
+    expect(() => swallowStdinErrors(child)).not.toThrow();
   });
 });
 

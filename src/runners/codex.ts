@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { SaoError, truncateDetail } from "../errors";
-import { killTree, track } from "../procs";
+import { killTree, swallowStdinErrors, track } from "../procs";
 import { findExecutableOnPath } from "./claude";
 import type { Runner, RunnerRequest, RunnerResult } from "./types";
 
@@ -163,7 +163,7 @@ export const codexRunner: Runner = {
         detached: true, // own process group, so a timeout can kill the whole tree
       });
       track(child);
-      child.stdin.on("error", () => {}); // EPIPE if codex dies early — close reports it
+      swallowStdinErrors(child); // EPIPE if codex dies early — close reports it
       child.stdin.end(composeCodexPrompt(req));
 
       const collector = new CodexStreamCollector(req.onOutput);
