@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SaoError } from "../src/errors";
@@ -8,9 +8,11 @@ import {
   addWorktree,
   branchExists,
   branchIsMergedElsewhere,
+  createDraftPr,
   deleteBranch,
   finalizeWorktree,
   isUsableWorktree,
+  pushBranch,
   pruneWorktrees,
   removeWorktree,
   requireGitRepo,
@@ -318,6 +320,258 @@ describe("finalizeWorktree / worktreeHasChanges", () => {
       throw new Error("should have thrown");
     } catch (err) {
       expect((err as SaoError).message).toBe("git status failed in the worktree");
+    }
+  });
+});
+
+describe("pushBranch / createDraftPr", () => {
+  /** Fake `gh` first on PATH recording argv + stdin; prints noise then a URL. */
+  function withStubGh(script?: string): { dir: string; restore: () => void } {
+    const dir = mkdtempSync(join(tmpdir(), "sao-gh-stub-"));
+    writeFileSync(
+      join(dir, "gh"),
+      script ??
+        `#!/bin/sh
+printf '%s\\n' "$@" > "${join(dir, "args.txt")}"
+cat > "${join(dir, "body.txt")}"
+echo "some gh noise first"
+echo ""
+echo "https://github.com/o/r/pull/12"
+`,
+    );
+    chmodSync(join(dir, "gh"), 0o755);
+    const oldPath = process.env.PATH;
+    process.env.PATH = `${dir}:${oldPath}`;
+    return { dir, restore: () => (process.env.PATH = oldPath) };
+  }
+
+  function repoWithOrigin(): { dir: string; bare: string; wt: string } {
+    const dir = repo();
+    const bare = bareDir();
+    git(bare, "init", "-q", "--bare");
+    git(dir, "remote", "add", "origin", bare);
+    const wt = join(dir, ".sao", "worktrees", "run-pr");
+    addWorktree(dir, wt, "sao/run-pr", "main");
+    return { dir, bare, wt };
+  }
+
+  test("pushBranch lands the branch on origin with an upstream", () => {
+    const { bare, wt } = repoWithOrigin();
+    pushBranch(wt, "sao/run-pr");
+    expect(git(bare, "branch", "--list", "sao/run-pr")).toContain("sao/run-pr");
+    expect(git(wt, "rev-parse", "--abbrev-ref", "sao/run-pr@{upstream}")).toBe("origin/sao/run-pr");
+  });
+
+  test("pushBranch without an origin composes detail and the remote hint", () => {
+    const dir = repo();
+    const wt = join(dir, ".sao", "worktrees", "run-nopush");
+    addWorktree(dir, wt, "sao/run-nopush", "main");
+    try {
+      pushBranch(wt, "sao/run-nopush");
+      throw new Error("should have thrown");
+    } catch (err) {
+      expect((err as SaoError).message).toBe("git push failed for sao/run-nopush");
+      expect((err as SaoError).hint).toContain("is an 'origin' remote configured and writable?");
+    }
+  });
+
+  test("option-shaped and refspec-shaped branch names never reach git/gh argv", () => {
+    const { wt } = repoWithOrigin();
+    try {
+      pushBranch(wt, "--force");
+      throw new Error("should have thrown");
+    } catch (err) {
+      expect((err as SaoError).message).toBe("invalid branch name: --force");
+      expect((err as SaoError).hint).toBe("branch names cannot start with '-' (git would parse it as an option)");
+    }
+    // "+x" is check-ref-format-valid but means FORCE to git push's refspec parser —
+    // "+sao/x:main" from a tampered state.json would force-overwrite origin/main.
+    try {
+      pushBranch(wt, "+main");
+      throw new Error("should have thrown");
+    } catch (err) {
+      expect((err as SaoError).message).toBe("invalid branch name: +main");
+      expect((err as SaoError).hint).toBe("branch names cannot start with '+' (git push would read it as a force refspec)");
+    }
+    expect(() => pushBranch(wt, "sao/x:main")).toThrow("invalid branch name: sao/x:main"); // ':' via check-ref-format
+    expect(() => createDraftPr(wt, { branch: "-f", title: "t", body: "b" })).toThrow("invalid branch name: -f");
+    expect(() => createDraftPr(wt, { branch: "+main", title: "t", body: "b" })).toThrow("invalid branch name: +main");
+    expect(() => createDraftPr(wt, { branch: "sao/run-pr", title: "t", body: "b", baseBranch: "-D" })).toThrow("invalid branch name: -D");
+  });
+
+  test("validateBranchName rejects '+…' at creation time too", () => {
+    const dir = repo();
+    expect(() => validateBranchName(dir, "+main")).toThrow("invalid branch name: +main");
+  });
+
+  test("the push uses an explicit refspec — a branch literally named like a ref pushes to itself", () => {
+    // With a bare-name push, refspec syntax in the name is what makes "+x" dangerous;
+    // the explicit refs/heads/x:refs/heads/x form pins both ends.
+    const { bare, wt } = repoWithOrigin();
+    pushBranch(wt, "sao/run-pr");
+    expect(git(bare, "for-each-ref", "--format=%(refname)", "refs/heads/")).toBe("refs/heads/sao/run-pr");
+  });
+
+  test("a push to a black-holed remote times out instead of hanging forever", async () => {
+    const dir = repo();
+    const wt = join(dir, ".sao", "worktrees", "run-hang");
+    addWorktree(dir, wt, "sao/run-hang", "main");
+    // A TCP listener that accepts and never speaks — git blocks on the protocol.
+    const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+    git(dir, "remote", "add", "origin", `git://127.0.0.1:${server.port}/x.git`);
+    try {
+      pushBranch(wt, "sao/run-hang", 500);
+      throw new Error("should have thrown");
+    } catch (err) {
+      expect((err as SaoError).message).toBe("git push timed out after 500ms");
+      expect((err as SaoError).hint).toContain("the remote did not respond");
+    } finally {
+      server.stop(true);
+    }
+  }, 15000);
+
+  test("createDraftPr sends the body over stdin, flags as single tokens, and returns the URL", () => {
+    const { wt } = repoWithOrigin();
+    const gh = withStubGh();
+    try {
+      pushBranch(wt, "sao/run-pr");
+      const url = createDraftPr(wt, {
+        branch: "sao/run-pr",
+        title: "-starts with a dash: still one token",
+        body: "line one\nline two",
+      });
+      expect(url).toBe("https://github.com/o/r/pull/12");
+      const args = readFileSync(join(gh.dir, "args.txt"), "utf8").split("\n");
+      expect(args).toEqual(["pr", "create", "--draft", "--head=sao/run-pr", "--title=-starts with a dash: still one token", "--body-file", "-", ""]);
+      expect(readFileSync(join(gh.dir, "body.txt"), "utf8")).toBe("line one\nline two");
+    } finally {
+      gh.restore();
+    }
+  });
+
+  test("a baseBranch lands as --base=, after the same validation as the head", () => {
+    const { wt } = repoWithOrigin();
+    const gh = withStubGh();
+    try {
+      createDraftPr(wt, { branch: "sao/run-pr", title: "t", body: "b", baseBranch: "release-1.2" });
+      const args = readFileSync(join(gh.dir, "args.txt"), "utf8").split("\n");
+      expect(args).toContain("--base=release-1.2");
+    } finally {
+      gh.restore();
+    }
+  });
+
+  test("the URL is the last line that IS a URL — trailing gh notices don't leak into the report", () => {
+    const { wt } = repoWithOrigin();
+    const gh = withStubGh(`#!/bin/sh
+cat > /dev/null
+echo "https://github.com/o/r/pull/13   "
+echo "! a post-create notice"
+echo "   "
+`);
+    try {
+      expect(createDraftPr(wt, { branch: "sao/run-pr", title: "t", body: "b" })).toBe("https://github.com/o/r/pull/13");
+    } finally {
+      gh.restore();
+    }
+  });
+
+  test("a gh that prints no URL is a failure, not an empty pr line", () => {
+    const gh = withStubGh("#!/bin/sh\ncat > /dev/null\necho 'created something, silently'\n");
+    const { wt } = repoWithOrigin();
+    try {
+      createDraftPr(wt, { branch: "sao/run-pr", title: "t", body: "b" });
+      throw new Error("should have thrown");
+    } catch (err) {
+      expect((err as SaoError).message).toBe("gh pr create printed no PR URL");
+      expect((err as SaoError).hint).toContain("created something, silently");
+    } finally {
+      gh.restore();
+    }
+  });
+
+  test("the URL match is anchored and scheme-flexible", () => {
+    const { wt } = repoWithOrigin();
+    // A trailing notice MENTIONING a URL mid-line must not be mistaken for the URL…
+    const noisy = withStubGh(`#!/bin/sh
+cat > /dev/null
+echo "http://github.local/o/r/pull/14"
+echo "note: see https://docs.github.com for draft PRs"
+`);
+    try {
+      // …and a plain-http URL (GH Enterprise) still matches.
+      expect(createDraftPr(wt, { branch: "sao/run-pr", title: "t", body: "b" })).toBe("http://github.local/o/r/pull/14");
+    } finally {
+      noisy.restore();
+    }
+  });
+
+  test("a gh stalled on a black-holed API times out instead of hanging forever", () => {
+    const gh = withStubGh("#!/bin/sh\ncat > /dev/null\nsleep 30\n");
+    const { wt } = repoWithOrigin();
+    try {
+      createDraftPr(wt, { branch: "sao/run-pr", title: "t", body: "b" }, 500);
+      throw new Error("should have thrown");
+    } catch (err) {
+      expect((err as SaoError).message).toBe("gh pr create timed out after 500ms");
+      expect((err as SaoError).hint).toContain("open the PR manually");
+    } finally {
+      gh.restore();
+    }
+  }, 15000);
+
+  test("a gh with EMPTY stdout fails with the manual-command hint", () => {
+    const gh = withStubGh("#!/bin/sh\ncat > /dev/null\nexit 0\n");
+    const { wt } = repoWithOrigin();
+    try {
+      createDraftPr(wt, { branch: "sao/run-pr", title: "t", body: "b" });
+      throw new Error("should have thrown");
+    } catch (err) {
+      expect((err as SaoError).message).toBe("gh pr create printed no PR URL");
+      expect((err as SaoError).hint).toBe("open the PR manually with: gh pr create");
+    } finally {
+      gh.restore();
+    }
+  });
+
+  test("a failing gh becomes a SaoError with stderr detail and the auth hint", () => {
+    const { wt } = repoWithOrigin();
+    const gh = withStubGh("#!/bin/sh\ncat > /dev/null\necho 'gh: HTTP 401' >&2\nexit 1\n");
+    try {
+      createDraftPr(wt, { branch: "sao/run-pr", title: "t", body: "b" });
+      throw new Error("should have thrown");
+    } catch (err) {
+      expect((err as SaoError).message).toBe("gh pr create failed");
+      expect((err as SaoError).hint).toContain("gh: HTTP 401");
+      expect((err as SaoError).hint).toContain("is gh authenticated (gh auth status)");
+    } finally {
+      gh.restore();
+    }
+  });
+
+  test("git() passes the caller env AND the process env through to git", () => {
+    // Identity comes ONLY from GIT_CONFIG_* process-env vars here — if git() ever
+    // stops spreading process.env, this finalize loses its identity and fails.
+    const dir = repo();
+    git(dir, "config", "--unset", "user.name");
+    git(dir, "config", "--unset", "user.email");
+    const wt = join(dir, ".sao", "worktrees", "run-env");
+    addWorktree(dir, wt, "sao/run-env", "main");
+    writeFileSync(join(wt, "work.txt"), "x\n");
+    const old = { ...process.env };
+    process.env.GIT_CONFIG_COUNT = "2";
+    process.env.GIT_CONFIG_KEY_0 = "user.name";
+    process.env.GIT_CONFIG_VALUE_0 = "Env T";
+    process.env.GIT_CONFIG_KEY_1 = "user.email";
+    process.env.GIT_CONFIG_VALUE_1 = "env@t";
+    try {
+      expect(finalizeWorktree(wt, "run-env")).toBe(true);
+      expect(git(wt, "log", "-1", "--format=%an")).toBe("Env T");
+    } finally {
+      for (const key of ["GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0", "GIT_CONFIG_KEY_1", "GIT_CONFIG_VALUE_1"]) {
+        if (old[key] === undefined) delete process.env[key];
+        else process.env[key] = old[key];
+      }
     }
   });
 });

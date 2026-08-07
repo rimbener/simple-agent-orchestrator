@@ -1,5 +1,6 @@
 import { SaoError } from "../errors";
 import { claudeRunner } from "./claude";
+import { codexRunner } from "./codex";
 
 export interface RunnerRequest {
   prompt: string;
@@ -28,21 +29,26 @@ export interface Runner {
   run(req: RunnerRequest): Promise<RunnerResult>;
   /** Optional environment check (binary on PATH, …) run at validate/preflight time. */
   preflight?: () => void;
+  /**
+   * Whether run() honors resumeSessionId. Only an explicit `false` marks a runner
+   * incapable — loops with `fresh_context: false` are rejected for it at
+   * validate/preflight time (mock runners that leave it unset stay resumable).
+   */
+  supportsSessionResume?: boolean;
 }
 
 export type RunnerResolver = (name: string) => Runner;
 
 // A Map, not a plain object: `--runner toString` must not resolve via the prototype chain.
-const REGISTRY = new Map<string, Runner>([["claude", claudeRunner]]);
+const REGISTRY = new Map<string, Runner>([
+  ["claude", claudeRunner],
+  ["codex", codexRunner],
+]);
 
 export function getRunner(name: string): Runner {
   const runner = REGISTRY.get(name);
   if (!runner) {
-    throw new SaoError(
-      `unknown runner "${name}"`,
-      // Stryker disable next-line StringLiteral: the ", " join separator is unobservable while the registry holds a single runner; the codex adapter (M4) makes it assertable
-      name === "codex" ? "the codex adapter lands in M4" : `available runners: ${[...REGISTRY.keys()].join(", ")}`,
-    );
+    throw new SaoError(`unknown runner "${name}"`, `available runners: ${[...REGISTRY.keys()].join(", ")}`);
   }
   return runner;
 }

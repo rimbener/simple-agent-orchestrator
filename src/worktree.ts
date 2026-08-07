@@ -16,8 +16,12 @@ interface GitResult {
   stderr: string;
 }
 
-function git(args: string[], cwd: string): GitResult {
-  const result = spawnSync("git", args, { cwd, encoding: "utf8" });
+function git(args: string[], cwd: string, env?: Record<string, string>, timeoutMs?: number): GitResult {
+  const result = spawnSync("git", args, { cwd, encoding: "utf8", env: { ...process.env, ...env }, timeout: timeoutMs });
+  // Stryker disable next-line ConditionalExpression: forcing the flavor check true is test-equivalent — a black-holed remote (ETIMEDOUT) is the only result.error any in-process test can stage; the unspawnable-git flavors below are not fabricatable
+  if (result.error && (result.error as NodeJS.ErrnoException).code === "ETIMEDOUT") {
+    throw new SaoError(`git ${args[0]} timed out after ${timeoutMs}ms`, "the remote did not respond — check the network, then retry");
+  }
   // Stryker disable all: result.error means git itself could not be spawned (not
   // installed, or the cwd vanished). Bun resolves executables outside process.env.PATH,
   // so no in-process test can fabricate a missing git; the cwd-vanished flavor is
@@ -79,6 +83,11 @@ export function verifyBaseRef(root: string, ref: string): void {
 export function validateBranchName(root: string, branch: string): void {
   if (branch.startsWith("-")) {
     throw new SaoError(`invalid branch name: ${branch}`, "branch names cannot start with '-' (git would parse it as an option)");
+  }
+  // check-ref-format ACCEPTS "+x", but to `git push` a leading '+' means force —
+  // a branch named "+main" would silently force-push over origin/main.
+  if (branch.startsWith("+")) {
+    throw new SaoError(`invalid branch name: ${branch}`, "branch names cannot start with '+' (git push would read it as a force refspec)");
   }
   const res = git(["check-ref-format", `refs/heads/${branch}`], root);
   if (res.code !== 0) {
@@ -213,6 +222,90 @@ export function pruneWorktrees(root: string): void {
   git(["worktree", "prune"], root);
 }
 // Stryker restore all
+
+/**
+ * Push the run branch to origin (--auto-open-pr, SPEC step 8). Throws on failure —
+ * the engine downgrades that to a warning plus the default report; the run stays
+ * succeeded either way.
+ */
+export function pushBranch(worktreePath: string, branch: string, timeoutMs: number = PUSH_TIMEOUT_MS): void {
+  // state.branch is only as trustworthy as state.json. To `git push` a bare name is
+  // REFSPEC syntax: "+x" force-pushes and "src:dst" redirects to another ref — a
+  // tampered branch of "+sao/x:main" would force-overwrite origin/main and report
+  // success. Full validation (option shape, '+', ':' via check-ref-format) first…
+  validateBranchName(worktreePath, branch);
+  // …and an explicit src:dst refspec second, so no character of the name can ever
+  // reach git's refspec parser as syntax.
+  const refspec = `refs/heads/${branch}:refs/heads/${branch}`;
+  // GIT_TERMINAL_PROMPT=0: a credential prompt would hang spawnSync (same rationale
+  // as finalize's gpgsign/hooks) — fail fast instead. The timeout bounds the network
+  // vector: a black-holed remote must not strand a finished run as "running" forever.
+  // Stryker disable next-line ObjectLiteral,StringLiteral: only observable against a credential-prompting remote — no local test can stage an interactive git prompt
+  const res = git(["push", "--set-upstream", "origin", refspec], worktreePath, { GIT_TERMINAL_PROMPT: "0" }, timeoutMs);
+  if (res.code !== 0) {
+    throw gitFailure(`git push failed for ${branch}`, res, "is an 'origin' remote configured and writable?");
+  }
+}
+
+// Generous for a big first push, but bounded: all nodes already succeeded by the
+// time sao pushes, and a hang here strands the run as "running" forever.
+const PUSH_TIMEOUT_MS = 120_000;
+
+/**
+ * `gh pr create --draft` in the run worktree; returns the PR URL gh prints.
+ * Title/branch use --flag=value form (a leading "-" can then never open a new flag);
+ * the body rides over stdin — it is arbitrary AI output: unbounded and untrusted.
+ */
+export function createDraftPr(
+  worktreePath: string,
+  opts: { branch: string; title: string; body: string; baseBranch?: string },
+  timeoutMs: number = PUSH_TIMEOUT_MS,
+): string {
+  // Same trust model as pushBranch: state.json values never reach argv unvalidated.
+  validateBranchName(worktreePath, opts.branch);
+  const args = ["pr", "create", "--draft", `--head=${opts.branch}`, `--title=${opts.title}`, "--body-file", "-"];
+  if (opts.baseBranch !== undefined) {
+    validateBranchName(worktreePath, opts.baseBranch);
+    args.push(`--base=${opts.baseBranch}`);
+  }
+  const result = spawnSync("gh", args, {
+    cwd: worktreePath,
+    encoding: "utf8",
+    input: opts.body,
+    // Bounded for the same reason as the push: a gh stalled on a black-holed API
+    // must not strand a finished run as "running" forever.
+    timeout: timeoutMs,
+    // GH_PROMPT_DISABLED: gh must fail fast, not interview a terminal nobody is watching.
+    // Stryker disable next-line StringLiteral: only observable against an interactively-prompting gh — no local test can stage one
+    env: { ...process.env, GH_PROMPT_DISABLED: "1" },
+  });
+  // Stryker disable next-line ConditionalExpression: forcing the flavor check true is test-equivalent — a hung stub (ETIMEDOUT) is the only result.error any in-process test can stage; unspawnable-gh flavors are not fabricatable
+  if (result.error && (result.error as NodeJS.ErrnoException).code === "ETIMEDOUT") {
+    throw new SaoError(`gh pr create timed out after ${timeoutMs}ms`, "GitHub did not respond — open the PR manually with: gh pr create");
+  }
+  // Stryker disable all: result.error means gh itself could not be spawned. Bun falls
+  // back to system paths when the mutated PATH misses, so no in-process test can
+  // fabricate a missing gh (same reasoning as git() above).
+  if (result.error) {
+    throw new SaoError(`failed to run gh: ${result.error.message}`, "install the GitHub CLI: https://cli.github.com (or drop --auto-open-pr)");
+  }
+  // Stryker restore all — placed after the brace: a restore that is the last line
+  // inside a block attaches to nothing and silently disables the rest of the file.
+  if (result.status !== 0) {
+    // Stryker disable next-line all: the ?? fallbacks fire only when gh is killed by a signal (null status/streams) — not stageable deterministically, and every substitute value still lands in the same thrown error
+    throw gitFailure("gh pr create failed", { code: result.status ?? 1, stdout: result.stdout ?? "", stderr: result.stderr ?? "" }, "is gh authenticated (gh auth status), and does the repo have an 'origin' on GitHub?");
+  }
+  // gh prints the PR URL on stdout, possibly among notices — take the last line that
+  // IS a URL, and treat none as a failure (the engine then falls back to the manual
+  // hint instead of printing a notice line as if it were the PR).
+  // Stryker disable next-line StringLiteral: the ?? fallback fires only when gh is killed by a signal (null stdout) — not stageable deterministically
+  const lines = (result.stdout ?? "").split("\n").map((line) => line.trim());
+  const url = lines.filter((line) => /^https?:\/\//.test(line)).pop();
+  if (url === undefined) {
+    throw new SaoError("gh pr create printed no PR URL", truncateDetail(result.stdout) ?? "open the PR manually with: gh pr create");
+  }
+  return url;
+}
 
 /** Where a run's worktree lives, relative to the repo root (stored in state.json). */
 export function worktreeRelPath(runId: string): string {

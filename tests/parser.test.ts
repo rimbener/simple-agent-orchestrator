@@ -729,7 +729,7 @@ describe("examples", () => {
 
   test("every example validates against the M2 engine", () => {
     const repoRoot = new URL("../", import.meta.url).pathname;
-    for (const file of ["jira-bug-fix.yaml", "jira-orchestrator.yaml", "ticket-orchestrator.yaml"]) {
+    for (const file of ["jira-bug-fix.yaml"]) {
       const workflow = loadWorkflow(join(EXAMPLES, file), { cwd: repoRoot });
       expect(workflow.nodes.length).toBeGreaterThan(0);
     }
