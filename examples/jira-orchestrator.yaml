@@ -1,0 +1,241 @@
+# jira-orchestrator — one Jira ticket → validated, PR-ready feature.
+# sao expression of .agents/ORCHESTRATOR.md: fetch story from Jira (MCP) → spec
+# (grill → bundle → review → ONE human approval) → build per vertical slice →
+# full review → mutation → DoD → PR prep.
+#
+#   sao run examples/jira-orchestrator.yaml --var ticket=PROJ-123 --var feature=<kebab-name>
+#
+# The engine replaces the old harness pieces: worktree bootstrap off the delivery
+# branch (base: + --base), phase flips / progress files (state.json), escalation
+# (a loop hitting max_iterations halts the run → sao resume), and orchestrator_lead
+# itself (this file is the sequencing).
+
+name: jira-orchestrator
+description: One Jira ticket to a validated, PR-ready feature with a single human approval
+
+base: main                     # ref the run worktree/branch is cut from; override with --base
+
+inputs:
+  - name: ticket               # Jira issue id, e.g. PROJ-123
+    required: true
+  - name: feature              # kebab feature name (branch/docs slug)
+    required: true
+
+mcp:
+  jira:
+    command: npx
+    args: ["-y", "mcp-remote", "https://mcp.atlassian.com/v1/sse"]
+
+defaults:
+  runner: claude
+  permission_mode: acceptEdits # models come from each agent's frontmatter (opus/sonnet/haiku)
+  allowed_tools: [mcp__jira]
+
+nodes:
+  # ── Phase 0 — bootstrap (sao already cut the worktree from {{base}}) ──────────
+  - id: bootstrap
+    bash: |
+      pnpm install
+      mkdir -p docs/features/{{feature}} tmp/{{feature}}
+      cp .agents/templates/spec.md  docs/features/{{feature}}/spec.md
+      cp .agents/templates/tasks.md docs/features/{{feature}}/tasks.md
+      cp .agents/templates/task.md  docs/features/{{feature}}/task-1.md
+      git add -A && git commit -m "chore({{feature}}): start — seed docs"
+
+  # ── Fetch the story from Jira (MCP) — state on disk, then the ticket advances ─
+  - id: fetch-story
+    depends_on: [bootstrap]
+    prompt: |
+      Using the jira MCP tools, fetch issue {{ticket}} — summary, description,
+      acceptance criteria, and any clarifying comments. Write it all to
+      docs/features/{{feature}}/story.md, commit it
+      ("docs({{feature}}): story from {{ticket}}"), and transition {{ticket}}
+      to "In Progress".
+
+  # ── Phase 1 — spec_partner grills the human, one question per iteration ──────
+  - id: grill-and-spec
+    depends_on: [fetch-story]
+    agent: spec_partner
+    loop:
+      prompt: |
+        Feature: {{feature}} (Jira {{ticket}}).
+        Story: docs/features/{{feature}}/story.md.
+        Run the grill-me interview (.agents/skills/grill-me/): ask exactly ONE
+        question this turn, building on the human's previous answer:
+        {{loop.feedback}}
+        When the problem is fully understood, stop asking and write the bundle —
+        docs/features/{{feature}}/: spec.md, tasks.md, task-N.md,
+        gherkin-scenarios.md (per .agents/skills/gherkin-authoring/) — plus
+        tmp/{{feature}}/risks.md (written once, never re-read) — then emit the signal.
+      until: SPEC_BUNDLE_WRITTEN
+      max_iterations: 30
+      fresh_context: false     # one continuous interview session
+      interactive: true
+
+  # ── Automated spec review — one round, fix every finding, no re-review ───────
+  - id: spec-review
+    depends_on: [grill-and-spec]
+    agent: spec_reviewer
+    prompt: |
+      Review the {{feature}} spec bundle (spec.md, tasks.md, task-*.md,
+      gherkin-scenarios.md) per your rubric.
+      Write docs/features/{{feature}}/review-spec.md.
+
+  - id: spec-fixes
+    depends_on: [spec-review]
+    agent: spec_partner
+    prompt: |
+      Fix EVERY finding in docs/features/{{feature}}/review-spec.md across the
+      bundle and mark each one resolved there. An unresolvable finding: say so
+      explicitly and stop (do not paper over it).
+
+  # ── THE human gate — approve spec + gherkin together; edits loop back ────────
+  - id: approve-spec
+    depends_on: [spec-fixes]
+    agent: spec_partner
+    loop:
+      prompt: |
+        Present docs/features/{{feature}}/spec.md and gherkin-scenarios.md for the
+        pipeline's ONE human approval: summarize both in a few lines and point to
+        the files. If the human requested edits ({{loop.feedback}}), apply them to
+        the bundle first, re-checking against review-spec.md's findings.
+        The bundle is presentation-ready, so emit the signal every iteration.
+      until: SPEC_APPROVED
+      max_iterations: 10
+      fresh_context: false
+      interactive: true        # bare approve on a signaled iteration = the approval
+
+  - id: commit-spec
+    depends_on: [approve-spec]
+    bash: |
+      git add docs/features/{{feature}}
+      git commit -m "docs({{feature}}): approved spec + gherkin contract"
+
+  # ── Phase 2 — build, one vertical slice per iteration, light review each ─────
+  - id: build-slices
+    depends_on: [commit-spec]
+    loop:
+      steps:
+        - agent: implementer
+          prompt: |
+            {{feature}}: implement the NEXT unfinished slice from
+            docs/features/{{feature}}/tasks.md — strict TDD for non-UI .ts,
+            implementation-first for UI .tsx (impl → stories → interaction e2e →
+            unit tests), per .agents/rules/tdd.mdc. Flip the task-N.md status.
+            Keep tdd.md ≤ 8000 bytes. Stop when the slice is green.
+        - bash: "pnpm turbo lint check-types test --output-logs=errors-only"
+        - agent: reviewer_slice
+          prompt: |
+            Review THIS slice's diff for {{feature}} against every rule in
+            .agents/rules/ plus .agents/DESIGN.md and accessibility. One round.
+            Write docs/features/{{feature}}/review-slice.md (durable trail).
+        - agent: implementer
+          prompt: |
+            Fix EVERY finding in review-slice.md via TDD — no minors skipped —
+            mark them resolved, then commit the slice. If tasks.md shows every
+            slice done, emit the signal.
+      until: ALL_SLICES_COMPLETE
+      max_iterations: 8        # cap = escalation; resume after human intervention
+
+  # ── Phase 3a — full review, ≤ 2 rounds (cap → halt = escalate) ───────────────
+  - id: full-review
+    depends_on: [build-slices]
+    loop:
+      steps:
+        - bash: "pnpm turbo lint check-types test --output-logs=errors-only"  # CI once per round
+        - agent: reviewer_engineering
+          prompt: |
+            Sole full reviewer for {{feature}}: code · architecture · performance ·
+            security on the diff vs $SAO_BASE_REF (design/a11y were covered per
+            slice). Self-mark performance/security N/A when the diff can't trigger
+            them. Update docs/features/{{feature}}/review.md as a durable findings
+            trail — resolved items stay marked resolved; never empty the file.
+        - agent: implementer
+          prompt: |
+            Fix EVERY open finding in review.md — blocker, major AND minor — via
+            TDD, and mark them resolved. If review.md has zero open findings,
+            emit the signal.
+      until: REVIEW_CLEAN
+      max_iterations: 2
+
+  # ── Phase 3b — mutation, ≤ 2 rounds, escalate-only (never a faked PASS) ──────
+  - id: mutation-baseline
+    depends_on: [full-review]
+    bash: "git rev-parse HEAD > tmp/{{feature}}/mut-start-sha"
+
+  - id: mutation
+    depends_on: [mutation-baseline]
+    loop:
+      steps:
+        - bash: ".agents/skills/mutation-testing/scripts/run-mutation.sh $SAO_BASE_REF"
+        - agent: mutation_tester
+          prompt: |
+            Parse the Stryker report for {{feature}} with
+            .agents/skills/mutation-testing/scripts/parse-mutation-report.mjs into
+            docs/features/{{feature}}/mutation.md (changed files vs $SAO_BASE_REF).
+            Report survivors faithfully — never rewrite results or invent waivers.
+        - agent: implementer
+          prompt: |
+            Kill every surviving mutant in mutation.md — prefer a red TEST; change
+            source only if the mutant exposes a real defect. If mutation.md shows
+            100% killed on changed lines, emit the signal.
+      until: MUTANTS_DEAD
+      max_iterations: 2
+
+  # ── Conditional: mutation fixes touched production source → re-review delta ──
+  - id: post-mutation-review
+    depends_on: [mutation]
+    when_bash: |
+      git diff --name-only $(cat tmp/{{feature}}/mut-start-sha)..HEAD -- 'libs/*/src' \
+        | grep -E '\.(ts|tsx)$' \
+        | grep -vE '\.(test|stories)\.(ts|tsx)$|/index\.ts$|/(test-utils|testing)/' \
+        | grep -q .
+    loop:
+      steps:
+        - bash: "pnpm turbo lint check-types test --output-logs=errors-only"
+        - agent: reviewer_engineering
+          prompt: |
+            Re-review ONLY the delta since $(cat tmp/{{feature}}/mut-start-sha) —
+            the mutation fixes. Update review.md's durable trail.
+        - agent: implementer
+          prompt: |
+            Fix every open finding from the delta review. If review.md has zero
+            open findings, emit the signal. (If these fixes changed source again,
+            continue the bounded review↔mutation settle via sao resume.)
+      until: DELTA_REVIEW_CLEAN
+      max_iterations: 2
+
+  # ── Phase 4 — DoD (validate → close gaps → re-validate) ──────────────────────
+  - id: dod
+    depends_on: [post-mutation-review]   # skipped re-review counts as satisfied
+    loop:
+      steps:
+        - agent: dod_validator
+          prompt: |
+            Validate {{feature}} against the DoD: functionality · code quality ·
+            architecture · design system · security (OWASP) · accessibility
+            (WCAG 2.2 AA) · testing rigor · observability & i18n. It fails an
+            empty review.md. Write docs/features/{{feature}}/dod.md.
+        - agent: implementer
+          prompt: |
+            If dod.md reports gaps, close them via TDD. If dod.md is all-pass,
+            emit the signal.
+      until: DOD_PASS
+      max_iterations: 2
+
+  # ── PR prep — compact docs, land risks.md ────────────────────────────────────
+  - id: finalize
+    depends_on: [dod]
+    bash: |
+      .agents/skills/compact-docs/scripts/compact-docs.sh {{feature}}
+      mv tmp/{{feature}}/risks.md docs/features/{{feature}}/risks.md
+      git add -A && git commit -m "chore({{feature}}): done — compact docs, land risks.md"
+
+  # ── Close the loop in Jira ────────────────────────────────────────────────────
+  - id: update-ticket
+    depends_on: [finalize]
+    prompt: |
+      Using the jira MCP tools, transition {{ticket}} to "In Review" and add a
+      comment: branch {{branch}} is pr_ready; include a 3-line summary taken from
+      docs/features/{{feature}}/spec.md. Do not transition to Done — the human
+      merges the PR.

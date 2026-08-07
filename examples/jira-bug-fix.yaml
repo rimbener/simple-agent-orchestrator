@@ -1,0 +1,166 @@
+# jira-bug-fix — one Jira bug ticket → tested fix, open PR, ticket "Ready for Stage".
+# Repo-agnostic: no tooling or methodology assumed — how the fix is built is up
+# to the plan the human approves. The only things the target repo must provide
+# are two agents: .agents/agents/tester.md (how to run its test suite — commands,
+# env, quirks) and .agents/agents/reviewer.md (its review rubric); sao validate
+# errors if either is missing.
+#
+#   sao run examples/jira-bug-fix.yaml --var ticket=PROJ-123
+#
+# Pipeline: fetch ticket (MCP) → analyze ticket → root-cause the codebase → plan →
+# ONE human approval of the plan → implement → test → review → PR → advance the ticket.
+# Opens the PR itself (gh) instead of relying on --auto-open-pr, because the final
+# ticket update needs the PR URL. Working notes live in tmp/{{ticket}}/ and are
+# never committed, so the PR contains only the fix.
+
+name: jira-bug-fix
+description: One Jira bug ticket to a tested fix with an open PR and the ticket moved to Ready for Stage
+
+base: main                     # ref the run worktree/branch is cut from; override with --base
+
+inputs:
+  - name: ticket               # Jira issue id, e.g. PROJ-123
+    required: true
+
+mcp:
+  jira:
+    command: npx
+    args: ["-y", "mcp-remote", "https://mcp.atlassian.com/v1/sse"]
+
+defaults:
+  runner: claude
+  permission_mode: acceptEdits
+  allowed_tools: [mcp__jira]
+
+nodes:
+  # ── 1. Fetch the ticket from Jira (MCP) — state on disk for every later node ──
+  - id: fetch-ticket
+    prompt: |
+      Using the jira MCP tools, fetch issue {{ticket}} — summary, description,
+      steps to reproduce, expected vs actual behavior, environment, linked
+      issues, attachments, and any clarifying comments. Write it all, faithful to the
+      ticket's wording, to tmp/{{ticket}}/ticket.md.
+
+  # ── 2. Analyze the ticket ─────────────────────────────────────────────────────
+  - id: analyze-ticket
+    depends_on: [fetch-ticket]
+    prompt: |
+      Analyze tmp/{{ticket}}/ticket.md: restate the bug precisely
+      (trigger → observed → expected), distill concrete reproduction steps, and
+      note anything ambiguous or missing plus the assumption you'll proceed on.
+      Append an "## Analysis" section to ticket.md. Analysis only — no code yet.
+
+  # ── 3. Root-cause the codebase ────────────────────────────────────────────────
+  - id: locate-root-cause
+    depends_on: [analyze-ticket]
+    prompt: |
+      Trace the bug in tmp/{{ticket}}/ticket.md through the codebase: follow
+      the failing path from entry point to defect. Write
+      tmp/{{ticket}}/root-cause.md — the defective code (file:line), why it
+      misbehaves, and what else the fix could affect (other callers/flows).
+      If the evidence is inconclusive, list the candidate causes and what would
+      confirm each — never present a guess as the root cause.
+
+  # ── 4. Plan the fix ───────────────────────────────────────────────────────────
+  - id: plan-fix
+    depends_on: [locate-root-cause]
+    prompt: |
+      From ticket.md and root-cause.md, write tmp/{{ticket}}/plan.md as a
+      markdown checkbox task list: the code changes, and any test additions or
+      updates that prove the bug is gone. Include a "Risks" note. Smallest
+      change that kills the bug — no drive-by refactors. The smallest change
+      does not imply to write crappy code / hacks. If a refactor is needed,
+      explain why and how it's necessary and let the human decide.
+
+  # ── 5. THE human gate — approve the plan; requested edits loop back ──────────
+  - id: review-plan
+    depends_on: [plan-fix]
+    loop:
+      prompt: |
+        Present tmp/{{ticket}}/plan.md for human review: summarize the root
+        cause and fix approach in a few lines and point to ticket.md,
+        root-cause.md, and plan.md. If the human requested changes
+        ({{loop.feedback}}), apply them to plan.md first.
+        The plan is presentation-ready, so emit the signal every iteration.
+        Be simple, concise and concrete on the plan. Don't be too verbose. 
+        Don't use common expressions, idioms or weird words.
+      until: PLAN_APPROVED
+      max_iterations: 10
+      fresh_context: false
+      interactive: true        # bare approve on a signaled iteration = the approval
+
+  # ── 6. Implement — one plan task per iteration ────────────────────────────────
+  - id: implement-fix
+    depends_on: [review-plan]
+    loop:
+      prompt: |
+        Work tmp/{{ticket}}/plan.md: implement the NEXT unchecked task, verify
+        it, and check it off. Keep the change minimal. When every task is
+        checked, commit the source and test changes ONLY — never tmp/ — with a
+        message referencing {{ticket}}, then emit the signal.
+      until: FIX_COMPLETE
+      max_iterations: 10       # cap = escalation; resume after human intervention
+
+  # ── 7. Test the fix — the target repo's own tester agent runs the suite ──────
+  # An AI node can't fail on a red suite the way a bash node fails on exit != 0,
+  # so this is a sentinel loop: green suite → signal; cap without signal → the
+  # node fails (halt + resume), same escalation as everywhere else.
+  - id: test
+    depends_on: [implement-fix]
+    agent: tester              # supplied by the target repo: .agents/agents/tester.md
+    loop:
+      prompt: |
+        Run the app's full test suite the way your agent instructions describe.
+        Write tmp/{{ticket}}/test-report.md — what ran, what failed, and why.
+        A failure caused by this fix: repair it (source or test, whichever is
+        wrong) and re-run. A failure that pre-dates the fix: record it in the
+        report, don't paper over it. Emit the signal only when everything the
+        fix touches is green.
+      until: TESTS_GREEN
+      max_iterations: 3        # cap = escalation; resume after human intervention
+
+  # ── 8. Review the fix — the target repo's own reviewer agent, ≤ 2 rounds ─────
+  - id: review
+    depends_on: [test]
+    loop:
+      steps:
+        - agent: reviewer      # supplied by the target repo: .agents/agents/reviewer.md
+          prompt: |
+            Review the diff vs $SAO_BASE_REF per your agent instructions, with
+            tmp/{{ticket}}/ticket.md, root-cause.md, and plan.md as context.
+            Update tmp/{{ticket}}/review.md as a durable findings trail —
+            resolved items stay marked resolved; never empty the file.
+        - prompt: |
+            Fix EVERY open finding in tmp/{{ticket}}/review.md, verify each
+            fix, and mark the finding resolved there. Commit the source and
+            test changes ONLY — never tmp/. If review.md has zero open
+            findings, emit the signal.
+      until: REVIEW_CLEAN
+      max_iterations: 2        # cap = escalation; resume after human intervention
+
+  # ── 9. PR — write title/body from the trail, then push and open it ───────────
+  - id: pr-summary
+    depends_on: [review]
+    prompt: |
+      Write tmp/{{ticket}}/pr-title.txt (one line: a PR title referencing
+      {{ticket}}) and tmp/{{ticket}}/pr-body.md — the bug, the root cause, the
+      fix, and how it's tested — from ticket.md, root-cause.md, test-report.md,
+      and the diff vs $SAO_BASE_REF. Do not commit anything.
+
+  - id: open-pr
+    depends_on: [pr-summary]
+    bash: |
+      git push -u origin "$SAO_BRANCH"
+      gh pr create --base "$SAO_BASE_REF" --head "$SAO_BRANCH" \
+        --title "$(cat tmp/{{ticket}}/pr-title.txt)" \
+        --body-file tmp/{{ticket}}/pr-body.md \
+        > tmp/{{ticket}}/pr-url.txt
+      cat tmp/{{ticket}}/pr-url.txt
+
+  # ── 10. Close the loop in Jira ────────────────────────────────────────────────
+  - id: update-ticket
+    depends_on: [open-pr]
+    prompt: |
+      Using the jira MCP tools, transition {{ticket}} to "Ready for Stage" and
+      add a comment: the PR URL from tmp/{{ticket}}/pr-url.txt plus a 3-line
+      summary taken from tmp/{{ticket}}/pr-body.md.
