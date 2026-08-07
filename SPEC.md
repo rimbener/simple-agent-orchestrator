@@ -104,7 +104,18 @@ nodes:
 
 
 
-### Node types (exactly one of `prompt`, `bash`, `loop`, `gate` per node)
+### Nodes
+
+A **node** is the smallest unit of work in a workflow: one step the engine executes
+in the run worktree. A workflow's `nodes:` list *is* the workflow — each entry
+defines one node with a unique `id` and exactly one behavior. Nodes are wired into
+a dependency graph with `depends_on`; a node starts once every node it depends on
+has finished, and independent nodes run concurrently. A node's result is captured
+as `nodes.<id>.output` for later nodes to consume, and its status is persisted so
+`resume` can re-run from the exact node (or loop iteration) that failed.
+
+Every node takes one of four behaviors (exactly one of `prompt`, `bash`, `loop`,
+`gate` per node):
 
 1. **AI node** — `prompt`. Runs once via the node's runner inside the run worktree.
   Optional per-node keys: `agent` (see Agents), `runner`, `model`, `allowed_tools`,
