@@ -1,0 +1,34 @@
+# hello-interactive — like hello.yaml, but the audience is asked in the
+# terminal instead of passed via args/inputs.
+#
+#   sao run examples/hello-interactive.yaml "greet the team"
+
+name: hello-interactive
+description: Ask who the audience is, then plan a greeting, check the shell works, summarize
+
+defaults:
+  runner: claude
+  model: haiku            # cheap + fast; this workflow is a smoke test
+
+nodes:
+  - id: ask_audience
+    gate:
+      message: "Who is the audience?"
+
+  - id: plan
+    depends_on: [ask_audience]
+    prompt: |
+      In one short line, plan how to: {{task}} (audience: {{nodes.ask_audience.output}}).
+      Reply with the plan only.
+
+  - id: check
+    depends_on: [plan]
+    bash: "echo shell ok: {{nodes.ask_audience.output}}"
+
+  - id: summarize
+    depends_on: [plan, check]
+    prompt: |
+      Combine into a single friendly sentence:
+      plan: {{nodes.plan.output}}
+      check: {{nodes.check.output}}
+      Reply with the sentence only.
