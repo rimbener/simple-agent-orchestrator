@@ -47,6 +47,20 @@ sao run 2026-08-05-1432-fix-a1b2 (4 nodes, concurrency 2, logs in .sao/runs/…/
   pr:       git push -u origin sao/… && gh pr create --head sao/…
 ```
 
+## Architecture diagrams
+
+C4-model diagrams of the system, generated from the source. Each level ships as
+a Mermaid flowchart (`.md`, renders on GitHub), an editable
+[Excalidraw](https://excalidraw.com) scene (`.excalidraw`), and the raw element
+data (`.json`):
+
+| Level | What it shows | Files |
+| --- | --- | --- |
+| C1 — Context | sao and the people/systems around it (developer, git, Claude/Codex CLIs) | [`.md`](docs/c4/C1-Context.md) |
+| C2 — Containers | the single sao CLI container and its dependencies | [`.md`](docs/c4/C2-Containers.md) |
+| C3 — Components | the modules behind `sao run` (parser, engine, nodes, runners, …) | [`.md`](docs/c4/C3-Components.md) |
+| C4 — Code | the function-level run path (`runWorkflow` → executeByKind → runners) | [`.md`](docs/c4/C4-Code.md) |
+
 ## Install
 
 ```console
