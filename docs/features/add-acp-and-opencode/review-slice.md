@@ -174,3 +174,127 @@ session-resume, or MCP-passthrough behavior.
 ### Findings
 
 None.
+
+---
+
+## Slice S2 — Capability preflight (task-3) — 2026-08-08
+
+**Verdict: CHANGES_REQUESTED** → `docs/features/add-acp-and-opencode/review-slice.md`
+
+### Diff reviewed
+
+`git diff ceddcb4..d5b7f98` (S1 → S2): `src/acp.ts`, `src/engine.ts`, `src/cli.ts`,
+`src/runners/opencode.ts`, `src/runners/types.ts`, `README.md`, `SPEC.md`,
+`docs/features/add-acp-and-opencode/task-3.md`, and tests
+`tests/acp.test.ts`, `tests/codex.test.ts`, `tests/engine-acp.test.ts` (new),
+`tests/engine-m4.test.ts`, `tests/opencode.test.ts`, `tests/runners.test.ts`.
+
+### 1. Correctness against the contract
+
+All 6 `@s` scenarios owned by task-3 have a test that bites
+(`tests/engine-acp.test.ts` + `tests/opencode.test.ts` + `tests/acp.test.ts`'s new
+`runAcpHandshake` describe block) — verified `@s-capability-gap-preflight`,
+`@s-capability-present-passes`, `@s-validate-performs-handshake`,
+`@s-handshake-once-per-runner`, `@s-handshake-failure-preflight`,
+`@s-existing-runners-unaffected` each assert a message/behavior a broken
+implementation would fail. No scope creep: MCP-transport needs (task 7) are
+correctly left out of `RunnerNeeds`.
+
+One correctness gap survives, on a path no scenario or test currently exercises:
+
+1. **[procs] `open`** — `src/acp.ts:138-192` (`runAcpHandshake`). Every other
+   spawn in this codebase (`runAcpTurn` at `src/acp.ts:63-68`, `src/nodes.ts:97-101`,
+   `src/runners/claude.ts:193`, `src/runners/codex.ts:214`) settles from its own
+   timer so a hung agent can't block forever. `runAcpHandshake` has none: its only
+   settle paths are `"error"` (spawn failure), `"close"` (early exit), and the
+   `initialize()` promise resolving/rejecting. If the agent binary spawns
+   successfully but never replies to `initialize` (hung process, broken
+   install, a version mismatch that silently drops the request), the promise
+   never settles. Because `preflightRunnerEnvironments` (`src/engine.ts:625-647`)
+   `await`s this per distinct runner and is itself awaited by `sao run`,
+   `sao validate`, `sao resume` (via `runWorkflow`), and `--dry-run`
+   (`src/cli.ts`, `src/engine.ts:405-420`), the whole CLI invocation hangs
+   indefinitely with no message, no timeout, and no way out short of the user
+   manually killing it — and the tracked child (`src/acp.ts:146`) is only reaped
+   on the parent's own SIGINT/SIGTERM/exit (`src/procs.ts:82-98`), so it is never
+   cleaned up while the hang is in progress. Confirmed this path is untested:
+   `tests/acp.test.ts`'s `DOUBLE_SCRIPT` only honors `config.hang` inside the
+   `session/prompt` branch (line 62) — the double always answers `initialize`
+   immediately, so no test drives a hung handshake. Give `runAcpHandshake` the
+   same timer-based settle its sibling `runAcpTurn` already has (a fixed
+   preflight timeout, or a caller-supplied one), and add the corresponding
+   "handshake never responds" test.
+
+### 2. Repo rules
+
+- **Minimalism** — no new dependency or abstraction beyond what task-3 calls
+  for; `RunnerNeeds` is the minimal shape task-3.md specifies (session-resume
+  only, MCP deferred to task 7).
+- **Layering** — unaffected; `opencodeRunner` still only delegates to `src/acp.ts`.
+- **Node target** — no Bun-only API added.
+- **Process safety** — see finding 1 above; everything else (detached spawn,
+  `track()`, `killTree` on both settle branches that have a live child) matches
+  the established pattern.
+- **Path / input / argv safety** — unaffected by this slice.
+- **State durability** — unaffected; `RunnerNeeds` is computed fresh per
+  preflight call, never persisted.
+- **Comments** — accurate; no stale `Stryker disable` comments added.
+
+### 3. Code quality
+
+Mostly clean split (`preflightAiConfigs` sync / `preflightRunnerEnvironments`
+async), consistent with the task-3 spec. One quality nit alongside finding 1:
+
+2. **[quality] `open`** — `src/runners/opencode.ts:21-26`. The `catch` around
+   `runAcpHandshake` discards the real error (`catch { throw new
+   SaoError("opencode failed the ACP handshake", "…did not respond to
+   initialize — check it is up to date"); }`) instead of folding it in, the way
+   every other adapter in this diff and its neighbours does (`src/acp.ts:187`'s
+   `` `${launch.command} failed: ${err.message}` ``, `truncateDetail(output)` in
+   `src/runners/claude.ts:186`/`src/runners/codex.ts:193`). A handshake that
+   fails for a reason other than "exited" or "out of date" — e.g. a malformed
+   `initialize` response, a permission error, a protocol-version mismatch — is
+   reported with a generic, possibly-wrong guess instead of the actual cause,
+   making it harder to debug than any other error path in this file. Fold the
+   caught error's message into the `SaoError` (mirroring `runAcpTurn`'s own
+   catch two functions above it) instead of dropping it.
+
+### 4. CLI & workflow surface
+
+- `sao validate` now performs the same handshake `run` does — verified via
+  `README.md`/`SPEC.md` and `tests/engine-acp.test.ts`'s
+  `@s-validate-performs-handshake` test.
+- Error messages: capability-gap and missing-binary messages name the agent
+  and the missing capability/binary, matching the existing voice — except the
+  swallowed-detail case in finding 2.
+- Both runners: claude/codex `preflight()` signatures are unchanged in body
+  (only the call sites now pass `{ needsSessionResume: false }`, which they
+  ignore) — `@s-existing-runners-unaffected` confirms no handshake is attempted
+  for either.
+- YAML surface: no new keys; `fresh_context: false` behavior is now
+  runner-capability-dependent rather than statically declared, which is D2 and
+  is documented.
+
+### 5. Docs parity
+
+`SPEC.md` (execution-semantics step 2 — ACP capability handshake) and
+`README.md` (`validate` description, `fresh_context: false` comment, opencode
+bullet) are both in this slice's diff and match the shipped behavior — neither
+overclaims a timeout guarantee the code doesn't have.
+
+### Findings
+
+1. **[procs] `resolved`** — `src/acp.ts:138-192`. `runAcpHandshake` has no
+   timeout; a hung `initialize` blocks `run`/`validate`/`resume`/`--dry-run`
+   forever. See analysis above. Fixed: `runAcpHandshake` now settles from its
+   own timer (`DEFAULT_HANDSHAKE_TIMEOUT_SEC = 10`, overridable via
+   `opts.timeoutSec`), mirroring `runAcpTurn`. Test: `tests/acp.test.ts`
+   "a hung handshake times out, kills the process, and rejects naming the
+   timeout" (new `hangInitialize` double config).
+2. **[quality] `resolved`** — `src/runners/opencode.ts:21-26`. The handshake
+   failure catch discards the real error instead of folding it into the
+   `SaoError`, unlike every sibling error path in this diff. Fixed: the catch
+   now folds `err.message` into the `SaoError`. Test:
+   `tests/opencode.test.ts`'s `@s-handshake-failure-preflight` strengthened to
+   assert the underlying detail ("exited before completing the ACP handshake")
+   survives into the preflight error.

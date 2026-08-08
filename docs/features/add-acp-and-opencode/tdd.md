@@ -102,3 +102,22 @@ workflow passes (real opencode advertises `loadSession`); with a fake
 awaits the handshake and prints the plan. Docs landed: `SPEC.md` (execution
 semantics step 2 — ACP capability handshake) and `README.md` (`validate`
 description, `fresh_context: false` comment, opencode bullet).
+
+## Slice S2 review fixes
+
+Two `review-slice.md` findings: `runAcpHandshake` had no timeout (a hung
+`initialize` blocked `run`/`validate`/`resume`/`--dry-run` forever), and
+`opencodeRunner.preflight`'s handshake-failure catch discarded the real error
+behind a generic guess. Fixed both:
+- `src/acp.ts`: `runAcpHandshake` now takes the same timer-based settle as
+  `runAcpTurn`, defaulting to 10s (`DEFAULT_HANDSHAKE_TIMEOUT_SEC`), overridable
+  via `opts.timeoutSec` for the test. Test → "a hung handshake times out, kills
+  the process, and rejects naming the timeout" (added `hangInitialize` to
+  `DOUBLE_SCRIPT`).
+- `src/runners/opencode.ts`: the catch folds `err.message` into the `SaoError`
+  instead of dropping it. Strengthened `@s-handshake-failure-preflight` to
+  assert the underlying detail ("exited before completing the ACP handshake")
+  survives into the preflight error.
+
+Both findings marked `resolved` in `review-slice.md`. `bun test` (687 pass),
+`bun run typecheck`, `bun run build` all green.

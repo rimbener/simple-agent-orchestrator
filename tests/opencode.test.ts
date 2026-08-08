@@ -132,6 +132,8 @@ describe("opencodeRunner", () => {
       expect(err).toBeInstanceOf(SaoError);
       expect(err.message).toContain("opencode");
       expect(err.message).toContain("handshake");
+      // the real cause folds in, not a generic guess — matches every other adapter's error path
+      expect(err.message).toContain("exited before completing the ACP handshake");
     } finally {
       process.env.PATH = oldPath;
     }

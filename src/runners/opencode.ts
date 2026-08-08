@@ -21,8 +21,11 @@ export const opencodeRunner: Runner = {
     let capabilities;
     try {
       capabilities = await runAcpHandshake(LAUNCH, { cwd: process.cwd() });
-    } catch {
-      throw new SaoError("opencode failed the ACP handshake", "the opencode CLI on PATH did not respond to initialize — check it is up to date");
+    } catch (err) {
+      throw new SaoError(
+        `opencode failed the ACP handshake: ${(err as Error).message}`,
+        "the opencode CLI on PATH did not respond to initialize — check it is up to date",
+      );
     }
     if (needs.needsSessionResume && capabilities.loadSession !== true) {
       throw new SaoError(

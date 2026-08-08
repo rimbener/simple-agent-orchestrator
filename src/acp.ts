@@ -129,13 +129,19 @@ export function runAcpTurn(launch: AcpLaunch, req: RunnerRequest): Promise<Runne
   });
 }
 
+/** Preflight has no per-workflow timeout to inherit, so a hung `initialize` needs its own bound. */
+const DEFAULT_HANDSHAKE_TIMEOUT_SEC = 10;
+
 /**
  * Spawns the agent just long enough to complete `initialize` and read back its
  * advertised capabilities, then tears the process down — never runs a prompt
  * turn. Used by ACP runners' preflight (task 3) to check a workflow's needs
  * against what the agent actually supports, instead of a static declaration.
  */
-export function runAcpHandshake(launch: AcpLaunch, opts: { cwd: string; env?: Record<string, string> }): Promise<AgentCapabilities> {
+export function runAcpHandshake(
+  launch: AcpLaunch,
+  opts: { cwd: string; env?: Record<string, string>; timeoutSec?: number },
+): Promise<AgentCapabilities> {
   return new Promise((resolve, reject) => {
     const child = spawn(launch.command, launch.args, {
       cwd: opts.cwd,
@@ -146,12 +152,25 @@ export function runAcpHandshake(launch: AcpLaunch, opts: { cwd: string; env?: Re
     track(child);
     swallowStdinErrors(child);
 
+    const timeoutSec = opts.timeoutSec ?? DEFAULT_HANDSHAKE_TIMEOUT_SEC;
+
     let settled = false;
+    // Settle exactly once — from the timer, a spawn error, an early exit, or
+    // `initialize` actually resolving. Without the timer a binary that spawns
+    // but never replies (hung process, silently-dropped request) would hang
+    // preflight — and every caller that awaits it — forever.
     const settle = (finish: () => void) => {
       if (settled) return;
       settled = true;
+      // Stryker disable next-line all: equivalent — clearTimeout on an already-fired timer is a no-op
+      clearTimeout(timer);
       finish();
     };
+
+    const timer = setTimeout(() => {
+      killTree(child);
+      settle(() => reject(new SaoError(`${launch.command} did not respond to the ACP handshake within ${timeoutSec}s`)));
+    }, timeoutSec * 1000);
 
     child.on("error", (err: NodeJS.ErrnoException) => {
       settle(() => reject(new SaoError(`failed to spawn ${launch.command}: ${err.message}`)));

@@ -55,6 +55,7 @@ function emitChunk(sessionId, chunk) {
 }
 function handle(msg) {
   if (msg.method === "initialize") {
+    if (config.hangInitialize) return;
     send({ jsonrpc: "2.0", id: msg.id, result: { protocolVersion: 1, agentCapabilities: config.agentCapabilities || {} } });
   } else if (msg.method === "session/new") {
     send({ jsonrpc: "2.0", id: msg.id, result: { sessionId: config.sessionId || "double-session" } });
@@ -222,6 +223,29 @@ describe("runAcpHandshake", () => {
     expect(err).toBeInstanceOf(SaoError);
     expect(err.message).toContain("handshake");
   });
+
+  test(
+    "a hung handshake times out, kills the process, and rejects naming the timeout",
+    async () => {
+      const double = withAcpDouble({ hangInitialize: true });
+      const err = await rejectionOf(runAcpHandshake(double.launch, { cwd: process.cwd(), env: double.env, timeoutSec: 1 }));
+      expect(err).toBeInstanceOf(SaoError);
+      expect(err.message).toContain("handshake");
+      expect(err.message).toContain("1s");
+
+      const pid = Number(readFileSync(double.pidFile, "utf8"));
+      let dead = false;
+      for (let i = 0; i < 60; i++) {
+        if (!isAlive(pid)) {
+          dead = true;
+          break;
+        }
+        await wait(50);
+      }
+      expect(dead).toBe(true);
+    },
+    15000,
+  );
 
   test("the handshake process does not outlive the call", async () => {
     const double = withAcpDouble({ agentCapabilities: {} });
