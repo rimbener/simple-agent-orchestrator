@@ -7,15 +7,12 @@
 `opencodeRunner` is name + launch command (`opencode acp`, D7 confirmed) +
 delegation to `runAcpTurn`; preflight reuses `findExecutableOnPath`.
 
-@s → test map (`tests/acp.test.ts` unless noted):
-- `@s-acp-stream-and-output` → "streams live text and captures the whole turn as output"
-- `@s-acp-output-excludes-thoughts` → "reasoning and tool-call updates stay out of output and the stream"
-- `@s-acp-sentinel-ends-loop` → "successive turns each return their own isolated output"
-- `@s-acp-refusal-fails-node` → "a refusal stop reason fails the turn even on a clean exit"
-- `@s-acp-timeout-kills` → "a hung turn times out, kills the process, and rejects naming the timeout"
-- `@s-opencode-missing-binary-preflight`, `@s-opencode-agent-system-prompt`,
-  `@s-opencode-runner-selectable` → `tests/opencode.test.ts`
-- `@s-unknown-runner-lists-opencode` → `tests/runners.test.ts`
+@s → test map (`tests/acp.test.ts` unless noted): `@s-acp-stream-and-output`,
+`@s-acp-output-excludes-thoughts`, `@s-acp-sentinel-ends-loop`,
+`@s-acp-refusal-fails-node`, `@s-acp-timeout-kills`;
+`@s-opencode-missing-binary-preflight`, `@s-opencode-agent-system-prompt`,
+`@s-opencode-runner-selectable` → `tests/opencode.test.ts`;
+`@s-unknown-runner-lists-opencode` → `tests/runners.test.ts`.
 
 Gate: `bun test` (673 pass), typecheck, build green. Docs: `SPEC.md`/`README.md`
 (AI execution row, adapter description, five-dependency line, Runners section).
@@ -65,11 +62,9 @@ closed) — settles the whole turn with that same `SaoError`, never auto-approvi
 - Plumbing (untagged): `tests/nodes.test.ts`, `tests/engine-acp.test.ts` assert
   `nodeId`/`promptUser` reach the runner's request.
 
-Pitfall hit and fixed, not silenced: `spawnSync` in `tests/cli.test.ts` does
-**not** pick up a `process.env.PATH` mutation made earlier in the same process
-unless `env: process.env` is passed explicitly (a real `opencode`/`claude`/
-`codex` on the dev machine's PATH was winning the race otherwise) — every
-PATH-stubbed spawn in that file now passes it.
+Pitfall fixed: `spawnSync` in `tests/cli.test.ts` doesn't pick up a
+`process.env.PATH` mutation without `env: process.env` passed explicitly —
+every PATH-stubbed spawn there now passes it.
 
 **task-5** — the timeout clock pauses for a permission prompt (D5). Replaced
 the flat `setTimeout` in `runAcpTurn` with a pausable one (`remainingMs` +
@@ -132,3 +127,13 @@ Gate: `bun test` (723 pass), typecheck, build green. Docs: `SPEC.md` (opencode
 adapter paragraph — sessions + mcp/allowed_tools/permission_mode; MCP servers
 v1 note; execution semantics step 2 — MCP transport gap), `README.md` (opencode
 bullet: sessions, mcp/allowed_tools/permission_mode, transport gap).
+
+Review fix (`resolved`): the same `.mcp.json` was parsed 3x (`parser.ts`
+validate, `engine.ts` transport-kind extract, `acp.ts` per turn) →
+`parser.ts` keeps the parsed `mcpServers` for the path form too; `engine.ts`
+reads `workflow.mcpServers` directly, drops `readMcpServersRecord`; the
+run-dir mcp.json write guard now also checks `mcpConfigPath === undefined` so
+a path form is never re-serialized. No new test: existing inline/path-form
+tests in `tests/engine-m2.test.ts`/`tests/engine-acp.test.ts` stayed green.
+
+Gate: `bun test` (723 pass), typecheck, build green.

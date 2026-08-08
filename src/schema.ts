@@ -176,7 +176,12 @@ export interface Workflow {
   inputs: WorkflowInput[];
   defaults: WorkflowDefaults;
   nodes: WorkflowNode[];
-  /** Inline mcp: servers, serialized to <run-dir>/mcp.json at run time. */
+  /**
+   * The mcp: block's servers, parsed once here whether given inline or as a
+   * path — so downstream readers (preflight's transport check) never re-read
+   * the file. Only the inline form (mcpConfigPath undefined) is serialized to
+   * <run-dir>/mcp.json at run time.
+   */
   mcpServers?: Record<string, unknown>;
   /** mcp: given as a file path — resolved absolute against the workflow file's dir. */
   mcpConfigPath?: string;

@@ -451,3 +451,177 @@ doesn't match what the shipped code actually prints.
    interactive terminal (or piped replies, one line per prompt)". Test:
    `tests/cli.test.ts`'s `@s-permission-stdin-closed-fails` strengthened to
    assert the hint contains "permission prompts".
+
+---
+
+## Slice S4 — Sessions & MCP passthrough (task-6, task-7) — 2026-08-08
+
+**Verdict: CHANGES_REQUESTED** → `docs/features/add-acp-and-opencode/review-slice.md`
+
+### Diff reviewed
+
+`git diff d0b1c33..649fc05` (S3 review-fix → S4): `src/acp.ts`, `src/engine.ts`,
+`src/runners/opencode.ts`, `src/runners/types.ts`, `SPEC.md`, `README.md`,
+`docs/features/add-acp-and-opencode/{task-6,task-7,tdd}.md`, and tests
+`tests/acp.test.ts`, `tests/engine-acp.test.ts`, `tests/opencode.test.ts`.
+
+### 1. Correctness against the contract
+
+All 9 `@s` scenarios owned by task-6/task-7 have a test that bites:
+
+- `@s-fresh-context-true-new-session`, `@s-fresh-context-false-loads-session`
+  (`tests/acp.test.ts`) assert `session/new` vs. `session/load` is called with
+  the right id via an echoed session-event string the double records — a broken
+  branch would fail either assertion. Scoped correctly at the `runAcpTurn`
+  level, not a full loop run: the per-iteration `resumeSessionId` wiring
+  (`src/engine.ts:919,945,950-951`, the "resume fidelity (M3)" mechanism) is
+  pre-existing, already exercised generically for claude before this slice —
+  confirmed by grep, `engine.ts` has no diff on those lines in this slice.
+- `@s-lost-session-warns-and-continues` and its unlabeled sibling ("a process
+  that dies while loading a session still fails the node") together prove the
+  scope's required distinction: a `session/load` JSON-RPC error warns and
+  retries with `session/new`, but a process death during the same load still
+  rejects the turn (`err.message` asserted to not contain "lost session").
+- `@s-session-id-persisted` (`tests/opencode.test.ts`) runs a real `runWorkflow`
+  end to end against a stub binary and asserts `state.nodes["a"].sessionId` —
+  the one scenario that needed the full state-persistence path, and it uses it.
+- `@s-mcp-forwarded-to-session-new`, `@s-no-mcp-key-no-forwarding` assert the
+  exact `mcpServers` array shape reaching `session/new` (both stdio
+  `command`/`args`/`env` and remote `url`/`type`/`headers` forms), cross-checked
+  against `node_modules/@zed-industries/agent-client-protocol`'s `McpServer`
+  type by the S1 review precedent's method.
+- `@s-mcp-unsupported-transport-preflight` bites at both the engine
+  (`tests/engine-acp.test.ts`, a `mockAcpRunner` that throws when
+  `needs.mcpTransports` includes `"http"`) and the real-handshake level
+  (`tests/opencode.test.ts`, `agentCapabilities.mcpCapabilities` toggled true/
+  false) — the "no node executes" half of the scenario is covered by the
+  existing `existsSync(join(dir, ".sao"))` pattern already established in S2.
+- `@s-allowed-tools-warns-ignored`, `@s-permission-mode-noop` assert the exact
+  warning string appears / the string `"permission_mode"` never appears in
+  `onOutput`, matching the codex-precedent wording task-7 calls for.
+- No scope creep: grepped the diff for `permission_mode`/`allowedTools` reads —
+  `ignoredAcpSettings` (`src/acp.ts:39-43`) only ever inspects `allowedTools`;
+  `permissionMode` is read nowhere in `src/acp.ts`, matching D4's silent no-op.
+
+### 2. Repo rules
+
+- **Minimalism** — no new dependency. `RunnerNeeds.mcpTransports` is the
+  minimal shape task-7 calls for. One duplication issue, below (finding 1).
+- **Layering** — `src/runners/opencode.ts` still only delegates to `src/acp.ts`;
+  `src/engine.ts`'s new `neededMcpTransports`/`readMcpServersRecord` stay
+  self-contained (no new import of `src/acp.ts` from `engine.ts`, which would
+  be an odd coupling of generic preflight code to one runner's wire format) —
+  but see finding 1 for the cost of that independence.
+- **Node target** — `node:fs`'s `readFileSync` only; no Bun-only API.
+- **Process safety** — unaffected; the per-turn spawn/settle/timeout shape from
+  prior slices is untouched by this diff.
+- **Path / input / argv safety** — `mcpConfigPath` is sao's own already-resolved,
+  already-JSON-validated path (`src/parser.ts:66-79`) or the per-run generated
+  copy (`src/engine.ts:250-252`), never user-controlled at this point; MCP
+  server `command`/`args`/`env`/`url`/`headers` values ride the ACP JSON-RPC
+  payload, never argv or a shell string.
+- **State durability** — unaffected; `sessionId` continues to ride the existing
+  per-node field, exactly as task-6.md's scope requires ("no state-shape
+  change").
+- **Comments** — the task-6 lost-session comment (`src/acp.ts:224-231`) states
+  the non-obvious *why* (a transport failure must not be swallowed as a lost
+  session); the task-7 forwarder comment (`src/acp.ts:64-68`) accurately states
+  sao does no env/template expansion, matching the existing MCP rule.
+
+One duplication survives:
+
+1. **[quality] `open`** — `src/acp.ts:70-73` (`loadAcpMcpServers`) and
+   `src/engine.ts:670-672` (`readMcpServersRecord`). Both functions are the
+   identical three lines — `JSON.parse(readFileSync(path, "utf8")) as {
+   mcpServers?: Record<string, unknown> }`, then `?? {}` — reading the *same*
+   `.mcp.json`-shaped file's `mcpServers` key. Worse, this is the **third**
+   place that reads and parses this exact file: `src/parser.ts:71-78` already
+   does `readFileSync` + `JSON.parse(mcpRaw)` on the identical path at
+   workflow-load time purely to validate it's JSON, then discards the parsed
+   result (only the raw string was needed for the validation, and even that
+   result is thrown away once the `try` succeeds). So an immutable,
+   already-validated config file gets parsed once to validate, a second time
+   in `engine.ts` at preflight to extract transport kinds, and a third time in
+   `acp.ts` on every single `runAcpTurn` call (i.e., once per loop iteration)
+   to build the forwarded `mcpServers` payload — with two of those three sites
+   hand-rolling the identical unwrap snippet instead of sharing it. This is a
+   real "no duplication" violation (rubric §3), not a stylistic nit: a future
+   change to the `.mcp.json` shape (e.g., adding a new server field, or
+   changing the `mcpServers` key name) has three call sites to update in
+   lockstep, and nothing enforces that. The natural fix is for
+   `src/parser.ts` to keep the object it already parsed at line 76
+   (`mcpServers = JSON.parse(mcpRaw)`) instead of discarding it — it currently
+   only assigns `mcpServers` for the *inline* form (line 89), leaving the
+   *path* form's already-parsed data on the floor. With that, `engine.ts`'s
+   `neededMcpTransports` could read `workflow.mcpServers` directly for both
+   forms and `readMcpServersRecord` could be deleted entirely; `src/acp.ts`'s
+   per-turn read is the one genuinely necessary site, since it operates on
+   `req.mcpConfigPath` (the runtime, possibly per-run-generated copy) rather
+   than the static `Workflow` object. Fix the `parser.ts`/`engine.ts` pair; the
+   `acp.ts` read stands.
+
+### 3. Code quality
+
+Aside from finding 1: short, single-purpose functions (`ignoredAcpSettings`,
+`nameValuePairs`, `toMcpServer`, `neededMcpTransports`); no magic numbers; no
+`console.log`/debug leftovers; no commented-out code; no TODO without an issue.
+`ignoredAcpSettings` mirrors `ignoredCodexSettings`'s existing shape without
+duplicating its codex-specific list.
+
+### 4. CLI & workflow surface
+
+- Terminal output: the `allowed_tools`-ignored and lost-session warnings use
+  the same `⚠ <cmd> …` glyph/voice as the existing codex warning
+  (`src/runners/codex.ts:155`) and the existing lost-session precedent voice —
+  consistent, plain text, no ANSI-only signal, readable under `NO_COLOR`/piped
+  output (unchanged mechanism from prior slices).
+- Error messages: the MCP-transport preflight error names both the agent and
+  the transport (`"opencode does not support the ${transport} MCP transport"`
+  + a hint naming the offending `mcp:` server), matching the session-resume
+  capability-gap message's shape from S2.
+- `sao validate` catches the MCP-transport gap at preflight time, per
+  `@s-mcp-unsupported-transport-preflight` — same mechanism task 3 already
+  wired into `validate`/`run`/`resume`/`--dry-run`, no new validation path.
+- YAML surface: no new keys; `mcp:` and `allowed_tools`/`permission_mode` are
+  pre-existing keys, now honored/ignored per D4 for the ACP runner family.
+- Both runners: claude/codex are untouched by this diff (`git diff` shows no
+  changes to `src/runners/claude.ts` or `src/runners/codex.ts`); the new
+  `RunnerNeeds.mcpTransports` field is optional and both existing `preflight`s
+  ignore it, matching `@s-existing-runners-unaffected`'s precedent from S2.
+
+### 5. Docs parity
+
+`SPEC.md` (sessions map to `session/new`/`session/load` + lost-session warn-and-
+continue in the ACP adapter paragraph; the MCP-servers-and-tool-allowlists v1
+note extended three-way; the preflight step's capability list extended to
+mention the MCP-transport gap) and `README.md` (opencode bullet: session
+sentence, mcp/allowed_tools/permission_mode three-way summary, transport-gap
+sentence) are both in this slice's diff and match the shipped behavior — no
+overclaiming beyond what's implemented, and the wording task-6.md/task-7.md
+asked for ("parallel to the claude/codex entries") is what landed.
+
+### Findings
+
+1. **[quality] `resolved`** — `src/acp.ts:70-73`, `src/engine.ts:670-672`,
+   `src/parser.ts:75-79`. The same `.mcp.json`-shaped file is read and
+   `JSON.parse`d three times across three files — once to validate at parse
+   time (result discarded), once more in `engine.ts` to extract MCP transport
+   kinds, and again in `acp.ts` on every turn to build the forwarded payload —
+   with the `engine.ts`/`acp.ts` pair duplicating the identical three-line
+   unwrap snippet. See analysis above. Fixed: `src/parser.ts`'s path-form
+   branch now keeps the parsed object (`mcpServers = parsedMcp.mcpServers ??
+   {}`) instead of discarding it after the JSON-validity check, so it is
+   populated for both the inline and path forms. `src/engine.ts`'s
+   `neededMcpTransports` now reads `workflow.mcpServers` directly and
+   `readMcpServersRecord` is deleted. Since `mcpServers` is no longer
+   inline-only, the run-dir mcp.json write guard was tightened from
+   `mcpServers !== undefined` to `mcpConfigPath === undefined && mcpServers !==
+   undefined`, so a path-form workflow (which always has `mcpConfigPath` set)
+   is never mistaken for inline. `src/acp.ts`'s per-turn read is unchanged, as
+   recommended. No new test was needed: `tests/engine-m2.test.ts`'s "inline
+   mcp: is serialized to the run dir and passed to every AI execution" and
+   "mcp: as a file path is resolved and passed through untouched", plus
+   `tests/engine-acp.test.ts`'s "workflow mcp: servers given as a path are read
+   for the same transport check as inline servers", already pinned both
+   branches and stayed green through the refactor. Full suite green (723
+   pass), `bun run typecheck` and `bun run build` clean.

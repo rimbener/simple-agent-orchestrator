@@ -247,7 +247,7 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunState> {
     }
 
     // Inline mcp: servers become a per-run config file; a path form was already resolved.
-    if (opts.workflow.mcpServers !== undefined) {
+    if (opts.workflow.mcpConfigPath === undefined && opts.workflow.mcpServers !== undefined) {
       mcpConfigPath = join(paths.dir, "mcp.json");
       writeFileSync(mcpConfigPath, JSON.stringify({ mcpServers: opts.workflow.mcpServers }, null, 2) + "\n");
     }
@@ -649,13 +649,12 @@ export async function preflightRunnerEnvironments(workflow: Workflow, configs: M
 
 /**
  * Distinct remote transport kinds ("http" | "sse") the workflow's `mcp:` block
- * declares — read from the inline block or, for a path form, the file
- * `preflightAiConfigs`'s caller already validated as JSON. Stdio servers
- * (`command:`) need no capability check — every ACP agent must support stdio.
+ * declares — `loadWorkflow` already parsed either form (inline or path) into
+ * `workflow.mcpServers`, so no re-read here. Stdio servers (`command:`) need
+ * no capability check — every ACP agent must support stdio.
  */
 function neededMcpTransports(workflow: Workflow): string[] {
-  const record =
-    workflow.mcpServers ?? (workflow.mcpConfigPath !== undefined ? readMcpServersRecord(workflow.mcpConfigPath) : undefined);
+  const record = workflow.mcpServers;
   if (record === undefined) return [];
   const transports = new Set<string>();
   for (const def of Object.values(record)) {
@@ -665,11 +664,6 @@ function neededMcpTransports(workflow: Workflow): string[] {
     transports.add((def as Record<string, unknown>).type === "sse" ? "sse" : "http");
   }
   return [...transports];
-}
-
-function readMcpServersRecord(mcpConfigPath: string): Record<string, unknown> {
-  const raw = JSON.parse(readFileSync(mcpConfigPath, "utf8")) as { mcpServers?: Record<string, unknown> };
-  return raw.mcpServers ?? {};
 }
 
 function resolveAiConfig(
