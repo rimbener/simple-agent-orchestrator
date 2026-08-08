@@ -127,7 +127,9 @@ export function runAcpTurn(launch: AcpLaunch, req: RunnerRequest): Promise<Runne
         const title = params.toolCall.title ?? params.toolCall.toolCallId;
         const menu = params.options.map((opt, i) => `  ${i + 1}. ${opt.name}`).join("\n");
         const label = req.nodeId ? `[${req.nodeId}] ` : "";
-        req.onOutput?.(`permission requested: ${title}\n${menu}\n`);
+        // The interactive prompt below is the only rendering of the request — never
+        // mirrored through onOutput too, matching the gate node's own prompt text,
+        // which likewise never touches the node log (engine.ts's executeGate).
         pauseTimer(); // the whole exchange below is human deliberation, queued time included
         try {
           for (;;) {
@@ -144,7 +146,6 @@ export function runAcpTurn(launch: AcpLaunch, req: RunnerRequest): Promise<Runne
             const parsed = parsePermissionReply(reply, params.options.length);
             if (parsed.kind === "invalid") continue; // re-ask; nothing is sent to the agent yet
             const option = params.options[parsed.index - 1]!;
-            req.onOutput?.(`selected: ${option.name}\n`);
             return { outcome: { outcome: "selected", optionId: option.optionId } };
           }
         } finally {

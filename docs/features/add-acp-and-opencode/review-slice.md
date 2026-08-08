@@ -298,3 +298,156 @@ overclaims a timeout guarantee the code doesn't have.
    `tests/opencode.test.ts`'s `@s-handshake-failure-preflight` strengthened to
    assert the underlying detail ("exited before completing the ACP handshake")
    survives into the preflight error.
+
+---
+
+## Slice S3 — Permission prompts (task-4, task-5) — 2026-08-08
+
+**Verdict: CHANGES_REQUESTED** → `docs/features/add-acp-and-opencode/review-slice.md`
+
+### Diff reviewed
+
+`git diff 941f54a..cced965` (S2 → S3): `src/acp.ts`, `src/engine.ts`, `src/gate.ts`,
+`src/nodes.ts`, `src/runners/types.ts`, `SPEC.md`, `README.md`,
+`docs/features/add-acp-and-opencode/{task-4,task-5}.md` (status flips), and tests
+`tests/acp.test.ts`, `tests/cli.test.ts`, `tests/gate-permission.test.ts` (new),
+`tests/gate.test.ts`, `tests/nodes.test.ts`, `tests/engine-acp.test.ts`.
+
+### 1. Correctness against the contract
+
+All 7 `@s` scenarios owned by task-4/task-5 have a test that bites, cross-checked
+against `gherkin-scenarios.md`'s exact Given/When/Then:
+`@s-permission-prompt-numbered`, `@s-permission-invalid-reply-reasks`
+(`tests/acp.test.ts`), `@s-permission-stdin-closed-fails`,
+`@s-permission-serialized-with-gates`, `@s-no-new-prompts-for-claude-codex`
+(`tests/cli.test.ts`, real spawned CLI + stub binaries), `@s-timeout-paused-during-prompt`,
+`@s-timeout-paused-while-queued` (`tests/acp.test.ts`, real-wall-clock timers that
+would actually fire without the pause — 1s `timeoutSec` vs. 1.5s/1.6s waits).
+Plumbing (`nodeId`/`promptUser` reaching the runner) is covered in
+`tests/nodes.test.ts` and `tests/engine-acp.test.ts`. No scope creep: grepped the
+diff for `permission_mode`/`allowed_tools`/`mcpServers` — none touched, correctly
+left for later tasks. `parsePermissionReply` (`src/gate.ts:28-35`) is
+unit-tested for every boundary (0, out-of-range, non-numeric, whitespace).
+
+One behavioral defect survives, reproduced by actually running the shipped CLI
+against a stub `opencode` binary (not just inferred from reading the code):
+
+1. **[cli-ux] `open`** — `src/acp.ts:130,136,147`. Every permission request is
+   rendered on the live terminal **twice**: once via `req.onOutput?.(...)`
+   (`src/acp.ts:130`, `147`), which — per every other `NodeLog.log` call in this
+   codebase (`src/engine.ts:1052-1074`, `makeLog`'s `echoLine`) — both appends to
+   the node's log file *and* echoes a dim `[node-id]`-prefixed copy straight to
+   the console; and a second time via the actual interactive prompt text handed
+   to `req.promptUser` (`src/acp.ts:136`), which repeats the same node id, title,
+   and numbered menu. Ran the real flow end to end (spawned `sao run` against a
+   stub `opencode` binary that requests permission, replying `1`) and captured:
+   ```
+     [ask] permission requested: risky action
+     [ask]   1. Allow
+
+   [ask] permission requested: risky action
+     1. Allow
+   >   [ask] selected: Allow
+   ```
+   The block is shown once dim (log echo) and once bright (the actual prompt),
+   and because `promptOnTerminal`'s prompt write has no trailing newline, the
+   `selected: …` log-echo line lands merged onto the same line as the `>` prompt
+   when the reply arrives over a pipe (`sao`'s own documented "piped replies,
+   one line per prompt" mode — `src/gate.ts:61`, `README.md`'s stdin section —
+   not just an interactive-tty edge case). This contradicts the single clean
+   block both `SPEC.md`'s new "Permission requests" subsection and `README.md`'s
+   own example render (one occurrence, no echo) document as the expected output
+   — the docs are correct, the implementation doesn't match them. No existing
+   test catches it: the `tests/acp.test.ts` scenarios inject a bare capturing
+   `promptUser`/`onOutput` (never the real `this.print` + real
+   `promptOnTerminal` together), and the `tests/cli.test.ts` spawned-CLI
+   scenarios only assert substring presence/ordering, not absence of a
+   duplicate. Either drop the `onOutput` call for the request text (the prompt
+   itself already shows it to the human; log the request to the file through a
+   channel that doesn't console-echo) or drop the redundant text from the
+   prompt message and rely on the log echo alone — but not both painting the
+   same information over each other.
+
+2. **[cli-ux] `open`** — `src/gate.ts:58-63` (`stdinClosedError`, unchanged by
+   this diff but now reached from a new caller). The hint text — "gates and
+   interactive loops need an interactive terminal (or piped replies, one line
+   per prompt)" — is reused verbatim for a permission-prompt stdin closure
+   (`@s-permission-stdin-closed-fails`, exercised via `src/acp.ts:139-141`'s
+   catch), but never mentions permission requests as a case. A user hitting this
+   from an ACP node's `session/request_permission` sees a hint that names two
+   unrelated flows and omits the one that actually fired, which reads as
+   possibly-stale copy rather than an accurate, actionable hint (rubric §4). The
+   tests only assert the message contains "interactive terminal", which passes
+   regardless of this gap. Reword the hint to cover all three callers now that
+   `stdinClosedError` is shared three ways.
+
+### 2. Repo rules
+
+- **Minimalism** — no new dependency; the pausable-timer helpers
+  (`armTimer`/`clearTimer`/`pauseTimer`/`resumeTimer`) are the minimal shape
+  task-5 calls for, no extra abstraction.
+- **Layering** — `src/acp.ts` and `src/runners/types.ts` importing
+  `parsePermissionReply`/`PromptUser` from `./gate`, and `src/nodes.ts` importing
+  `PromptUser` from `./gate`, are all downward (gate.ts sits at the
+  state/worktree/gate/runs tier below nodes/runners) — no upward imports
+  introduced.
+- **Node target** — no Bun-only API added; `Date.now()`/`setTimeout` only.
+- **Process safety** — the pausable timer still settles from its own timer
+  (`onTimeout`, `src/acp.ts:73-76`), never by awaiting `close`; `killTree` is
+  called on every reject path including the new stdin-closed-during-permission
+  one (`src/acp.ts:138-141`).
+- **Path / input / argv safety** — permission replies ride `promptUser` (stdin),
+  never argv; the agent's own option names/titles are only ever echoed to the
+  terminal/log, never used to build a path or shell command.
+- **State durability** — unaffected; `nodeId`/`promptUser` are per-call wiring,
+  never persisted, correctly so (nothing a resume needs).
+- **Comments** — the D5 pause rationale comment (`src/acp.ts:65-68`) states the
+  non-obvious *why* (queued time counts too); no stale `Stryker disable` left
+  over from the plain-`setTimeout` version it replaced.
+
+### 3. Code quality
+
+Short, single-purpose helpers (`armTimer`/`clearTimer`/`pauseTimer`/`resumeTimer`/
+`onTimeout`); `parsePermissionReply` mirrors `parse`'s shape without duplicating
+its approve/reject-vocabulary logic (deliberately stricter — numbers only, per
+task-4). No magic numbers, no `console.log`/debug leftovers, no commented-out
+code. No TODOs without an issue.
+
+### 4. CLI & workflow surface
+
+- Terminal output: see findings 1 and 2 above — the numbered-menu rendering
+  itself is right (matches `SPEC.md`'s example), but it is shown twice per
+  request.
+- `sao validate` is unaffected by this slice (permission prompts are a `run`-time,
+  not `validate`-time, concern — correctly out of scope here).
+- YAML surface: no new keys.
+- Both runners: `@s-no-new-prompts-for-claude-codex` confirms claude/codex never
+  call `promptUser` — verified by spawning both as real stub binaries with stdin
+  closed and asserting the run still succeeds.
+
+### 5. Docs parity
+
+`SPEC.md` (new "Permission requests" subsection, step 7 invariant note) and
+`README.md` (opencode bullet: prompt rendering, shared queue, timeout exclusion)
+are both in this slice's diff, and both are *accurate to the intended design* —
+which is exactly how finding 1 above was caught: the docs' own example output
+doesn't match what the shipped code actually prints.
+
+### Findings
+
+1. **[cli-ux] `resolved`** — `src/acp.ts:130,136,147`. A permission request
+   printed twice on the live terminal (once via the log-echo path, once via the
+   actual prompt). Fixed: `requestPermission` no longer calls `req.onOutput?.()`
+   for the request/menu text or the "selected: …" confirmation — the interactive
+   `promptUser` message is now the only rendering, matching the gate node's own
+   prompt (`executeGate` in `src/engine.ts`), which likewise never mirrors its
+   question into the node log. `onOutput` still carries the turn's real message
+   content, untouched. Test: `tests/gate-permission.test.ts`'s
+   `@s-permission-prompt-numbered` strengthened to assert the request/menu/
+   selection text never reaches `onOutput`.
+2. **[cli-ux] `resolved`** — `src/gate.ts:58-63`. `stdinClosedError`'s hint text
+   didn't mention permission prompts even though it now fires for them. Fixed:
+   the hint now reads "gates, interactive loops, and permission prompts need an
+   interactive terminal (or piped replies, one line per prompt)". Test:
+   `tests/cli.test.ts`'s `@s-permission-stdin-closed-fails` strengthened to
+   assert the hint contains "permission prompts".

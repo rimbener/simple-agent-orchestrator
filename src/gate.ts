@@ -58,7 +58,7 @@ let queue: Promise<unknown> = Promise.resolve();
 function stdinClosedError(): SaoError {
   return new SaoError(
     "stdin closed while waiting for a reply",
-    "gates and interactive loops need an interactive terminal (or piped replies, one line per prompt)",
+    "gates, interactive loops, and permission prompts need an interactive terminal (or piped replies, one line per prompt)",
   );
 }
 

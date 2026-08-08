@@ -88,8 +88,12 @@ describe("runAcpTurn — permission requests", () => {
     expect(messages[0]).toContain("1. Allow");
     expect(messages[0]).toContain("2. Deny");
     expect(result.output).toBe("chosen:opt-allow");
-    expect(logged.join("")).toContain("Write file foo.txt");
-    expect(logged.join("")).toContain("selected: Allow");
+    // The request/menu/selection text rides the interactive prompt only — never
+    // onOutput too, or a real terminal (print echoes onOutput chunks dim, alongside
+    // the bright interactive prompt) shows the same block twice. onOutput still
+    // carries the turn's actual message content (the double's "chosen:..." reply).
+    expect(logged.join("")).not.toContain("Write file foo.txt");
+    expect(logged.join("")).not.toContain("selected:");
   });
 
   test("@s-permission-invalid-reply-reasks: an unparseable or out-of-range reply re-asks; nothing reaches the agent until a valid choice", async () => {

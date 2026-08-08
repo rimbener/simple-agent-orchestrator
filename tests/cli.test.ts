@@ -291,6 +291,7 @@ nodes:
         expect(result.status).toBe(1);
         expect(result.stderr).toContain("stdin closed");
         expect(result.stderr).toContain("interactive terminal");
+        expect(result.stderr).toContain("permission prompts"); // the hint names the caller that actually fired, not just gates/loops
       } finally {
         restore();
       }

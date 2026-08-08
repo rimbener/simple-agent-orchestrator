@@ -89,3 +89,15 @@ stub binaries, not just doubles): stdin-closed request fails naming
 `SPEC.md` (new "Permission requests" subsection under Gate semantics, step 7
 invariant note), `README.md` (opencode bullet: prompt rendering, shared queue,
 timeout exclusion).
+
+Review fixes (both `resolved` in `review-slice.md`): a permission request
+printed twice on the terminal (once via `onOutput`'s log-echo, once via the
+actual `promptUser` prompt) → dropped the `onOutput` calls in
+`requestPermission`, matching `executeGate`'s precedent of never mirroring its
+own prompt text into the node log; `stdinClosedError`'s hint didn't name
+permission prompts as a caller → reworded it to cover all three. Tests:
+`tests/gate-permission.test.ts` asserts the request/selection text never
+reaches `onOutput`; `tests/cli.test.ts`'s `@s-permission-stdin-closed-fails`
+asserts the hint mentions "permission prompts".
+
+Gate: `bun test` (706 pass), typecheck, build green.
