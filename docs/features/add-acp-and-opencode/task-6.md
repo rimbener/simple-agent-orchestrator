@@ -2,7 +2,7 @@
 id: 6
 title: Session lifecycle, resume, and lost-session recovery
 slice: S4 — Sessions & MCP passthrough
-status: todo
+status: done
 scenarios:
   - "@s-fresh-context-false-loads-session"
   - "@s-fresh-context-true-new-session"

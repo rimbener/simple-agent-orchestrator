@@ -221,6 +221,16 @@ file.
   waiting on (or queued behind) one — same as a gate's wait is never time-boxed.
   With no interactive terminal, the node fails instead of auto-approving. claude
   and codex have no permission-request concept and never show this prompt.
+  `fresh_context: false` continues one ACP session (`session/load`); a recorded
+  session the agent no longer knows warns that prior conversation history was
+  lost and continues with a fresh one, rather than halting. Honors `mcp` natively
+  (forwarded via `session/new`'s `mcpServers`, same `command`/`args`/`env` or
+  `url` shape as the other runners); `allowed_tools` is warned about and
+  ignored (no allowlist concept to map it onto); `permission_mode` is a silent
+  no-op, superseded by the permission-request flow above. An MCP transport a
+  workflow's `mcp:` block declares that the agent's handshake doesn't advertise
+  fails at `validate`/`run` time, the same way a missing session-loading
+  capability does.
 
 Prompts are always piped over stdin — never argv.
 

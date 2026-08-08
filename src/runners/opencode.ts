@@ -33,6 +33,15 @@ export const opencodeRunner: Runner = {
         "fresh_context: false requires session resume — drop fresh_context, or use a runner/agent version that supports it",
       );
     }
+    for (const transport of needs.mcpTransports ?? []) {
+      const supported = transport === "sse" ? capabilities.mcpCapabilities?.sse : capabilities.mcpCapabilities?.http;
+      if (supported !== true) {
+        throw new SaoError(
+          `opencode does not support the ${transport} MCP transport`,
+          `the workflow's mcp: block declares a ${transport} server — drop it, or use a runner/agent version that supports it`,
+        );
+      }
+    }
   },
 
   run(req: RunnerRequest): Promise<RunnerResult> {

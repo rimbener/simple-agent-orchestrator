@@ -34,6 +34,8 @@ export interface RunnerResult {
 export interface RunnerNeeds {
   /** Some loop using this runner has fresh_context: false. */
   needsSessionResume: boolean;
+  /** Distinct remote MCP transport kinds ("http" | "sse") the workflow's mcp: block declares. */
+  mcpTransports?: string[];
 }
 
 export interface Runner {

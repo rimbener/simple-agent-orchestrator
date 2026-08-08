@@ -3,6 +3,8 @@ import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SaoError } from "../src/errors";
+import { runWorkflow } from "../src/engine";
+import { loadWorkflow } from "../src/parser";
 import { opencodeRunner } from "../src/runners/opencode";
 import { getRunner } from "../src/runners/types";
 
@@ -139,12 +141,63 @@ describe("opencodeRunner", () => {
     }
   });
 
+  test("@s-mcp-unsupported-transport-preflight: preflight rejects naming the agent and the unsupported MCP transport", async () => {
+    const restore = withStubOpencode({ agentCapabilities: { mcpCapabilities: {} } });
+    try {
+      const err = await rejectionOf(opencodeRunner.preflight!({ needsSessionResume: false, mcpTransports: ["http"] }));
+      expect(err).toBeInstanceOf(SaoError);
+      expect(err.message).toContain("opencode");
+      expect(err.message).toContain("http");
+    } finally {
+      restore();
+    }
+  });
+
+  test("preflight passes when the handshake advertises the needed MCP transport", async () => {
+    const restore = withStubOpencode({ agentCapabilities: { mcpCapabilities: { http: true } } });
+    try {
+      await expect(opencodeRunner.preflight!({ needsSessionResume: false, mcpTransports: ["http"] })).resolves.toBeUndefined();
+    } finally {
+      restore();
+    }
+  });
+
   test("run() launches `opencode acp` and delegates the turn to the ACP client", async () => {
     const restore = withStubOpencode();
     try {
       const result = await opencodeRunner.run({ prompt: "hi", cwd: process.cwd() });
       expect(result.output).toBe("ok");
       expect(result.exitCode).toBe(0);
+      expect(result.sessionId).toBe("double-session");
+    } finally {
+      restore();
+    }
+  });
+
+  test("@s-session-id-persisted: the run's persisted state records the opencode node's session id", async () => {
+    const restore = withStubOpencode();
+    try {
+      const dir = mkdtempSync(join(tmpdir(), "sao-opencode-state-"));
+      const path = join(dir, "workflow.yaml");
+      writeFileSync(
+        path,
+        `
+name: sessionpersist
+nodes:
+  - id: a
+    runner: opencode
+    prompt: "hi"
+`,
+      );
+      const state = await runWorkflow({
+        workflow: loadWorkflow(path, { cwd: dir }),
+        workflowPath: path,
+        task: "",
+        vars: {},
+        cwd: dir,
+        print: () => {},
+      });
+      expect(state.nodes["a"]!.sessionId).toBe("double-session");
     } finally {
       restore();
     }

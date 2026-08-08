@@ -2,7 +2,7 @@
 id: 7
 title: mcp: forwarding, transport capability gap, and ignored settings
 slice: S4 — Sessions & MCP passthrough
-status: todo
+status: done
 scenarios:
   - "@s-mcp-forwarded-to-session-new"
   - "@s-mcp-unsupported-transport-preflight"

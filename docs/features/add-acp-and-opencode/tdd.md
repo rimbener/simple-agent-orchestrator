@@ -101,3 +101,34 @@ reaches `onOutput`; `tests/cli.test.ts`'s `@s-permission-stdin-closed-fails`
 asserts the hint mentions "permission prompts".
 
 Gate: `bun test` (706 pass), typecheck, build green.
+
+## Slice S4 — Sessions & MCP passthrough (task-6, task-7)
+
+**task-6** — `runAcpTurn` branches on `req.resumeSessionId`: unset →
+`session/new`; set → `session/load`, same id. A `session/load` rejection while
+the process is still alive (`settled` false) warns "prior conversation history
+was lost" and falls back to `session/new`; if the process died first,
+`close`/`error` already settled the reject — a transport failure is never
+swallowed into a retry.
+
+**task-7** — `loadAcpMcpServers(mcpConfigPath)` reads the `.mcp.json`-shaped
+file, converts each entry (`command`/`args`/`env` → stdio, `url` → http/sse) to
+ACP's wire shape, passed to `session/new`/`session/load`. `ignoredAcpSettings`
+flags `allowed_tools` only (`permission_mode` is a no-op). `RunnerNeeds` gained
+optional `mcpTransports`, computed once in `engine.ts` (inline `mcp:` or the
+path form) and checked in `opencodeRunner.preflight` vs. `mcpCapabilities`.
+
+@s → test map (`tests/acp.test.ts` unless noted):
+- `@s-fresh-context-false-loads-session`, `@s-fresh-context-true-new-session`,
+  `@s-lost-session-warns-and-continues`
+- `@s-session-id-persisted` → `tests/opencode.test.ts` (real stub binary +
+  `runWorkflow`, asserts `state.json`)
+- `@s-mcp-forwarded-to-session-new`, `@s-no-mcp-key-no-forwarding`,
+  `@s-allowed-tools-warns-ignored`, `@s-permission-mode-noop`
+- `@s-mcp-unsupported-transport-preflight` → `tests/engine-acp.test.ts` (needs
+  wiring) + `tests/opencode.test.ts` (real handshake capability check)
+
+Gate: `bun test` (723 pass), typecheck, build green. Docs: `SPEC.md` (opencode
+adapter paragraph — sessions + mcp/allowed_tools/permission_mode; MCP servers
+v1 note; execution semantics step 2 — MCP transport gap), `README.md` (opencode
+bullet: sessions, mcp/allowed_tools/permission_mode, transport gap).

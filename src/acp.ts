@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { Readable, Writable } from "node:stream";
 import {
   ClientSideConnection,
@@ -8,6 +9,7 @@ import {
   type AgentCapabilities,
   type Client,
   type ContentBlock,
+  type McpServer,
   type RequestPermissionRequest,
   type RequestPermissionResponse,
   type SessionNotification,
@@ -33,6 +35,44 @@ function messageText(content: ContentBlock): string | undefined {
   return content.type === "text" ? content.text : undefined;
 }
 
+/** Settings ACP has no home for; the run log warns instead of silently dropping them (codex precedent). */
+export function ignoredAcpSettings(req: RunnerRequest): string[] {
+  const ignored: string[] = [];
+  if (req.allowedTools !== undefined) ignored.push("allowed_tools");
+  return ignored;
+}
+
+function nameValuePairs(value: unknown): { name: string; value: string }[] {
+  if (value === null || typeof value !== "object") return [];
+  return Object.entries(value as Record<string, unknown>).map(([name, v]) => ({ name, value: String(v) }));
+}
+
+/** claude's `.mcp.json` shape (`command`/`args`/`env` for stdio, `url` for remote) → the ACP wire shape. */
+function toMcpServer(name: string, def: unknown): McpServer {
+  const d = (def ?? {}) as Record<string, unknown>;
+  if (typeof d.url === "string") {
+    return { name, type: d.type === "sse" ? "sse" : "http", url: d.url, headers: nameValuePairs(d.headers) };
+  }
+  return {
+    name,
+    command: typeof d.command === "string" ? d.command : "",
+    args: Array.isArray(d.args) ? d.args.map(String) : [],
+    env: nameValuePairs(d.env),
+  };
+}
+
+/**
+ * Reads the `.mcp.json`-shaped file at `mcpConfigPath` (sao's own serialized
+ * inline block, or the workflow author's own file) and converts it to ACP's
+ * `session/new`/`session/load` `mcpServers` shape. sao stays a forwarder: no
+ * `${ENV_VAR}` expansion, no `{{...}}` templating — the runner's contract.
+ */
+export function loadAcpMcpServers(mcpConfigPath: string | undefined): McpServer[] {
+  if (mcpConfigPath === undefined) return [];
+  const raw = JSON.parse(readFileSync(mcpConfigPath, "utf8")) as { mcpServers?: Record<string, unknown> };
+  return Object.entries(raw.mcpServers ?? {}).map(([name, def]) => toMcpServer(name, def));
+}
+
 /**
  * Drives one prompt turn against an ACP agent over stdio: spawn, `initialize`,
  * `session/new`, `session/prompt`, then tear the process down. Each call is a
@@ -41,6 +81,11 @@ function messageText(content: ContentBlock): string | undefined {
  */
 export function runAcpTurn(launch: AcpLaunch, req: RunnerRequest): Promise<RunnerResult> {
   return new Promise((resolve, reject) => {
+    const ignored = ignoredAcpSettings(req);
+    if (ignored.length > 0) {
+      req.onOutput?.(`⚠ ${launch.command} ignores ${ignored.join(", ")} — ACP has no tool-allowlist concept to map it onto\n`);
+    }
+
     const child = spawn(launch.command, launch.args, {
       cwd: req.cwd,
       // Stryker disable next-line ArrayDeclaration: equivalent — node/bun default missing stdio entries for fds 0-2 to "pipe"
@@ -166,16 +211,41 @@ export function runAcpTurn(launch: AcpLaunch, req: RunnerRequest): Promise<Runne
 
       (async () => {
         await conn.initialize({ protocolVersion: PROTOCOL_VERSION });
-        const session = await conn.newSession({ cwd: req.cwd, mcpServers: [] });
+        const mcpServers = loadAcpMcpServers(req.mcpConfigPath);
+
+        // Session continuity (task 6): task 3's preflight already rejected
+        // fresh_context: false against an agent that doesn't advertise loadSession,
+        // so reaching session/load here always targets a capable agent.
+        let sessionId: string | undefined;
+        if (req.resumeSessionId !== undefined) {
+          try {
+            await conn.loadSession({ cwd: req.cwd, mcpServers, sessionId: req.resumeSessionId });
+            sessionId = req.resumeSessionId;
+          } catch {
+            // The agent responded but no longer knows this session (lost on
+            // resume, user story Note 6) — never re-thrown as a transport
+            // failure. If the process instead died mid-load, `close`/`error`
+            // already settled the turn and `settled` is true here, so this
+            // branch does nothing further — a genuine transport failure is
+            // never swallowed into a "lost session" retry.
+            if (settled) return;
+            req.onOutput?.(`⚠ lost session ${req.resumeSessionId} — prior conversation history was lost; continuing in a new session\n`);
+          }
+        }
+        if (sessionId === undefined) {
+          const session = await conn.newSession({ cwd: req.cwd, mcpServers });
+          sessionId = session.sessionId;
+        }
+
         const promptBlocks: ContentBlock[] = [{ type: "text", text: composeAcpPrompt(req) }];
-        const response = await conn.prompt({ sessionId: session.sessionId, prompt: promptBlocks });
+        const response = await conn.prompt({ sessionId, prompt: promptBlocks });
         settle(() => {
           killTree(child); // the turn is over — a long-running agent has no reason to keep running
           if (response.stopReason === "refusal") {
             reject(new SaoError(`${launch.command} refused the turn`, truncateDetail(output)));
             return;
           }
-          resolve({ output, sessionId: session.sessionId, exitCode: 0 });
+          resolve({ output, sessionId, exitCode: 0 });
         });
       })().catch((err: unknown) => {
         settle(() => {

@@ -623,11 +623,12 @@ export function preflightAiConfigs(
  * effect, so a missing binary or capability gap fails here, not at the first node.
  */
 export async function preflightRunnerEnvironments(workflow: Workflow, configs: Map<string, ResolvedAiConfig>): Promise<void> {
+  const mcpTransports = neededMcpTransports(workflow);
   const needsByRunner = new Map<Runner, RunnerNeeds>();
   const needsFor = (runner: Runner): RunnerNeeds => {
     let needs = needsByRunner.get(runner);
     if (needs === undefined) {
-      needs = { needsSessionResume: false };
+      needs = { needsSessionResume: false, mcpTransports };
       needsByRunner.set(runner, needs);
     }
     return needs;
@@ -644,6 +645,31 @@ export async function preflightRunnerEnvironments(workflow: Workflow, configs: M
     probed.add(runner);
     await runner.preflight?.(needsFor(runner));
   }
+}
+
+/**
+ * Distinct remote transport kinds ("http" | "sse") the workflow's `mcp:` block
+ * declares — read from the inline block or, for a path form, the file
+ * `preflightAiConfigs`'s caller already validated as JSON. Stdio servers
+ * (`command:`) need no capability check — every ACP agent must support stdio.
+ */
+function neededMcpTransports(workflow: Workflow): string[] {
+  const record =
+    workflow.mcpServers ?? (workflow.mcpConfigPath !== undefined ? readMcpServersRecord(workflow.mcpConfigPath) : undefined);
+  if (record === undefined) return [];
+  const transports = new Set<string>();
+  for (const def of Object.values(record)) {
+    if (def === null || typeof def !== "object") continue;
+    const url = (def as Record<string, unknown>).url;
+    if (typeof url !== "string") continue;
+    transports.add((def as Record<string, unknown>).type === "sse" ? "sse" : "http");
+  }
+  return [...transports];
+}
+
+function readMcpServersRecord(mcpConfigPath: string): Record<string, unknown> {
+  const raw = JSON.parse(readFileSync(mcpConfigPath, "utf8")) as { mcpServers?: Record<string, unknown> };
+  return raw.mcpServers ?? {};
 }
 
 function resolveAiConfig(

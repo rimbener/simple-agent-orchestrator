@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SaoError } from "../src/errors";
-import { composeAcpPrompt, runAcpHandshake, runAcpTurn } from "../src/acp";
+import { composeAcpPrompt, ignoredAcpSettings, runAcpHandshake, runAcpTurn } from "../src/acp";
 import type { AcpLaunch } from "../src/acp";
 import type { PromptUser } from "../src/gate";
 
@@ -56,12 +56,25 @@ function emitChunk(sessionId, chunk) {
 }
 var permReqId = null;
 var promptMsgId = null;
+var lastSessionEvent = null;
+var lastMcpServers = [];
 function handle(msg) {
   if (msg.method === "initialize") {
     if (config.hangInitialize) return;
     send({ jsonrpc: "2.0", id: msg.id, result: { protocolVersion: 1, agentCapabilities: config.agentCapabilities || {} } });
   } else if (msg.method === "session/new") {
+    lastSessionEvent = "new:" + (config.sessionId || "double-session");
+    lastMcpServers = (msg.params && msg.params.mcpServers) || [];
     send({ jsonrpc: "2.0", id: msg.id, result: { sessionId: config.sessionId || "double-session" } });
+  } else if (msg.method === "session/load") {
+    if (config.loadSessionCrashes) process.exit(1);
+    if (config.loadSessionFails) {
+      send({ jsonrpc: "2.0", id: msg.id, error: { code: -32001, message: "unknown session" } });
+      return;
+    }
+    lastSessionEvent = "load:" + msg.params.sessionId;
+    lastMcpServers = (msg.params && msg.params.mcpServers) || [];
+    send({ jsonrpc: "2.0", id: msg.id, result: {} });
   } else if (msg.method === "session/prompt") {
     if (config.hang) return;
     promptMsgId = msg.id;
@@ -84,6 +97,10 @@ function handle(msg) {
       var cwdText = process.cwd();
       if (config.echoEnv) cwdText += " " + (process.env[config.echoEnv] || "");
       chunks = [{ text: cwdText }];
+    } else if (config.echoSessionEvent) {
+      chunks = [{ text: lastSessionEvent }];
+    } else if (config.echoMcpServers) {
+      chunks = [{ text: JSON.stringify(lastMcpServers) }];
     }
     for (var i = 0; i < chunks.length; i++) emitChunk(config.sessionId || "double-session", chunks[i]);
     send({ jsonrpc: "2.0", id: msg.id, result: { stopReason: config.stopReason || "end_turn" } });
@@ -323,5 +340,126 @@ describe("runAcpHandshake", () => {
       await wait(50);
     }
     expect(dead).toBe(true);
+  });
+});
+
+describe("runAcpTurn — sessions (task 6)", () => {
+  test("@s-fresh-context-true-new-session: with no resumeSessionId, every turn creates a new session, never loads one", async () => {
+    const double = withAcpDouble({ sessionId: "sess-x", echoSessionEvent: true });
+    const r1 = await runAcpTurn(double.launch, { prompt: "go", cwd: process.cwd(), env: double.env });
+    const r2 = await runAcpTurn(double.launch, { prompt: "go", cwd: process.cwd(), env: double.env });
+    expect(r1.output).toBe("new:sess-x");
+    expect(r2.output).toBe("new:sess-x");
+    expect(r1.sessionId).toBe("sess-x");
+  });
+
+  test("@s-fresh-context-false-loads-session: a turn with resumeSessionId loads the prior session instead of creating a new one", async () => {
+    const double = withAcpDouble({ sessionId: "sess-1", echoSessionEvent: true });
+    const r1 = await runAcpTurn(double.launch, { prompt: "go", cwd: process.cwd(), env: double.env });
+    expect(r1.output).toBe("new:sess-1");
+    const r2 = await runAcpTurn(double.launch, { prompt: "go", cwd: process.cwd(), env: double.env, resumeSessionId: r1.sessionId });
+    expect(r2.output).toBe("load:sess-1");
+    expect(r2.sessionId).toBe("sess-1");
+  });
+
+  test("@s-lost-session-warns-and-continues: a session the agent no longer knows warns and continues in a new session", async () => {
+    const double = withAcpDouble({ sessionId: "sess-new", loadSessionFails: true });
+    const chunks: string[] = [];
+    const result = await runAcpTurn(double.launch, {
+      prompt: "go",
+      cwd: process.cwd(),
+      env: double.env,
+      resumeSessionId: "sess-gone",
+      onOutput: (c) => chunks.push(c),
+    });
+    expect(result.sessionId).toBe("sess-new");
+    expect(result.exitCode).toBe(0);
+    expect(chunks.join("")).toContain("lost session sess-gone");
+    expect(chunks.join("")).toContain("prior conversation history was lost");
+  });
+
+  test("a process that dies while loading a session still fails the node, not swallowed as a lost session", async () => {
+    const double = withAcpDouble({ loadSessionCrashes: true });
+    const err = await rejectionOf(
+      runAcpTurn(double.launch, { prompt: "go", cwd: process.cwd(), env: double.env, resumeSessionId: "sess-gone" }),
+    );
+    expect(err).toBeInstanceOf(SaoError);
+    expect(err.message).not.toContain("lost session");
+  });
+});
+
+describe("ignoredAcpSettings", () => {
+  test("nothing set: nothing ignored", () => {
+    expect(ignoredAcpSettings({ prompt: "p", cwd: "/tmp" })).toEqual([]);
+  });
+
+  test("allowed_tools set: flagged as ignored; mcp and permission_mode never are", () => {
+    expect(
+      ignoredAcpSettings({ prompt: "p", cwd: "/tmp", allowedTools: ["Bash"], mcpConfigPath: "/x", permissionMode: "acceptEdits" }),
+    ).toEqual(["allowed_tools"]);
+  });
+});
+
+describe("runAcpTurn — MCP passthrough and ignored settings (task 7)", () => {
+  test("@s-mcp-forwarded-to-session-new: workflow MCP servers reach the agent's session", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "sao-acp-mcp-"));
+    const mcpConfigPath = join(dir, "mcp.json");
+    writeFileSync(
+      mcpConfigPath,
+      JSON.stringify({ mcpServers: { jira: { command: "npx", args: ["-y", "mcp-remote"], env: { TOKEN: "abc" } } } }),
+    );
+    const double = withAcpDouble({ echoMcpServers: true });
+    const result = await runAcpTurn(double.launch, { prompt: "hi", cwd: process.cwd(), env: double.env, mcpConfigPath });
+    expect(JSON.parse(result.output)).toEqual([
+      { name: "jira", command: "npx", args: ["-y", "mcp-remote"], env: [{ name: "TOKEN", value: "abc" }] },
+    ]);
+  });
+
+  test("forwards a remote (url-based) MCP server with the http/sse transport shape", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "sao-acp-mcp-remote-"));
+    const mcpConfigPath = join(dir, "mcp.json");
+    writeFileSync(
+      mcpConfigPath,
+      JSON.stringify({ mcpServers: { docs: { url: "https://example.com/mcp", type: "sse", headers: { "X-Key": "abc" } } } }),
+    );
+    const double = withAcpDouble({ echoMcpServers: true });
+    const result = await runAcpTurn(double.launch, { prompt: "hi", cwd: process.cwd(), env: double.env, mcpConfigPath });
+    expect(JSON.parse(result.output)).toEqual([
+      { name: "docs", type: "sse", url: "https://example.com/mcp", headers: [{ name: "X-Key", value: "abc" }] },
+    ]);
+  });
+
+  test("@s-no-mcp-key-no-forwarding: without mcpConfigPath, the session is created with no MCP servers", async () => {
+    const double = withAcpDouble({ echoMcpServers: true });
+    const result = await runAcpTurn(double.launch, { prompt: "hi", cwd: process.cwd(), env: double.env });
+    expect(JSON.parse(result.output)).toEqual([]);
+  });
+
+  test("@s-allowed-tools-warns-ignored: allowed_tools is warned about and ignored", async () => {
+    const double = withAcpDouble({});
+    const chunks: string[] = [];
+    const result = await runAcpTurn(double.launch, {
+      prompt: "hi",
+      cwd: process.cwd(),
+      env: double.env,
+      allowedTools: ["Bash"],
+      onOutput: (c) => chunks.push(c),
+    });
+    expect(chunks.join("")).toBe(`⚠ ${double.launch.command} ignores allowed_tools — ACP has no tool-allowlist concept to map it onto\n`);
+    expect(result.exitCode).toBe(0);
+  });
+
+  test("@s-permission-mode-noop: permission_mode is silently ignored", async () => {
+    const double = withAcpDouble({});
+    const chunks: string[] = [];
+    const result = await runAcpTurn(double.launch, {
+      prompt: "hi",
+      cwd: process.cwd(),
+      env: double.env,
+      permissionMode: "acceptEdits",
+      onOutput: (c) => chunks.push(c),
+    });
+    expect(chunks.join("")).not.toContain("permission_mode");
+    expect(result.exitCode).toBe(0);
   });
 });

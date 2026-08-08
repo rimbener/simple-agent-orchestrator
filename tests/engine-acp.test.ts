@@ -110,6 +110,55 @@ nodes:
     await expect(run(path, dir, { resolveRunner: () => runner })).rejects.toThrow("mockacp failed the ACP handshake");
     expect(existsSync(join(dir, ".sao"))).toBe(false);
   });
+
+  test("@s-mcp-unsupported-transport-preflight: an MCP transport the agent cannot take fails preflight before any node executes", async () => {
+    const { dir, path } = setup(`
+name: mcptransport
+mcp:
+  docs:
+    url: https://example.com/mcp
+nodes:
+  - id: a
+    prompt: "hi"
+`);
+    const runner = mockAcpRunner((needs) => {
+      if (needs.mcpTransports?.includes("http")) throw new SaoError("mockacp does not support the http MCP transport");
+    });
+    await expect(run(path, dir, { resolveRunner: () => runner })).rejects.toThrow("mockacp does not support the http MCP transport");
+    expect(existsSync(join(dir, ".sao"))).toBe(false);
+  });
+
+  test("workflow mcp: servers given as a path are read for the same transport check as inline servers", async () => {
+    const { dir, path } = setup(`
+name: mcptransportpath
+mcp: ./mcp.json
+nodes:
+  - id: a
+    prompt: "hi"
+`);
+    writeFileSync(join(dir, "mcp.json"), JSON.stringify({ mcpServers: { docs: { url: "https://example.com/mcp", type: "sse" } } }));
+    let seenTransports: string[] = [];
+    const runner = mockAcpRunner((needs) => {
+      seenTransports = needs.mcpTransports ?? [];
+    });
+    await run(path, dir, { resolveRunner: () => runner });
+    expect(seenTransports).toEqual(["sse"]);
+  });
+
+  test("no mcp: block: mcpTransports is empty", async () => {
+    const { dir, path } = setup(`
+name: nomcp
+nodes:
+  - id: a
+    prompt: "hi"
+`);
+    let seenTransports: string[] = [];
+    const runner = mockAcpRunner((needs) => {
+      seenTransports = needs.mcpTransports ?? [];
+    });
+    await run(path, dir, { resolveRunner: () => runner });
+    expect(seenTransports).toEqual([]);
+  });
 });
 
 describe("permission-prompt plumbing", () => {

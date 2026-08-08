@@ -305,7 +305,9 @@ sao is **not an MCP host** — the runners already are. sao only forwards config
   user-level config) — MCP still works; it's just not pinned by the workflow.
 - v1: the **claude adapter** honors both keys (`--mcp-config`, `--allowedTools`);
   the **codex adapter** uses its own global config (`~/.codex/config.toml`) and
-  ignores them with a printed warning.
+  ignores them with a printed warning; **ACP runners** (opencode) honor `mcp:`
+  natively via `session/new`'s `mcpServers` and warn-and-ignore `allowed_tools`
+  — an ACP runner has no allowlist concept to map it onto.
 
 ## Runner interface
 
@@ -360,7 +362,15 @@ joined from `agent_message_chunk` updates only; thought chunks and tool-call
 updates are excluded, matching the claude adapter's text-only capture. ACP has no
 system-prompt slot, so `systemPrompt` is prepended to the prompt as a role
 preamble (the codex precedent). A `stopReason` of `refusal` fails the node even on
-a clean exit.
+a clean exit. Sessions map to `session/new` (fresh) and `session/load`
+(`fresh_context: false`, continuing); a `session/load` the agent no longer
+recognizes prints a warning that prior conversation history was lost and
+continues in a new session, rather than halting the run (user story Note 6) —
+a genuine process/transport failure during the load still fails the node.
+`mcp:` servers are forwarded natively via `session/new`/`session/load`'s
+`mcpServers`; `allowed_tools` is warned about and ignored (no ACP allowlist
+concept to map it onto); `permission_mode` is a silent no-op, superseded by the
+permission-request flow.
 
 Adding a runner = one new file in `src/runners/` implementing the interface, registered
 in a static map. No dynamic plugin loading in v1.
@@ -372,8 +382,9 @@ in a static map. No dynamic plugin loading in v1.
   availability — registry lookup and binary-on-PATH — so a missing CLI fails before
   any node's side effects). For ACP runners, the binary check is followed by an
   `initialize` handshake: the agent's advertised capabilities are checked against
-  what the workflow needs (e.g. session loading for `fresh_context: false`) — an
-  ACP runner's capability comes from this live handshake, never a static
+  what the workflow needs (e.g. session loading for `fresh_context: false`, or an
+  MCP transport an `mcp:` server declares that the agent's handshake doesn't
+  advertise) — an ACP runner's capability comes from this live handshake, never a static
   declaration, so a capability gap or a binary that fails to speak ACP also fails
   here, before any node's side effects. `sao validate` performs the same handshake.
 3. Create run: id `2026-08-03-1432-fix-issue-a1b2`, dir `.sao/runs/<id>/` in the
