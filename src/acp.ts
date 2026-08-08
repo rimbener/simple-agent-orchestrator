@@ -74,6 +74,58 @@ export function loadAcpMcpServers(mcpConfigPath: string | undefined): McpServer[
 }
 
 /**
+ * Drops non-standard `session/update` notifications from the agent's output
+ * stream before the ACP library's `Connection` sees them. opencode emits
+ * `usage_update` (token-usage telemetry) which the pinned ACP schema does not
+ * know, so the library rejects the notification and prints a spurious
+ * "Invalid params" error even though the turn is fine. Re-frames NDJSON the
+ * same way the library does, preserving untouched lines byte-for-byte.
+ */
+export function dropUsageUpdateNotifications(input: ReadableStream<Uint8Array>): ReadableStream<Uint8Array> {
+  const textDecoder = new TextDecoder();
+  const textEncoder = new TextEncoder();
+  let buffer = "";
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      const reader = input.getReader();
+      (async () => {
+        try {
+          for (;;) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            if (!value) continue;
+            buffer += textDecoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            buffer = lines.pop() || "";
+            for (const line of lines) {
+              if (!line.trim()) continue;
+              let drop = false;
+              try {
+                const message = JSON.parse(line.trim()) as {
+                  method?: string;
+                  params?: { update?: { sessionUpdate?: string } };
+                };
+                drop = message.method === "session/update" && message.params?.update?.sessionUpdate === "usage_update";
+              } catch {
+                // Unparseable line — pass it through untouched; the library will report it.
+              }
+              if (!drop) controller.enqueue(textEncoder.encode(`${line}\n`));
+            }
+          }
+        } catch {
+          // The agent process was killed mid-turn; the reader aborts instead of
+          // ending cleanly. Best-effort pass-through: stop forwarding and let the
+          // library see a normal end-of-stream, exactly as it would on the raw pipe.
+        } finally {
+          reader.releaseLock();
+          controller.close();
+        }
+      })();
+    },
+  });
+}
+
+/**
  * Drives one prompt turn against an ACP agent over stdio: spawn, `initialize`,
  * `session/new`, `session/prompt`, then tear the process down. Each call is a
  * fresh spawn — matching the claude/codex adapters' per-call process lifecycle —
@@ -205,7 +257,7 @@ export function runAcpTurn(launch: AcpLaunch, req: RunnerRequest): Promise<Runne
     child.once("spawn", () => {
       const stream = ndJsonStream(
         Writable.toWeb(child.stdin) as WritableStream<Uint8Array>,
-        Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>,
+        dropUsageUpdateNotifications(Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>),
       );
       const conn = new ClientSideConnection(() => client, stream);
 
@@ -311,7 +363,7 @@ export function runAcpHandshake(
     child.once("spawn", () => {
       const stream = ndJsonStream(
         Writable.toWeb(child.stdin) as WritableStream<Uint8Array>,
-        Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>,
+        dropUsageUpdateNotifications(Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>),
       );
       const client: Client = {
         async sessionUpdate(): Promise<void> {},

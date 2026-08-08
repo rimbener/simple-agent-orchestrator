@@ -88,6 +88,9 @@ function handle(msg) {
       });
       return;
     }
+    if (config.usageUpdate) {
+      send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: config.sessionId || "double-session", update: { sessionUpdate: "usage_update", used: 16686, size: 200000, cost: { input: 1, output: 2 } } } });
+    }
     var chunks = config.chunks || [];
     if (config.echoPrompt) {
       var blocks = (msg.params && msg.params.prompt) || [];
@@ -227,6 +230,20 @@ describe("runAcpTurn", () => {
     const dir = mkdtempSync(join(tmpdir(), "sao-acp-cwd-"));
     const result = await runAcpTurn(double.launch, { prompt: "hi", cwd: dir, env: { ...double.env, SAO_RUN_ID: "run-77" } });
     expect(result.output).toBe(`${realpathSync(dir)} run-77`);
+  });
+
+  test("@s-acp-usage-update-dropped: a usage_update notification (opencode telemetry) is dropped without tripping the library's schema", async () => {
+    const double = withAcpDouble({ usageUpdate: true, chunks: [{ text: "done" }] });
+    const errors: unknown[][] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => errors.push(args);
+    try {
+      const result = await runAcpTurn(double.launch, { prompt: "hi", cwd: process.cwd(), env: double.env });
+      expect(result.output).toBe("done");
+    } finally {
+      console.error = original;
+    }
+    expect(errors).toEqual([]);
   });
 
   test("a process that exits before completing the handshake rejects instead of hanging", async () => {
