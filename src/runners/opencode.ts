@@ -20,6 +20,7 @@ export const opencodeRunner: Runner = {
     }
     let capabilities;
     try {
+      // Stryker disable next-line ObjectLiteral: equivalent — node's child_process.spawn defaults cwd to process.cwd() when omitted, so dropping this key changes nothing observable
       capabilities = await runAcpHandshake(LAUNCH, { cwd: process.cwd() });
     } catch (err) {
       throw new SaoError(

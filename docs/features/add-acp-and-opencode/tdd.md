@@ -2,138 +2,89 @@
 
 ## Slice S1 — ACP transport & opencode runner (task-1, task-2)
 
-`runAcpTurn(launch, req)` spawns fresh per turn, drives `initialize` →
-`session/new` → `session/prompt` via `ClientSideConnection` + `ndJsonStream`.
-`opencodeRunner` is name + launch command (`opencode acp`, D7 confirmed) +
-delegation to `runAcpTurn`; preflight reuses `findExecutableOnPath`.
-
-@s → test map (`tests/acp.test.ts` unless noted): `@s-acp-stream-and-output`,
+@s → test (`tests/acp.test.ts` unless noted): `@s-acp-stream-and-output`,
 `@s-acp-output-excludes-thoughts`, `@s-acp-sentinel-ends-loop`,
 `@s-acp-refusal-fails-node`, `@s-acp-timeout-kills`;
 `@s-opencode-missing-binary-preflight`, `@s-opencode-agent-system-prompt`,
 `@s-opencode-runner-selectable` → `tests/opencode.test.ts`;
 `@s-unknown-runner-lists-opencode` → `tests/runners.test.ts`.
 
-Gate: `bun test` (673 pass), typecheck, build green. Docs: `SPEC.md`/`README.md`
-(AI execution row, adapter description, five-dependency line, Runners section).
+Gate: `bun test` (673 pass), typecheck, build green.
 
 ## Slice S2 — Capability preflight (task-3)
 
-`Runner.preflight` takes `RunnerNeeds` and may return a promise.
-`preflightAiConfigs` stays sync; a new awaited `preflightRunnerEnvironments`
-does binary/handshake checks, once per distinct runner. `src/acp.ts` gained
-`runAcpHandshake` (spawn, `initialize`, kill, return capabilities).
-
-@s → test map (`tests/engine-acp.test.ts` + `tests/opencode.test.ts` unless noted):
+@s → test (`tests/engine-acp.test.ts` + `tests/opencode.test.ts`):
 `@s-capability-gap-preflight`, `@s-capability-present-passes`,
 `@s-validate-performs-handshake`, `@s-handshake-once-per-runner`,
 `@s-handshake-failure-preflight`, `@s-existing-runners-unaffected`.
 
-Review fixes (both `resolved` in `review-slice.md`): `runAcpHandshake` had no
-timeout → gave it the same timer-based settle as `runAcpTurn`
-(`DEFAULT_HANDSHAKE_TIMEOUT_SEC`); `opencodeRunner.preflight`'s handshake-failure
-catch discarded the real error → folds `err.message` into the `SaoError`.
+Review fixes (`resolved`): handshake had no timeout → pausable-timer settle;
+preflight's handshake-failure catch discarded the real error → folds it in.
 
-Gate: `bun test` (687 pass), typecheck, build green. Docs: `SPEC.md` (execution
-semantics step 2), `README.md` (`validate`, `fresh_context: false`, opencode).
+Gate: `bun test` (687 pass), typecheck, build green.
 
 ## Slice S3 — Permission prompts (task-4, task-5)
 
-**task-4** — `session/request_permission` → numbered terminal prompt.
-`gate.ts` gained `parsePermissionReply(reply, optionCount)` (bare number in
-range, else `invalid`) alongside `parseGateReply`/`parseLoopReply`.
-`RunnerRequest`/`NodeExecContext` gained `nodeId` + `promptUser` (threaded
-engine → nodes.ts → runner, at all three `executeAiNode` call sites: plain AI
-node, loop `prompt`, loop `steps` AI step). `acp.ts`'s `requestPermission`
-renders `[nodeId] permission requested: <title>` + a numbered menu, loops on
-`parsePermissionReply` until valid (nothing sent to the agent meanwhile), logs
-the request/choice via `onOutput`, and — on a `promptUser` rejection (stdin
-closed) — settles the whole turn with that same `SaoError`, never auto-approving.
-
-@s → test map:
+@s → test:
 - `@s-permission-prompt-numbered`, `@s-permission-invalid-reply-reasks` →
-  `tests/gate-permission.test.ts` (hand-rolled ACP double + fake `promptUser`)
+  `tests/gate-permission.test.ts`
 - `@s-permission-stdin-closed-fails`, `@s-permission-serialized-with-gates` →
-  `tests/cli.test.ts` (spawned CLI, stub `opencode` binary on PATH, real stdin;
-  serialization ordering proven via a 200ms send-delay in the double so the
-  near-instant gate prompt reliably enqueues first)
-- `@s-no-new-prompts-for-claude-codex` → `tests/cli.test.ts` (stub claude+codex
-  binaries, stdin closed, run still succeeds — they never call `promptUser`)
-- Plumbing (untagged): `tests/nodes.test.ts`, `tests/engine-acp.test.ts` assert
-  `nodeId`/`promptUser` reach the runner's request.
+  `tests/cli.test.ts`
+- `@s-no-new-prompts-for-claude-codex` → `tests/cli.test.ts`
+- `@s-timeout-paused-during-prompt`, `@s-timeout-paused-while-queued` →
+  `tests/acp.test.ts`
 
-Pitfall fixed: `spawnSync` in `tests/cli.test.ts` doesn't pick up a
-`process.env.PATH` mutation without `env: process.env` passed explicitly —
-every PATH-stubbed spawn there now passes it.
-
-**task-5** — the timeout clock pauses for a permission prompt (D5). Replaced
-the flat `setTimeout` in `runAcpTurn` with a pausable one (`remainingMs` +
-`armTimer`/`pauseTimer`/`resumeTimer`, tracking elapsed via `Date.now()`);
-`requestPermission` pauses before its ask-loop and resumes in a `finally`, so
-queued time counts too (pause happens before `promptUser` is even called, not
-when it starts being answered).
-
-@s → test map: `@s-timeout-paused-during-prompt`, `@s-timeout-paused-while-queued`
-→ `tests/acp.test.ts` (extended `DOUBLE_SCRIPT` with `config.requestPermission`;
-real short timers, no fake-clock injection — matches the existing timeout
-tests' real-wall-clock style).
-
-Gate: `bun test` (706 pass), typecheck, build green. Manual CLI smoke (real
-stub binaries, not just doubles): stdin-closed request fails naming
-"interactive terminal"; a `1` reply approves and the node succeeds. Docs:
-`SPEC.md` (new "Permission requests" subsection under Gate semantics, step 7
-invariant note), `README.md` (opencode bullet: prompt rendering, shared queue,
-timeout exclusion).
-
-Review fixes (both `resolved` in `review-slice.md`): a permission request
-printed twice on the terminal (once via `onOutput`'s log-echo, once via the
-actual `promptUser` prompt) → dropped the `onOutput` calls in
-`requestPermission`, matching `executeGate`'s precedent of never mirroring its
-own prompt text into the node log; `stdinClosedError`'s hint didn't name
-permission prompts as a caller → reworded it to cover all three. Tests:
-`tests/gate-permission.test.ts` asserts the request/selection text never
-reaches `onOutput`; `tests/cli.test.ts`'s `@s-permission-stdin-closed-fails`
-asserts the hint mentions "permission prompts".
+Review fixes (`resolved`): permission request was double-printed (log echo +
+prompt) → dropped the log echo; stdin-closed hint didn't name permission
+prompts → reworded.
 
 Gate: `bun test` (706 pass), typecheck, build green.
 
 ## Slice S4 — Sessions & MCP passthrough (task-6, task-7)
 
-**task-6** — `runAcpTurn` branches on `req.resumeSessionId`: unset →
-`session/new`; set → `session/load`, same id. A `session/load` rejection while
-the process is still alive (`settled` false) warns "prior conversation history
-was lost" and falls back to `session/new`; if the process died first,
-`close`/`error` already settled the reject — a transport failure is never
-swallowed into a retry.
-
-**task-7** — `loadAcpMcpServers(mcpConfigPath)` reads the `.mcp.json`-shaped
-file, converts each entry (`command`/`args`/`env` → stdio, `url` → http/sse) to
-ACP's wire shape, passed to `session/new`/`session/load`. `ignoredAcpSettings`
-flags `allowed_tools` only (`permission_mode` is a no-op). `RunnerNeeds` gained
-optional `mcpTransports`, computed once in `engine.ts` (inline `mcp:` or the
-path form) and checked in `opencodeRunner.preflight` vs. `mcpCapabilities`.
-
-@s → test map (`tests/acp.test.ts` unless noted):
+@s → test (`tests/acp.test.ts` unless noted):
 - `@s-fresh-context-false-loads-session`, `@s-fresh-context-true-new-session`,
   `@s-lost-session-warns-and-continues`
-- `@s-session-id-persisted` → `tests/opencode.test.ts` (real stub binary +
-  `runWorkflow`, asserts `state.json`)
+- `@s-session-id-persisted` → `tests/opencode.test.ts`
 - `@s-mcp-forwarded-to-session-new`, `@s-no-mcp-key-no-forwarding`,
   `@s-allowed-tools-warns-ignored`, `@s-permission-mode-noop`
-- `@s-mcp-unsupported-transport-preflight` → `tests/engine-acp.test.ts` (needs
-  wiring) + `tests/opencode.test.ts` (real handshake capability check)
+- `@s-mcp-unsupported-transport-preflight` → `tests/engine-acp.test.ts` +
+  `tests/opencode.test.ts`
 
-Gate: `bun test` (723 pass), typecheck, build green. Docs: `SPEC.md` (opencode
-adapter paragraph — sessions + mcp/allowed_tools/permission_mode; MCP servers
-v1 note; execution semantics step 2 — MCP transport gap), `README.md` (opencode
-bullet: sessions, mcp/allowed_tools/permission_mode, transport gap).
-
-Review fix (`resolved`): the same `.mcp.json` was parsed 3x (`parser.ts`
-validate, `engine.ts` transport-kind extract, `acp.ts` per turn) →
+Review fix (`resolved`): `.mcp.json` was parsed 3x (parser/engine/acp) →
 `parser.ts` keeps the parsed `mcpServers` for the path form too; `engine.ts`
-reads `workflow.mcpServers` directly, drops `readMcpServersRecord`; the
-run-dir mcp.json write guard now also checks `mcpConfigPath === undefined` so
-a path form is never re-serialized. No new test: existing inline/path-form
-tests in `tests/engine-m2.test.ts`/`tests/engine-acp.test.ts` stayed green.
+reads it directly; only the per-turn read in `acp.ts` remains.
 
 Gate: `bun test` (723 pass), typecheck, build green.
+
+## Mutation kill pass
+
+`bunx stryker run --force` (cli.ts exclusion re-applied). Two mutants judged
+genuinely equivalent, reproduced by hand before disabling:
+
+- `engine.ts:638-640` — `configs.get(node.id)?.runner` + `if (runner)` guard:
+  the parser rejects `fresh_context: false` on a steps loop without a
+  prompt-level config, so `configs.get(node.id)` is always defined for a
+  workflow that passed `loadWorkflow`; the `?.`/guard only protects hand-built
+  workflows that bypass the parser. `// Stryker disable next-line` on each.
+- `nodes.ts:102` — `if (timer) clearTimeout(timer)`: `clearTimeout(undefined)`
+  is a no-op, so the guard is unobservable. `// Stryker disable next-line`.
+- `runners/opencode.ts:23` — `runAcpHandshake(LAUNCH, { cwd: process.cwd() })`:
+  `child_process.spawn` already defaults `cwd` to `process.cwd()`, so the key
+  is redundant. `// Stryker disable next-line`.
+
+Remaining survivors killed by strengthening/adding tests (no `src/` defect):
+- `opencode.test.ts` — asserted the exact `.hint` string (not just `.message`)
+  for the fresh_context/handshake/mcp-transport preflight errors; added
+  sse-only-capability-passes, http-only-capability-rejects-sse, and
+  no-mcpCapabilities-at-all (http and sse) preflight cases.
+- `engine-acp.test.ts` — added a fresh-context-true loop asserting
+  `needsSessionResume` stays `false`; a malformed-`mcpServers`-entries case
+  (null/string/no-url/bad-url survives to just the valid `sse` one); a
+  genuinely-`undefined` (not merely absent) server value skipped without
+  throwing.
+
+Gate: `bun test` (730 pass), typecheck, build green. `mutation.md`: 0
+survived, 100.00% on every changed file (`engine.ts`, `nodes.ts`,
+`runners/opencode.ts`); `acp.ts`'s no-coverage mutants are pre-existing
+unreachable subprocess error paths, untouched by this pass.

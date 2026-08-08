@@ -98,6 +98,7 @@ export function runShell(
       if (settled) return;
       // Stryker disable next-line all: equivalent — same reasoning; the flag exists only to skip no-op double-settles
       settled = true;
+      // Stryker disable next-line all: equivalent — clearTimeout(undefined) is a no-op, and an uncleared timer only fires a harmless killTree on an already-dead child after settling
       if (timer) clearTimeout(timer);
       finish();
     };

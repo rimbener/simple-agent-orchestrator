@@ -117,6 +117,7 @@ describe("opencodeRunner", () => {
       expect(err).toBeInstanceOf(SaoError);
       expect(err.message).toContain("opencode");
       expect(err.message).toContain("session");
+      expect(err.hint).toBe("fresh_context: false requires session resume — drop fresh_context, or use a runner/agent version that supports it");
     } finally {
       restore();
     }
@@ -136,6 +137,7 @@ describe("opencodeRunner", () => {
       expect(err.message).toContain("handshake");
       // the real cause folds in, not a generic guess — matches every other adapter's error path
       expect(err.message).toContain("exited before completing the ACP handshake");
+      expect(err.hint).toBe("the opencode CLI on PATH did not respond to initialize — check it is up to date");
     } finally {
       process.env.PATH = oldPath;
     }
@@ -148,6 +150,7 @@ describe("opencodeRunner", () => {
       expect(err).toBeInstanceOf(SaoError);
       expect(err.message).toContain("opencode");
       expect(err.message).toContain("http");
+      expect(err.hint).toBe("the workflow's mcp: block declares a http server — drop it, or use a runner/agent version that supports it");
     } finally {
       restore();
     }
@@ -157,6 +160,49 @@ describe("opencodeRunner", () => {
     const restore = withStubOpencode({ agentCapabilities: { mcpCapabilities: { http: true } } });
     try {
       await expect(opencodeRunner.preflight!({ needsSessionResume: false, mcpTransports: ["http"] })).resolves.toBeUndefined();
+    } finally {
+      restore();
+    }
+  });
+
+  test("preflight rejects naming the sse MCP transport when the agent supports http but not sse", async () => {
+    const restore = withStubOpencode({ agentCapabilities: { mcpCapabilities: { http: true } } });
+    try {
+      const err = await rejectionOf(opencodeRunner.preflight!({ needsSessionResume: false, mcpTransports: ["sse"] }));
+      expect(err).toBeInstanceOf(SaoError);
+      expect(err.message).toContain("sse");
+      expect(err.hint).toBe("the workflow's mcp: block declares a sse server — drop it, or use a runner/agent version that supports it");
+    } finally {
+      restore();
+    }
+  });
+
+  test("preflight passes when the handshake advertises sse but not http, and sse is what's needed", async () => {
+    const restore = withStubOpencode({ agentCapabilities: { mcpCapabilities: { sse: true } } });
+    try {
+      await expect(opencodeRunner.preflight!({ needsSessionResume: false, mcpTransports: ["sse"] })).resolves.toBeUndefined();
+    } finally {
+      restore();
+    }
+  });
+
+  test("preflight rejects when the agent advertises no mcpCapabilities at all and http is needed", async () => {
+    const restore = withStubOpencode({ agentCapabilities: {} });
+    try {
+      const err = await rejectionOf(opencodeRunner.preflight!({ needsSessionResume: false, mcpTransports: ["http"] }));
+      expect(err).toBeInstanceOf(SaoError);
+      expect(err.message).toContain("http");
+    } finally {
+      restore();
+    }
+  });
+
+  test("preflight rejects when the agent advertises no mcpCapabilities at all and sse is needed", async () => {
+    const restore = withStubOpencode({ agentCapabilities: {} });
+    try {
+      const err = await rejectionOf(opencodeRunner.preflight!({ needsSessionResume: false, mcpTransports: ["sse"] }));
+      expect(err).toBeInstanceOf(SaoError);
+      expect(err.message).toContain("sse");
     } finally {
       restore();
     }

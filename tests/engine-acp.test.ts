@@ -2,10 +2,11 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { preflightAiConfigs, preflightRunnerEnvironments, runWorkflow } from "../src/engine";
+import { preflightAiConfigs, preflightRunnerEnvironments, type ResolvedAiConfig, runWorkflow } from "../src/engine";
 import { SaoError } from "../src/errors";
 import { loadWorkflow } from "../src/parser";
 import type { Runner, RunnerNeeds, RunnerRequest } from "../src/runners/types";
+import type { Workflow } from "../src/schema";
 
 const quiet = () => {};
 
@@ -156,7 +157,73 @@ nodes:
     const runner = mockAcpRunner((needs) => {
       seenTransports = needs.mcpTransports ?? [];
     });
+    const state = await run(path, dir, { resolveRunner: () => runner });
+    expect(seenTransports).toEqual([]);
+    // no mcp: block means no inline servers to serialize — a per-run mcp.json must never appear
+    expect(existsSync(join(dir, ".sao", "runs", state.id, "mcp.json"))).toBe(false);
+  });
+
+  test("@s-fresh-context-true-no-resume-needed: a loop with the default fresh_context does not ask the runner for session resume", async () => {
+    const { dir, path } = setup(`
+name: freshtrue
+nodes:
+  - id: fix
+    loop:
+      prompt: "go"
+      until: DONE
+      max_iterations: 3
+`);
+    let seenNeedsSessionResume: boolean | undefined;
+    const runner = mockAcpRunner((needs) => {
+      seenNeedsSessionResume = needs.needsSessionResume;
+    });
     await run(path, dir, { resolveRunner: () => runner });
+    expect(seenNeedsSessionResume).toBe(false);
+  });
+
+  test("a null, non-object, or url-less MCP server definition is skipped without crashing the transport scan", async () => {
+    const { dir, path } = setup(`
+name: mcpmalformed
+mcp: ./mcp.json
+nodes:
+  - id: a
+    prompt: "hi"
+`);
+    writeFileSync(
+      join(dir, "mcp.json"),
+      JSON.stringify({
+        mcpServers: {
+          nullDef: null,
+          stringDef: "oops",
+          noUrl: { command: "npx" },
+          badUrl: { url: 123 },
+          valid: { url: "https://example.com/mcp", type: "sse" },
+        },
+      }),
+    );
+    let seenTransports: string[] = [];
+    const runner = mockAcpRunner((needs) => {
+      seenTransports = needs.mcpTransports ?? [];
+    });
+    await run(path, dir, { resolveRunner: () => runner });
+    expect(seenTransports).toEqual(["sse"]);
+  });
+
+  test("an mcp server definition whose value is genuinely undefined (not null) is skipped", async () => {
+    const workflow: Workflow = {
+      name: "undefinedmcp",
+      inputs: [],
+      defaults: {},
+      nodes: [],
+      mcpServers: { weird: undefined },
+      agents: new Map(),
+    };
+    let seenTransports: string[] = [];
+    const runner = mockAcpRunner((needs) => {
+      seenTransports = needs.mcpTransports ?? [];
+    });
+    const configs: Map<string, ResolvedAiConfig> = new Map([["x", { runner }]]);
+    await expect(preflightRunnerEnvironments(workflow, configs)).resolves.toBeUndefined();
     expect(seenTransports).toEqual([]);
   });
 });

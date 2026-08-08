@@ -635,7 +635,9 @@ export async function preflightRunnerEnvironments(workflow: Workflow, configs: M
   };
   for (const node of workflow.nodes) {
     if (node.kind === "loop" && node.loop.fresh_context === false) {
+      // Stryker disable next-line OptionalChaining: the parser rejects fresh_context: false on steps loops, so the prompt-level config always exists here; ?. only guards hand-built workflows that bypass loadWorkflow
       const runner = configs.get(node.id)?.runner;
+      // Stryker disable next-line ConditionalExpression: same reasoning — runner is always defined for a valid parsed workflow, so the guard is unobservable
       if (runner) needsFor(runner).needsSessionResume = true;
     }
   }
