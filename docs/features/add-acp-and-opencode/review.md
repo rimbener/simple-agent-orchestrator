@@ -194,3 +194,91 @@ previously raised and marked `resolved` in `review-slice.md` (S2's missing
 handshake timeout and swallowed error; S3's double-printed permission prompt
 and the stale stdin-closed hint; S4's triple-parsed `.mcp.json`) are still
 fixed with no regression introduced by a later slice.
+
+---
+
+## Round 2 — delta-review (mutation kill pass) — 2026-08-08
+
+**Verdict: APPROVED** → `docs/features/add-acp-and-opencode/review.md`
+
+### Diff reviewed
+
+`git diff c067e77...HEAD` (mutation-fix commit only): `src/engine.ts` (+2),
+`src/nodes.ts` (+1), `src/runners/opencode.ts` (+1) — three added
+`// Stryker disable next-line` comments, no behavior change — plus
+`tests/engine-acp.test.ts` (+3 tests) and `tests/opencode.test.ts` (+4 tests,
+3 strengthened assertions), `mutation.md` (new: 98.70% score, 0 survived),
+`tdd.md` ("Mutation kill pass" section + condensed prior-slice entries).
+Cross-checked against `mutation.md`'s per-file table and the "Mutation kill
+pass" section of `tdd.md`, which names exactly these three suppressions and
+the remaining survivors as test-strengthening only.
+
+### 1. Code quality & TDD
+
+- No new `@s` tags; `gherkin-scenarios.md` untouched, so the existing 31-tag
+  coverage from Round 1 stands unchanged.
+- The four new/strengthened tests bite: `opencode.test.ts`'s three existing
+  preflight-rejection tests now assert the exact `err.hint` string (not just
+  `err.message`), and three new tests
+  (`sse-only-capability-rejects-http`/`http-only-capability-rejects-sse`-style
+  cases plus the two no-`mcpCapabilities`-at-all cases) exercise
+  `opencodeRunner.preflight`'s transport-capability branch directly per
+  transport, closing exactly the survivors `mutation.md` reports as killed on
+  `runners/opencode.ts` (100.00%, 44/44). `engine-acp.test.ts`'s three new
+  tests (fresh-context-true → `needsSessionResume` stays `false`;
+  malformed-`mcpServers`-entries scan settles on the one valid `sse` entry;
+  a genuinely-`undefined` (not merely absent) server value is skipped without
+  throwing) each target a distinct branch in `neededMcpTransports`/the
+  session-resume-needs loop — verified these aren't restatements of existing
+  `@s`-tagged tests by diffing test names against Round 1's list.
+- The three `// Stryker disable next-line` suppressions
+  (`engine.ts:638,640`, `nodes.ts:102`, `runners/opencode.ts:23`) are each
+  accompanied by a specific, checked-correct equivalence argument, not a bare
+  suppression:
+  - `engine.ts:638-641` — `configs.get(node.id)?.runner` / `if (runner)`:
+    confirmed `src/parser.ts:162-165` rejects `fresh_context: false` combined
+    with `steps !== undefined`, so a loop with `fresh_context: false` that
+    passed `loadWorkflow` always has `node.loop.prompt !== undefined`, which
+    is exactly `preflightAiConfigs`'s condition (`src/engine.ts:591`) for
+    populating `configs.get(node.id)`. The optional-chain and `if` guard are
+    unreachable-false for any workflow that went through the parser — matches
+    the pre-existing identical suppression already in place four lines above
+    at `engine.ts:606` for the same reasoning (not a new pattern introduced
+    ad hoc for this pass).
+  - `nodes.ts:102` — `if (timer) clearTimeout(timer)`: `clearTimeout(undefined)`
+    is a spec'd no-op in Node — confirmed no observable difference.
+  - `runners/opencode.ts:23` — `{ cwd: process.cwd() }`: `child_process.spawn`
+    already defaults `cwd` to `process.cwd()` when omitted — confirmed no
+    observable difference between passing it explicitly and omitting it.
+  - `tdd.md`'s "Mutation kill pass" section records these were "reproduced by
+    hand before disabling," i.e. verified as equivalent rather than
+    rubber-stamped, consistent with what re-deriving each claim above found.
+- No `console.log`/debug leftovers, no TODOs, no unrelated churn — the diff is
+  scoped exactly to the three suppressions plus the tests/docs that justify
+  them; no other line in `src/` changed.
+
+### 2. Architecture & minimalism
+
+- Zero behavioral change: all three `src/` edits are comments only, no logic,
+  import, dependency, or schema/state-shape touched. Layering, the static
+  runner registry, and the `Runner` interface boundary are all unaffected —
+  re-confirmed unchanged from Round 1's assessment.
+
+### 3. Performance
+
+N/A — the diff adds no executable code (comments only) and no new test
+touches a scheduling, subprocess-buffering, or persistence path differently
+than Round 1 already assessed.
+
+### 4. Security
+
+N/A — no new subprocess, path, git, or persistence surface; the diff is
+comments plus hermetic unit tests (mock `Runner`/stubbed `opencode` binary on
+`PATH`, same doubles as Round 1, no real `claude`/`codex`/`opencode` spawned).
+
+### Findings
+
+None new, none reopened. `mutation.md` reports 0 survived / 98.70% score
+(100% of covered code killed); the 24 no-coverage mutants are pre-existing,
+unreachable `acp.ts` subprocess-error/cleanup paths already noted as such in
+`mutation.md` itself, not a product of this delta.
