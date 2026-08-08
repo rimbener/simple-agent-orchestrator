@@ -2,7 +2,7 @@
 id: 1
 title: ACP client module — spawn, handshake, prompt turn, update stream
 slice: S1 — ACP transport & opencode runner
-status: todo
+status: done
 scenarios:
   - "@s-acp-stream-and-output"
   - "@s-acp-output-excludes-thoughts"

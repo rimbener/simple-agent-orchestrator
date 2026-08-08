@@ -709,14 +709,18 @@ describe("getRunner", () => {
     }
   });
 
-  test("unknown runners list what is available", () => {
+  test("@s-unknown-runner-lists-opencode: unknown runners list what is available, including opencode", () => {
     try {
       getRunner("nope");
       throw new Error("should have thrown");
     } catch (err) {
       expect(err).toBeInstanceOf(SaoError);
       expect((err as SaoError).message).toBe('unknown runner "nope"');
-      expect((err as SaoError).hint).toBe("available runners: claude, codex");
+      expect((err as SaoError).hint).toBe("available runners: claude, codex, opencode");
     }
+  });
+
+  test("resolves the opencode runner", () => {
+    expect(getRunner("opencode").name).toBe("opencode");
   });
 });

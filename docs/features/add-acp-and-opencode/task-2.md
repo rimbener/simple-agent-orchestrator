@@ -2,7 +2,7 @@
 id: 2
 title: opencode registry entry, system prompt delivery, binary preflight, docs
 slice: S1 — ACP transport & opencode runner
-status: todo
+status: done
 scenarios:
   - "@s-opencode-runner-selectable"
   - "@s-opencode-agent-system-prompt"

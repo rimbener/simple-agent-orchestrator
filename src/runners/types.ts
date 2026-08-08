@@ -1,6 +1,7 @@
 import { SaoError } from "../errors";
 import { claudeRunner } from "./claude";
 import { codexRunner } from "./codex";
+import { opencodeRunner } from "./opencode";
 
 export interface RunnerRequest {
   prompt: string;
@@ -43,6 +44,7 @@ export type RunnerResolver = (name: string) => Runner;
 const REGISTRY = new Map<string, Runner>([
   ["claude", claudeRunner],
   ["codex", codexRunner],
+  ["opencode", opencodeRunner],
 ]);
 
 export function getRunner(name: string): Runner {

@@ -14,7 +14,7 @@ against a repo.
 | Distribution     | Global CLI (`npm i -g sao` / `npx sao` / `bun i -g sao`), `engines: node >= 20`                                                                                                              |
 | Binary name      | `sao`                                                                                                                                                                                        |
 | Interface        | Pure CLI, live progress in terminal                                                                                                                                                          |
-| AI execution     | Pluggable `Runner` interface; **claude** (Claude Code headless) and **codex** (Codex CLI exec) adapters in v1                                                                                |
+| AI execution     | Pluggable `Runner` interface; **claude** (Claude Code headless), **codex** (Codex CLI exec), and **opencode** (Agent Client Protocol) adapters in v1                                        |
 | Workflow model   | Dependency graph via `depends_on`; independent nodes run concurrently                                                                                                                        |
 | Loops            | Repeat an AI prompt or a multi-step body (`steps:`) until a sentinel signal or a bash predicate passes; `max_iterations` guard; `fresh_context` per iteration                                                                |
 | Approval gates   | Block in the terminal (approve / reject / feedback)                                                                                                                                          |
@@ -48,7 +48,7 @@ mcp:                      # optional — MCP servers for AI nodes (see MCP secti
     args: ["-y", "mcp-remote", "https://mcp.atlassian.com/v1/sse"]
 
 defaults:                 # per-workflow defaults, overridable per node
-  runner: claude          # claude | codex
+  runner: claude          # claude | codex | opencode
   model: sonnet           # passed through to the runner, optional
   permission_mode: acceptEdits   # claude adapter only
   allowed_tools: [mcp__jira]     # tool allowlist forwarded to the runner
@@ -330,6 +330,18 @@ No session resume in v1 → `fresh_context: false` with
 runner `codex` is a validation error (checked against the effective runner, so a
 `--runner codex` override fails preflight the same way).
 
+**opencode adapter** — the first **Agent Client Protocol (ACP)** agent, via
+`src/acp.ts`: the one protocol client every ACP agent goes through (spawn over
+stdio, `initialize`, `session/new`, `session/prompt`, stream `session/update`).
+`src/runners/opencode.ts` is only its name and launch command (`opencode acp`,
+spec D7), delegating everything else to `src/acp.ts` — adding the next ACP agent
+is a sibling file of the same shape. `output` is the whole turn's assistant text,
+joined from `agent_message_chunk` updates only; thought chunks and tool-call
+updates are excluded, matching the claude adapter's text-only capture. ACP has no
+system-prompt slot, so `systemPrompt` is prepended to the prompt as a role
+preamble (the codex precedent). A `stopReason` of `refusal` fails the node even on
+a clean exit.
+
 Adding a runner = one new file in `src/runners/` implementing the interface, registered
 in a static map. No dynamic plugin loading in v1.
 
@@ -442,16 +454,20 @@ src/
   state.ts           # run dir layout, state.json persistence, resume logic
   worktree.ts        # git worktree lifecycle, finalize commit, gh PR
   gate.ts            # terminal prompts (node:readline)
+  acp.ts             # Agent Client Protocol client — the one client every ACP agent goes through
   runners/
     types.ts         # Runner interface + registry
     claude.ts
     codex.ts
+    opencode.ts      # ACP registry entry: name + launch command, delegates to acp.ts
 tests/               # bun test; engine tests use a mock Runner
 ```
 
-Dependencies (kept minimal): `commander`, `yaml`, `zod`, `picocolors`. Everything else
-is node builtins (`child_process`, `readline`, `crypto`, `fs`). Build: `bun build`
-targeting node (or tsup) → `dist/`, `bin: { "sao": "dist/cli.js" }`.
+Dependencies (kept minimal): `commander`, `yaml`, `zod`, `picocolors`, and
+`@zed-industries/agent-client-protocol` (the ACP client's transport — the package
+*is* the protocol definition, so drift is tracked upstream rather than by hand).
+Everything else is node builtins (`child_process`, `readline`, `crypto`, `fs`).
+Build: `bun build` targeting node (or tsup) → `dist/`, `bin: { "sao": "dist/cli.js" }`.
 
 ## Milestones
 

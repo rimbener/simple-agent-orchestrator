@@ -68,8 +68,9 @@ $ npm install -g simple-agent-orchestrator
 ```
 
 Requires Node 20+ (or Bun), git, and at least one agent CLI:
-[Claude Code](https://claude.com/claude-code) (`claude`) and/or
-[Codex CLI](https://github.com/openai/codex) (`codex`).
+[Claude Code](https://claude.com/claude-code) (`claude`),
+[Codex CLI](https://github.com/openai/codex) (`codex`), and/or
+[opencode](https://opencode.ai) (`opencode`, via the Agent Client Protocol).
 
 ## Commands
 
@@ -120,7 +121,7 @@ inputs:                    # --var key=value, used as {{key}}
     default: world
 
 defaults:                  # per-node keys > agent frontmatter > defaults
-  runner: claude           # claude | codex
+  runner: claude           # claude | codex | opencode
   model: sonnet
   permission_mode: acceptEdits
   allowed_tools: [mcp__jira, WebSearch]
@@ -193,6 +194,9 @@ file.
   Uses its own global config (`~/.codex/config.toml`): `mcp`, `allowed_tools`,
   and `permission_mode` are ignored with a warning, and `fresh_context: false`
   is a validation error.
+- **opencode** — the first [Agent Client Protocol](https://agentclientprotocol.com)
+  agent (`opencode acp`). `systemPrompt` is delivered as a role preamble (ACP has
+  no system-prompt slot); a refused turn fails the node even on a clean exit.
 
 Prompts are always piped over stdin — never argv.
 

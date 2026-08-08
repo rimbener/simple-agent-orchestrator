@@ -48,6 +48,7 @@
     "@stryker-mutator/core": "^9.6.1",
     "@types/bun": "^1.1.14",
     "@types/node": "^22.10.0",
+    "@zed-industries/agent-client-protocol": "^0.4.5",
     "commander": "^12.1.0",
     "picocolors": "^1.1.1",
     "typescript": "^5.7.0",
