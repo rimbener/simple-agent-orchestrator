@@ -676,7 +676,7 @@ describe("findExecutableOnPath / preflight", () => {
     // (dirs are X_OK), so this also pins that preflight searches for "claude" exactly.
     process.env.PATH = mkdtempSync(join(tmpdir(), "sao-no-claude-"));
     try {
-      claudeRunner.preflight!();
+      claudeRunner.preflight!({ needsSessionResume: false });
       throw new Error("should have thrown");
     } catch (err) {
       expect(err).toBeInstanceOf(SaoError);
@@ -688,7 +688,7 @@ describe("findExecutableOnPath / preflight", () => {
   });
 
   test("claudeRunner.preflight passes on this machine (claude installed)", () => {
-    expect(() => claudeRunner.preflight!()).not.toThrow();
+    expect(() => claudeRunner.preflight!({ needsSessionResume: false })).not.toThrow();
   });
 });
 

@@ -101,7 +101,10 @@ sao clean [--all]
   gates are re-asked. Refuses if the workflow/agents/mcp config changed or the
   run looks owned by a live process (`--force` overrides both).
 - **validate** — schema, dependency graph, template references, agent files,
-  runner availability. Exactly the checks `run` performs before executing.
+  runner availability, and — for ACP runners like opencode — an `initialize`
+  handshake checking the agent's advertised capabilities against what the
+  workflow needs (e.g. session loading for `fresh_context: false`). Exactly the
+  checks `run` performs before executing.
 - **logs** — dependency-ordered node logs; `--follow` tails a live run.
 - **clean** — remove succeeded runs' worktrees; branches are deleted only once
   merged elsewhere. Failed/rejected runs, dirty worktrees, and unmerged
@@ -150,7 +153,7 @@ nodes:
       # until_bash: "bun test"      # …or a shell probe: exit 0 ends the loop
       # interactive: true           # …or a human approves each iteration
       max_iterations: 10
-      fresh_context: false          # keep one agent session across iterations (claude only)
+      fresh_context: false          # keep one agent session across iterations (claude, or an ACP agent whose handshake advertises it — codex never)
 
   - id: ship               # gate node — pauses for y/n in the terminal
     depends_on: [build, implement]
@@ -197,6 +200,9 @@ file.
 - **opencode** — the first [Agent Client Protocol](https://agentclientprotocol.com)
   agent (`opencode acp`). `systemPrompt` is delivered as a role preamble (ACP has
   no system-prompt slot); a refused turn fails the node even on a clean exit.
+  `fresh_context: false` support depends on the agent's own `initialize`
+  handshake advertising session loading, checked at `validate`/`run` time —
+  not a static per-runner declaration like claude/codex.
 
 Prompts are always piped over stdin — never argv.
 

@@ -349,8 +349,13 @@ in a static map. No dynamic plugin loading in v1.
 
 1. `sao run workflow.yaml "add dark mode" --var issue=123`
 2. Parse + validate (zod schema, dependency cycle check, template references, runner
-  availability — registry lookup and binary-on-PATH, so a missing CLI fails before
-  any node's side effects).
+  availability — registry lookup and binary-on-PATH — so a missing CLI fails before
+  any node's side effects). For ACP runners, the binary check is followed by an
+  `initialize` handshake: the agent's advertised capabilities are checked against
+  what the workflow needs (e.g. session loading for `fresh_context: false`) — an
+  ACP runner's capability comes from this live handshake, never a static
+  declaration, so a capability gap or a binary that fails to speak ACP also fails
+  here, before any node's side effects. `sao validate` performs the same handshake.
 3. Create run: id `2026-08-03-1432-fix-issue-a1b2`, dir `.sao/runs/<id>/` in the
   **main repo** (`.sao/` auto-appended to `.git/info/exclude`, never the user's
   .gitignore; agents in `.agents/` are ordinary committed files). Invoked from

@@ -60,3 +60,45 @@ check: `sao validate` against a `runner: opencode` workflow passes preflight
 `runner:` comment, ACP/opencode adapter description, directory listing,
 five-dependency line) and `README.md` (install prereqs, `runner:` comment,
 Runners section).
+
+## Slice S2 — Capability preflight
+
+### task-3 — async runner-environment preflight
+
+`Runner.preflight` now takes `RunnerNeeds` (`{ needsSessionResume }`) and may
+return a promise. `preflightAiConfigs` stays sync (config resolution only);
+the binary/handshake probing loop moved to a new awaited
+`preflightRunnerEnvironments(workflow, configs)`, called once per distinct
+runner from `runWorkflow`, `formatDryRun` (now async), and `sao validate`.
+`src/acp.ts` gained `runAcpHandshake` (spawn, `initialize`, kill, return
+`agentCapabilities` — never a prompt turn) since opencode's capability check
+needs the ACP connection but not a full turn. `opencodeRunner.preflight`
+checks PATH first (sync fail), then handshakes and compares
+`needs.needsSessionResume` against `capabilities.loadSession`.
+
+@s → test map:
+- `@s-capability-gap-preflight` → tests/engine-acp.test.ts + tests/opencode.test.ts (mock-runner and real-handshake versions)
+- `@s-capability-present-passes` → same two files
+- `@s-validate-performs-handshake` → tests/engine-acp.test.ts "the same preflight call validate makes..."
+- `@s-handshake-once-per-runner` → tests/engine-acp.test.ts (3 AI nodes, one mock runner, probes===1)
+- `@s-handshake-failure-preflight` → tests/engine-acp.test.ts + tests/opencode.test.ts (non-ACP binary on PATH)
+- `@s-existing-runners-unaffected` → tests/engine-acp.test.ts test.each(["claude","codex"])
+
+Supporting (untagged): tests/acp.test.ts's `runAcpHandshake` describe block
+(resolves capabilities, rejects on early exit, process doesn't outlive the
+call); tests/opencode.test.ts's DOUBLE_SCRIPT made `agentCapabilities`
+configurable; existing claude/codex/opencode preflight call sites across
+tests/runners.test.ts, tests/codex.test.ts, tests/opencode.test.ts updated to
+pass a `RunnerNeeds` arg; every `formatDryRun` call site in
+tests/engine-m4.test.ts made async.
+
+## Gate
+
+`bun test` (686 pass), `bun run typecheck`, `bun run build` all green. Manual
+CLI check: `sao validate` on a `fresh_context: false` + `runner: opencode`
+workflow passes (real opencode advertises `loadSession`); with a fake
+`opencode` on PATH that exits without speaking ACP, validate fails with
+"opencode failed the ACP handshake"; `--dry-run` on a plain opencode node
+awaits the handshake and prints the plan. Docs landed: `SPEC.md` (execution
+semantics step 2 — ACP capability handshake) and `README.md` (`validate`
+description, `fresh_context: false` comment, opencode bullet).

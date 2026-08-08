@@ -7,7 +7,7 @@ import { opencodeRunner } from "../src/runners/opencode";
 import { getRunner } from "../src/runners/types";
 
 /** Await a promise that must reject; returns the rejection error. */
-async function rejectionOf(promise: Promise<unknown>): Promise<SaoError> {
+async function rejectionOf(promise: void | Promise<unknown>): Promise<SaoError> {
   try {
     await promise;
   } catch (err) {
@@ -31,7 +31,7 @@ function send(obj) {
 }
 function handle(msg) {
   if (msg.method === "initialize") {
-    send({ jsonrpc: "2.0", id: msg.id, result: { protocolVersion: 1, agentCapabilities: {} } });
+    send({ jsonrpc: "2.0", id: msg.id, result: { protocolVersion: 1, agentCapabilities: config.agentCapabilities || {} } });
   } else if (msg.method === "session/new") {
     send({ jsonrpc: "2.0", id: msg.id, result: { sessionId: "double-session" } });
   } else if (msg.method === "session/prompt") {
@@ -77,28 +77,63 @@ describe("opencodeRunner", () => {
     expect(opencodeRunner.name).toBe("opencode");
   });
 
-  test("@s-opencode-missing-binary-preflight: preflight throws a SaoError naming the missing binary and an install hint", () => {
+  test("@s-opencode-missing-binary-preflight: preflight throws a SaoError naming the missing binary and an install hint", async () => {
     const oldPath = process.env.PATH;
     process.env.PATH = mkdtempSync(join(tmpdir(), "sao-no-opencode-"));
     try {
-      expect(() => opencodeRunner.preflight!()).toThrow(SaoError);
-      try {
-        opencodeRunner.preflight!();
-      } catch (err) {
-        expect((err as SaoError).message).toBe("opencode CLI not found on PATH");
-        expect((err as SaoError).hint).toContain("opencode");
-      }
+      const err = await rejectionOf(opencodeRunner.preflight!({ needsSessionResume: false }));
+      expect(err).toBeInstanceOf(SaoError);
+      expect(err.message).toBe("opencode CLI not found on PATH");
+      expect(err.hint).toContain("opencode");
     } finally {
       process.env.PATH = oldPath;
     }
   });
 
-  test("preflight passes when opencode is on PATH", () => {
+  test("preflight passes when opencode is on PATH and no session resume is needed", async () => {
     const restore = withStubOpencode();
     try {
-      expect(() => opencodeRunner.preflight!()).not.toThrow();
+      await expect(opencodeRunner.preflight!({ needsSessionResume: false })).resolves.toBeUndefined();
     } finally {
       restore();
+    }
+  });
+
+  test("@s-capability-present-passes: preflight passes when the handshake advertises session loading", async () => {
+    const restore = withStubOpencode({ agentCapabilities: { loadSession: true } });
+    try {
+      await expect(opencodeRunner.preflight!({ needsSessionResume: true })).resolves.toBeUndefined();
+    } finally {
+      restore();
+    }
+  });
+
+  test("@s-capability-gap-preflight: preflight rejects naming the agent and the missing capability", async () => {
+    const restore = withStubOpencode({ agentCapabilities: {} });
+    try {
+      const err = await rejectionOf(opencodeRunner.preflight!({ needsSessionResume: true }));
+      expect(err).toBeInstanceOf(SaoError);
+      expect(err.message).toContain("opencode");
+      expect(err.message).toContain("session");
+    } finally {
+      restore();
+    }
+  });
+
+  test("@s-handshake-failure-preflight: a binary that does not speak ACP fails preflight naming the agent and the failed handshake", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "sao-opencode-nohandshake-"));
+    const bin = join(dir, "opencode");
+    writeFileSync(bin, "#!/bin/sh\nexit 0\n"); // on PATH, but never speaks ACP
+    chmodSync(bin, 0o755);
+    const oldPath = process.env.PATH;
+    process.env.PATH = `${dir}:${oldPath}`;
+    try {
+      const err = await rejectionOf(opencodeRunner.preflight!({ needsSessionResume: false }));
+      expect(err).toBeInstanceOf(SaoError);
+      expect(err.message).toContain("opencode");
+      expect(err.message).toContain("handshake");
+    } finally {
+      process.env.PATH = oldPath;
     }
   });
 

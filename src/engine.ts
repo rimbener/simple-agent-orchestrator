@@ -8,7 +8,7 @@ import { parseGateReply, parseLoopReply, promptOnTerminal, type PromptUser } fro
 import { evaluateWhenBash, executeAiNode, executeBashScript, withRetries } from "./nodes";
 import { orderNodes } from "./parser";
 import { onShutdown } from "./procs";
-import { getRunner, type Runner, type RunnerResolver } from "./runners/types";
+import { getRunner, type Runner, type RunnerNeeds, type RunnerResolver } from "./runners/types";
 import type { AgentSpec, GateNode, LoopNode, LoopStep, Workflow, WorkflowNode } from "./schema";
 import { acquireRunLock, createRun, isPidAlive, saveState, type NodeState, type RunPaths, type RunState } from "./state";
 import { interpolate, type RunMetaVars, type TemplateContext } from "./template";
@@ -97,6 +97,7 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunState> {
   const ordered = orderNodes(opts.workflow);
 
   const aiConfigs = preflightAiConfigs(opts.workflow, runnerOverride, resolveRunner);
+  await preflightRunnerEnvironments(opts.workflow, aiConfigs);
 
   // Hash before creating the run dir: a vanished workflow file must not orphan a dir.
   const workflowHash = hashRunConfig(opts.workflowPath, opts.workflow);
@@ -402,7 +403,7 @@ export function lastAiNodeOutput(ordered: WorkflowNode[], nodes: Record<string, 
  * loop bodies render their real first-iteration context; in-place runs render the
  * empty base/branch metadata the engine would actually provide.
  */
-export function formatDryRun(opts: {
+export async function formatDryRun(opts: {
   workflow: Workflow;
   task: string;
   vars: Record<string, string>;
@@ -414,10 +415,11 @@ export function formatDryRun(opts: {
   worktree?: WorktreeRunOptions;
   /** Echo the on-success push + draft-PR step into the plan. */
   autoOpenPr?: boolean;
-}): string[] {
+}): Promise<string[]> {
   const inputs = resolveInputs(opts.workflow, opts.vars, false);
   const ordered = orderNodes(opts.workflow);
   const aiConfigs = preflightAiConfigs(opts.workflow, opts.runnerOverride, opts.resolveRunner ?? getRunner);
+  await preflightRunnerEnvironments(opts.workflow, aiConfigs);
   // Same pre-checks, same order, as runWorkflow — a plan that prints "worktree from
   // base X" for a base the real run would reject is a false green light.
   let base = "";
@@ -610,15 +612,38 @@ export function preflightAiConfigs(
       }
     }
   }
-  // Environment checks (binary on PATH, …), once per distinct runner: a missing CLI
-  // must fail here — before any node's side effects — not at the first AI node.
+  return configs;
+}
+
+/**
+ * Runner environment checks (binary on PATH, ACP capability handshake, …), once
+ * per distinct runner — awaited, unlike `preflightAiConfigs`, because an ACP
+ * runner's check is a live handshake with the agent process. Same ordering
+ * guarantee as before the split: called before any run-directory/worktree side
+ * effect, so a missing binary or capability gap fails here, not at the first node.
+ */
+export async function preflightRunnerEnvironments(workflow: Workflow, configs: Map<string, ResolvedAiConfig>): Promise<void> {
+  const needsByRunner = new Map<Runner, RunnerNeeds>();
+  const needsFor = (runner: Runner): RunnerNeeds => {
+    let needs = needsByRunner.get(runner);
+    if (needs === undefined) {
+      needs = { needsSessionResume: false };
+      needsByRunner.set(runner, needs);
+    }
+    return needs;
+  };
+  for (const node of workflow.nodes) {
+    if (node.kind === "loop" && node.loop.fresh_context === false) {
+      const runner = configs.get(node.id)?.runner;
+      if (runner) needsFor(runner).needsSessionResume = true;
+    }
+  }
   const probed = new Set<Runner>();
   for (const { runner } of configs.values()) {
     if (probed.has(runner)) continue;
     probed.add(runner);
-    runner.preflight?.();
+    await runner.preflight?.(needsFor(runner));
   }
-  return configs;
 }
 
 function resolveAiConfig(

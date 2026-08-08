@@ -496,7 +496,7 @@ printf '\\251"}}\\n'
     const realPath = process.env.PATH;
     process.env.PATH = mkdtempSync(join(tmpdir(), "sao-no-codex-"));
     try {
-      codexRunner.preflight!();
+      codexRunner.preflight!({ needsSessionResume: false });
       throw new Error("should have thrown");
     } catch (err) {
       expect(err).toBeInstanceOf(SaoError);
@@ -510,7 +510,7 @@ printf '\\251"}}\\n'
   test("codexRunner.preflight passes when a codex binary is on PATH", () => {
     const restore = withStubCodex("#!/bin/sh\nexit 0\n");
     try {
-      expect(() => codexRunner.preflight!()).not.toThrow();
+      expect(() => codexRunner.preflight!({ needsSessionResume: false })).not.toThrow();
     } finally {
       restore();
     }

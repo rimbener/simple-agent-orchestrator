@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import { Command, InvalidArgumentError } from "commander";
 import pc from "picocolors";
 import pkg from "../package.json" with { type: "json" };
-import { formatDryRun, preflightAiConfigs, runWorkflow } from "./engine";
+import { formatDryRun, preflightAiConfigs, preflightRunnerEnvironments, runWorkflow } from "./engine";
 import { SaoError } from "./errors";
 import { loadWorkflow } from "./parser";
 import { cleanRuns, formatCleanSummary, formatRunList, makeLogPoller, printLogs } from "./runs";
@@ -53,7 +53,7 @@ program
         const workflow = loadWorkflow(path, { cwd: repoRoot });
         const worktree = options.worktree ? { base: options.base, branch: options.branch } : undefined;
         if (options.dryRun === true) {
-          const plan = formatDryRun({
+          const plan = await formatDryRun({
             workflow,
             task: taskWords.join(" "),
             vars: options.var,
@@ -115,7 +115,8 @@ program
   .action(async (workflowPath: string) => {
     await fail(async () => {
       const workflow = loadWorkflow(resolve(workflowPath), { cwd: findRepoRoot(process.cwd()) });
-      preflightAiConfigs(workflow);
+      const configs = preflightAiConfigs(workflow);
+      await preflightRunnerEnvironments(workflow, configs);
       console.log(pc.green(`✓ ${workflow.name}`) + pc.dim(` — ${workflow.nodes.length} nodes, valid`));
     });
   });

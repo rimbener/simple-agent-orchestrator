@@ -610,7 +610,7 @@ function loadRunId(root: string): string {
 }
 
 describe("formatDryRun", () => {
-  test("renders the full plan for a small workflow, byte for byte", () => {
+  test("renders the full plan for a small workflow, byte for byte", async () => {
     const { dir, path } = setup(`
 name: mini
 base: main
@@ -634,7 +634,7 @@ nodes:
     mkdirSync(join(dir, ".agents", "agents"), { recursive: true });
     writeFileSync(join(dir, ".agents", "agents", "coder.md"), "---\nmodel: sonnet\n---\nYou code.\n");
     const workflow = loadWorkflow(path, { cwd: dir });
-    expect(formatDryRun({ workflow, task: "the rollout", vars: {}, runRoot: dir, worktree: {}, autoOpenPr: true })).toEqual([
+    expect(await formatDryRun({ workflow, task: "the rollout", vars: {}, runRoot: dir, worktree: {}, autoOpenPr: true })).toEqual([
       "dry run: mini — 3 nodes, nothing executes",
       "isolation: worktree from base main, branch sao/<run-id>",
       "on success: push the branch and open a draft PR via gh (--auto-open-pr)",
@@ -653,7 +653,7 @@ nodes:
     ]);
   });
 
-  test("a defaulted base resolves to the real HEAD SHA, matching what the run would record", () => {
+  test("a defaulted base resolves to the real HEAD SHA, matching what the run would record", async () => {
     const { dir, path } = setup(`
 name: headbase
 nodes:
@@ -661,7 +661,7 @@ nodes:
     bash: "true"
 `);
     gitify(dir);
-    const lines = formatDryRun({ workflow: loadWorkflow(path, { cwd: dir }), task: "", vars: {}, runRoot: dir, worktree: {} });
+    const lines = await formatDryRun({ workflow: loadWorkflow(path, { cwd: dir }), task: "", vars: {}, runRoot: dir, worktree: {} });
     expect(lines[1]).toMatch(/^isolation: worktree from base [0-9a-f]{40}, branch sao\/<run-id>$/);
     expect(lines).not.toContain("task: "); // empty task: no task line at all
     // Without --auto-open-pr the plan has exactly these five lines — no PR step.
@@ -669,7 +669,7 @@ nodes:
     expect(lines).toHaveLength(5);
   });
 
-  test("worktree-mode plans run the real git pre-checks — parity with run's failures", () => {
+  test("worktree-mode plans run the real git pre-checks — parity with run's failures", async () => {
     const { dir, path } = setup(`
 name: checks
 nodes:
@@ -677,39 +677,39 @@ nodes:
     bash: "true"
 `);
     const workflowNoRepo = loadWorkflow(path, { cwd: dir });
-    expect(() => formatDryRun({ workflow: workflowNoRepo, task: "", vars: {}, runRoot: dir, worktree: {} })).toThrow(
+    await expect(formatDryRun({ workflow: workflowNoRepo, task: "", vars: {}, runRoot: dir, worktree: {} })).rejects.toThrow(
       "not a git repository",
     );
     gitify(dir);
     const workflow = loadWorkflow(path, { cwd: dir });
-    expect(() => formatDryRun({ workflow, task: "", vars: {}, runRoot: dir, worktree: { base: "no-such-ref" } })).toThrow(
+    await expect(formatDryRun({ workflow, task: "", vars: {}, runRoot: dir, worktree: { base: "no-such-ref" } })).rejects.toThrow(
       "base ref not found: no-such-ref",
     );
-    expect(() => formatDryRun({ workflow, task: "", vars: {}, runRoot: dir, worktree: { branch: "main" } })).toThrow(
+    await expect(formatDryRun({ workflow, task: "", vars: {}, runRoot: dir, worktree: { branch: "main" } })).rejects.toThrow(
       "branch already exists: main",
     );
-    expect(() => formatDryRun({ workflow, task: "", vars: {}, runRoot: dir, worktree: { branch: "+x" } })).toThrow(
+    await expect(formatDryRun({ workflow, task: "", vars: {}, runRoot: dir, worktree: { branch: "+x" } })).rejects.toThrow(
       "invalid branch name: +x",
     );
     // A named branch that passes the checks is echoed verbatim.
-    const lines = formatDryRun({ workflow, task: "", vars: {}, runRoot: dir, worktree: { base: "main", branch: "feature/x" } });
+    const lines = await formatDryRun({ workflow, task: "", vars: {}, runRoot: dir, worktree: { base: "main", branch: "feature/x" } });
     expect(lines[1]).toBe("isolation: worktree from base main, branch feature/x");
   });
 
-  test("in-place plans render the empty base/branch the engine would actually provide", () => {
+  test("in-place plans render the empty base/branch the engine would actually provide", async () => {
     const { dir, path } = setup(`
 name: inplace-meta
 nodes:
   - id: a
     bash: "git diff [{{base}}]..[{{branch}}] in {{run_id}}"
 `);
-    const lines = formatDryRun({ workflow: loadWorkflow(path, { cwd: dir }), task: "", vars: {}, runRoot: dir, autoOpenPr: true });
+    const lines = await formatDryRun({ workflow: loadWorkflow(path, { cwd: dir }), task: "", vars: {}, runRoot: dir, autoOpenPr: true });
     expect(lines).toContain("isolation: in place (--no-worktree)");
     expect(lines).toContain("   bash: git diff []..[] in <run-id>");
     expect(lines.join("\n")).not.toContain("on success: push"); // no worktree, no PR step even when asked
   });
 
-  test("renders loops (prompt and steps), gates, agents, and until variants", () => {
+  test("renders loops (prompt and steps), gates, agents, and until variants", async () => {
     const { dir, path } = setup(`
 name: full
 nodes:
@@ -739,7 +739,7 @@ nodes:
     mkdirSync(join(dir, ".agents", "agents"), { recursive: true });
     writeFileSync(join(dir, ".agents", "agents", "coder.md"), "---\nmodel: sonnet\n---\nYou code.\n");
     const workflow = loadWorkflow(path, { cwd: dir });
-    const lines = formatDryRun({ workflow, task: "v2", vars: {}, runRoot: dir });
+    const lines = await formatDryRun({ workflow, task: "v2", vars: {}, runRoot: dir });
     expect(lines).toContain("isolation: in place (--no-worktree)");
     expect(lines).toContain("1. fix  [loop · runner claude · agent coder · until ALL_DONE · interactive · max 5]");
     expect(lines).toContain("   prompt: Iteration 1: fix. Feedback: []"); // truthful first-iteration context
@@ -758,7 +758,7 @@ nodes:
     expect(lines).toContain("   gate: Ship v2?");
   });
 
-  test("shows the runner a --runner override would actually use", () => {
+  test("shows the runner a --runner override would actually use", async () => {
     const { dir, path } = setup(`
 name: override
 nodes:
@@ -771,14 +771,14 @@ nodes:
     const oldPath = process.env.PATH;
     process.env.PATH = `${stub}:${oldPath}`;
     try {
-      const lines = formatDryRun({ workflow: loadWorkflow(path, { cwd: dir }), task: "", vars: {}, runRoot: dir, runnerOverride: "codex" });
+      const lines = await formatDryRun({ workflow: loadWorkflow(path, { cwd: dir }), task: "", vars: {}, runRoot: dir, runnerOverride: "codex" });
       expect(lines).toContain("1. a  [ai · runner codex]");
     } finally {
       process.env.PATH = oldPath;
     }
   });
 
-  test("an injected runner registry is honored — the plan names ITS runners", () => {
+  test("an injected runner registry is honored — the plan names ITS runners", async () => {
     const { dir, path } = setup(`
 name: injected
 nodes:
@@ -786,7 +786,7 @@ nodes:
     prompt: "hi"
 `);
     const fake: Runner = { name: "fake-runner", run: async () => ({ output: "", exitCode: 0 }) };
-    const lines = formatDryRun({
+    const lines = await formatDryRun({
       workflow: loadWorkflow(path, { cwd: dir }),
       task: "",
       vars: {},
@@ -796,7 +796,7 @@ nodes:
     expect(lines).toContain("1. a  [ai · runner fake-runner]");
   });
 
-  test("run-parity checks still fire: missing required inputs and unknown runners fail", () => {
+  test("run-parity checks still fire: missing required inputs and unknown runners fail", async () => {
     const { dir, path } = setup(`
 name: strict
 inputs:
@@ -808,13 +808,13 @@ nodes:
 `);
     const workflow = loadWorkflow(path, { cwd: dir });
     try {
-      formatDryRun({ workflow, task: "", vars: {}, runRoot: dir });
+      await formatDryRun({ workflow, task: "", vars: {}, runRoot: dir });
       throw new Error("should have thrown");
     } catch (err) {
       expect((err as SaoError).message).toBe('missing required input "ticket"');
       expect((err as SaoError).hint).toBe("pass it with --var ticket=<value>"); // the RUN hint, not resume's
     }
-    expect(() => formatDryRun({ workflow, task: "", vars: { ticket: "T-1" }, runRoot: dir, runnerOverride: "nope" })).toThrow(
+    await expect(formatDryRun({ workflow, task: "", vars: { ticket: "T-1" }, runRoot: dir, runnerOverride: "nope" })).rejects.toThrow(
       'unknown runner "nope"',
     );
     expect(existsSync(join(dir, ".sao"))).toBe(false); // plans have no side effects

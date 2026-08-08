@@ -5,6 +5,7 @@ import {
   ndJsonStream,
   PROTOCOL_VERSION,
   type Agent,
+  type AgentCapabilities,
   type Client,
   type ContentBlock,
   type RequestPermissionResponse,
@@ -124,6 +125,68 @@ export function runAcpTurn(launch: AcpLaunch, req: RunnerRequest): Promise<Runne
           reject(err instanceof SaoError ? err : new SaoError(`${launch.command} failed: ${(err as Error).message}`));
         });
       });
+    });
+  });
+}
+
+/**
+ * Spawns the agent just long enough to complete `initialize` and read back its
+ * advertised capabilities, then tears the process down — never runs a prompt
+ * turn. Used by ACP runners' preflight (task 3) to check a workflow's needs
+ * against what the agent actually supports, instead of a static declaration.
+ */
+export function runAcpHandshake(launch: AcpLaunch, opts: { cwd: string; env?: Record<string, string> }): Promise<AgentCapabilities> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(launch.command, launch.args, {
+      cwd: opts.cwd,
+      stdio: ["pipe", "pipe", "pipe"],
+      env: { ...process.env, ...opts.env },
+      detached: true,
+    });
+    track(child);
+    swallowStdinErrors(child);
+
+    let settled = false;
+    const settle = (finish: () => void) => {
+      if (settled) return;
+      settled = true;
+      finish();
+    };
+
+    child.on("error", (err: NodeJS.ErrnoException) => {
+      settle(() => reject(new SaoError(`failed to spawn ${launch.command}: ${err.message}`)));
+    });
+
+    child.on("close", (code) => {
+      settle(() => reject(new SaoError(`${launch.command} exited before completing the ACP handshake (code ${code})`)));
+    });
+
+    child.once("spawn", () => {
+      const stream = ndJsonStream(
+        Writable.toWeb(child.stdin) as WritableStream<Uint8Array>,
+        Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>,
+      );
+      const client: Client = {
+        async sessionUpdate(): Promise<void> {},
+        async requestPermission(): Promise<RequestPermissionResponse> {
+          return { outcome: { outcome: "cancelled" } };
+        },
+      };
+      const conn = new ClientSideConnection(() => client, stream);
+      conn
+        .initialize({ protocolVersion: PROTOCOL_VERSION })
+        .then((result) => {
+          settle(() => {
+            killTree(child);
+            resolve(result.agentCapabilities ?? {});
+          });
+        })
+        .catch((err: unknown) => {
+          settle(() => {
+            killTree(child);
+            reject(err instanceof SaoError ? err : new SaoError(`${launch.command} failed: ${(err as Error).message}`));
+          });
+        });
     });
   });
 }

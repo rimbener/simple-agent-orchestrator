@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SaoError } from "../src/errors";
-import { composeAcpPrompt, runAcpTurn } from "../src/acp";
+import { composeAcpPrompt, runAcpHandshake, runAcpTurn } from "../src/acp";
 import type { AcpLaunch } from "../src/acp";
 
 /** Await a promise that must reject; returns the rejection error. */
@@ -206,5 +206,35 @@ describe("runAcpTurn", () => {
     const err = await rejectionOf(runAcpTurn({ command: missing, args: [] }, { prompt: "hi", cwd: process.cwd() }));
     expect(err).toBeInstanceOf(SaoError);
     expect(err.message).toContain("failed to spawn");
+  });
+});
+
+describe("runAcpHandshake", () => {
+  test("resolves the agent's advertised capabilities without running a turn", async () => {
+    const double = withAcpDouble({ agentCapabilities: { loadSession: true } });
+    const capabilities = await runAcpHandshake(double.launch, { cwd: process.cwd(), env: double.env });
+    expect(capabilities).toEqual({ loadSession: true });
+  });
+
+  test("a process that exits before completing the handshake rejects", async () => {
+    const double = withAcpDouble({ exitImmediately: true });
+    const err = await rejectionOf(runAcpHandshake(double.launch, { cwd: process.cwd(), env: double.env }));
+    expect(err).toBeInstanceOf(SaoError);
+    expect(err.message).toContain("handshake");
+  });
+
+  test("the handshake process does not outlive the call", async () => {
+    const double = withAcpDouble({ agentCapabilities: {} });
+    await runAcpHandshake(double.launch, { cwd: process.cwd(), env: double.env });
+    const pid = Number(readFileSync(double.pidFile, "utf8"));
+    let dead = false;
+    for (let i = 0; i < 60; i++) {
+      if (!isAlive(pid)) {
+        dead = true;
+        break;
+      }
+      await wait(50);
+    }
+    expect(dead).toBe(true);
   });
 });

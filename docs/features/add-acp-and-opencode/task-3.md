@@ -2,7 +2,7 @@
 id: 3
 title: Async runner-environment preflight driven by the ACP handshake
 slice: S2 — Capability preflight
-status: todo
+status: done
 scenarios:
   - "@s-capability-gap-preflight"
   - "@s-capability-present-passes"

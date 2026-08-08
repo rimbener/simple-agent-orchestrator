@@ -25,15 +25,26 @@ export interface RunnerResult {
   exitCode: number;
 }
 
+/** What the workflow's AI nodes actually require of a runner's environment. */
+export interface RunnerNeeds {
+  /** Some loop using this runner has fresh_context: false. */
+  needsSessionResume: boolean;
+}
+
 export interface Runner {
   name: string;
   run(req: RunnerRequest): Promise<RunnerResult>;
-  /** Optional environment check (binary on PATH, …) run at validate/preflight time. */
-  preflight?: () => void;
+  /**
+   * Environment check (binary on PATH, ACP capability handshake, …) run at
+   * validate/preflight time, once per distinct runner. May reject/throw a
+   * SaoError; ACP runners await a handshake here instead of a static declaration.
+   */
+  preflight?: (needs: RunnerNeeds) => void | Promise<void>;
   /**
    * Whether run() honors resumeSessionId. Only an explicit `false` marks a runner
    * incapable — loops with `fresh_context: false` are rejected for it at
    * validate/preflight time (mock runners that leave it unset stay resumable).
+   * ACP runners supersede this static path with the handshake in preflight().
    */
   supportsSessionResume?: boolean;
 }
