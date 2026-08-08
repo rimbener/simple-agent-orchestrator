@@ -58,6 +58,7 @@ var permReqId = null;
 var promptMsgId = null;
 var lastSessionEvent = null;
 var lastMcpServers = [];
+var lastModelId = null;
 function handle(msg) {
   if (msg.method === "initialize") {
     if (config.hangInitialize) return;
@@ -74,6 +75,14 @@ function handle(msg) {
     }
     lastSessionEvent = "load:" + msg.params.sessionId;
     lastMcpServers = (msg.params && msg.params.mcpServers) || [];
+    send({ jsonrpc: "2.0", id: msg.id, result: {} });
+  } else if (msg.method === "session/set_model") {
+    if (config.hangModel) return;
+    lastModelId = (msg.params && msg.params.modelId) || null;
+    if (config.rejectModel) {
+      send({ jsonrpc: "2.0", id: msg.id, error: config.rejectModel });
+      return;
+    }
     send({ jsonrpc: "2.0", id: msg.id, result: {} });
   } else if (msg.method === "session/prompt") {
     if (config.hang) return;
@@ -104,6 +113,8 @@ function handle(msg) {
       chunks = [{ text: lastSessionEvent }];
     } else if (config.echoMcpServers) {
       chunks = [{ text: JSON.stringify(lastMcpServers) }];
+    } else if (config.echoModel) {
+      chunks = [{ text: String(lastModelId) }];
     }
     for (var i = 0; i < chunks.length; i++) emitChunk(config.sessionId || "double-session", chunks[i]);
     send({ jsonrpc: "2.0", id: msg.id, result: { stopReason: config.stopReason || "end_turn" } });
@@ -478,5 +489,47 @@ describe("runAcpTurn — MCP passthrough and ignored settings (task 7)", () => {
     });
     expect(chunks.join("")).not.toContain("permission_mode");
     expect(result.exitCode).toBe(0);
+  });
+});
+
+describe("runAcpTurn — model selection via session/set_model", () => {
+  test("@s-model-forwarded: the requested model is set on the session before the prompt", async () => {
+    const double = withAcpDouble({ echoModel: true });
+    const result = await runAcpTurn(double.launch, {
+      prompt: "hi",
+      cwd: process.cwd(),
+      env: double.env,
+      model: "opencode-go/deepseek-v4-flash",
+    });
+    expect(result.output).toBe("opencode-go/deepseek-v4-flash");
+    expect(result.exitCode).toBe(0);
+  });
+
+  test("@s-model-optional: no session/set_model is sent when the workflow sets no model", async () => {
+    const double = withAcpDouble({ echoModel: true });
+    const result = await runAcpTurn(double.launch, { prompt: "hi", cwd: process.cwd(), env: double.env });
+    expect(result.output).toBe("null");
+  });
+
+  test("@s-model-unsupported-warns: an agent that does not implement session/set_model warns and runs with its default", async () => {
+    const double = withAcpDouble({ rejectModel: { code: -32601, message: "Method not found" }, chunks: [{ text: "ok" }] });
+    const chunks: string[] = [];
+    const result = await runAcpTurn(double.launch, {
+      prompt: "hi",
+      cwd: process.cwd(),
+      env: double.env,
+      model: "x/y",
+      onOutput: (c) => chunks.push(c),
+    });
+    expect(chunks.join("")).toContain(`⚠ ${double.launch.command} cannot select models — model x/y ignored, using its default`);
+    expect(result.output).toBe("ok");
+    expect(result.exitCode).toBe(0);
+  });
+
+  test("@s-model-invalid-fails: a rejected model fails the turn instead of silently running the wrong one", async () => {
+    const double = withAcpDouble({ rejectModel: { code: -32602, message: "Invalid params: model not found: nope/x" } });
+    const err = await rejectionOf(runAcpTurn(double.launch, { prompt: "hi", cwd: process.cwd(), env: double.env, model: "nope/x" }));
+    expect(err).toBeInstanceOf(SaoError);
+    expect(err.message).toContain("failed to set model nope/x");
   });
 });

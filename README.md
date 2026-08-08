@@ -199,7 +199,9 @@ file.
   is a validation error.
 - **opencode** — the first [Agent Client Protocol](https://agentclientprotocol.com)
   agent (`opencode acp`). `systemPrompt` is delivered as a role preamble (ACP has
-  no system-prompt slot); a refused turn fails the node even on a clean exit.
+  no system-prompt slot); `model` is applied per-session via `session/set_model`
+  (an agent that can't select models warns and uses its default; an unknown model
+  fails the node). A refused turn fails the node even on a clean exit.
   `fresh_context: false` support depends on the agent's own `initialize`
   handshake advertising session loading, checked at `validate`/`run` time —
   not a static per-runner declaration like claude/codex. When the agent asks for

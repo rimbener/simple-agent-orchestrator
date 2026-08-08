@@ -54,5 +54,8 @@
     "typescript": "^5.7.0",
     "yaml": "^2.6.0",
     "zod": "^3.23.8"
+  },
+  "patchedDependencies": {
+    "@zed-industries/agent-client-protocol@0.4.5": "patches/@zed-industries%2Fagent-client-protocol@0.4.5.patch"
   }
 }

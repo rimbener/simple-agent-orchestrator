@@ -289,6 +289,25 @@ export function runAcpTurn(launch: AcpLaunch, req: RunnerRequest): Promise<Runne
           sessionId = session.sessionId;
         }
 
+        // Model selection is ACP's session/set_model (spec D7; patched in the
+        // pinned client-protocol, whose setSessionModel mistakenly sends
+        // session/set_mode). A runner that doesn't implement it (method not
+        // found) is warned and falls back to its default — the allowed_tools
+        // precedent; any other failure (e.g. an unknown model) fails the turn
+        // like a bad --model on claude/codex instead of silently running the
+        // wrong model.
+        if (req.model !== undefined) {
+          try {
+            await conn.setSessionModel({ sessionId, modelId: req.model });
+          } catch (err) {
+            if ((err as { code?: number })?.code === -32601) {
+              req.onOutput?.(`⚠ ${launch.command} cannot select models — model ${req.model} ignored, using its default\n`);
+            } else {
+              throw new SaoError(`${launch.command} failed to set model ${req.model}: ${(err as Error).message}`);
+            }
+          }
+        }
+
         const promptBlocks: ContentBlock[] = [{ type: "text", text: composeAcpPrompt(req) }];
         const response = await conn.prompt({ sessionId, prompt: promptBlocks });
         settle(() => {

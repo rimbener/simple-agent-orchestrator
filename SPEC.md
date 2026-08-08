@@ -368,9 +368,14 @@ recognizes prints a warning that prior conversation history was lost and
 continues in a new session, rather than halting the run (user story Note 6) —
 a genuine process/transport failure during the load still fails the node.
 `mcp:` servers are forwarded natively via `session/new`/`session/load`'s
-`mcpServers`; `allowed_tools` is warned about and ignored (no ACP allowlist
-concept to map it onto); `permission_mode` is a silent no-op, superseded by the
-permission-request flow.
+`mcpServers`; `model` is set on the session via `session/set_model` before the
+prompt (the pinned `agent-client-protocol` ships a patched `setSessionModel`,
+whose upstream method mistakenly sends `session/set_mode`) — an agent that does
+not implement it warns and runs with its default, but a rejected model (e.g.
+unknown ID) fails the node like a bad `--model` on claude/codex rather than
+silently running the wrong model; `allowed_tools` is warned about and ignored
+(no ACP allowlist concept to map it onto); `permission_mode` is a silent no-op,
+superseded by the permission-request flow.
 
 Adding a runner = one new file in `src/runners/` implementing the interface, registered
 in a static map. No dynamic plugin loading in v1.

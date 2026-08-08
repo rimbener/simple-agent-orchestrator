@@ -31,14 +31,19 @@ if (process.argv[2] !== "acp") process.exit(1);
 function send(obj) {
   process.stdout.write(JSON.stringify(obj) + "\\n");
 }
+var lastModel = "";
 function handle(msg) {
   if (msg.method === "initialize") {
     send({ jsonrpc: "2.0", id: msg.id, result: { protocolVersion: 1, agentCapabilities: config.agentCapabilities || {} } });
   } else if (msg.method === "session/new") {
     send({ jsonrpc: "2.0", id: msg.id, result: { sessionId: "double-session" } });
+  } else if (msg.method === "session/set_model") {
+    lastModel = (msg.params && msg.params.modelId) || "";
+    send({ jsonrpc: "2.0", id: msg.id, result: {} });
   } else if (msg.method === "session/prompt") {
     var blocks = (msg.params && msg.params.prompt) || [];
     var text = config.echoPrompt ? blocks.map(function (b) { return b.text || ""; }).join("") : "ok";
+    if (config.echoModel) text = lastModel;
     send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "double-session", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: text } } } });
     send({ jsonrpc: "2.0", id: msg.id, result: { stopReason: "end_turn" } });
   }
@@ -268,6 +273,47 @@ nodes:
     try {
       const result = await opencodeRunner.run({ prompt: "do it", systemPrompt: "Answer only with BANANA.", cwd: process.cwd() });
       expect(result.output).toContain("Answer only with BANANA.");
+    } finally {
+      restore();
+    }
+  });
+
+  test("@s-opencode-model-forwarded: run() forwards req.model via session/set_model", async () => {
+    const restore = withStubOpencode({ echoModel: true });
+    try {
+      const result = await opencodeRunner.run({ prompt: "hi", cwd: process.cwd(), model: "opencode-go/deepseek-v4-flash" });
+      expect(result.output).toBe("opencode-go/deepseek-v4-flash");
+    } finally {
+      restore();
+    }
+  });
+
+  test("@s-opencode-defaults-model-forwarded: a workflow's defaults.model reaches the ACP agent end-to-end", async () => {
+    const restore = withStubOpencode({ echoModel: true });
+    try {
+      const dir = mkdtempSync(join(tmpdir(), "sao-opencode-model-"));
+      const path = join(dir, "workflow.yaml");
+      writeFileSync(
+        path,
+        `
+name: modelfwd
+defaults:
+  runner: opencode
+  model: opencode-go/deepseek-v4-flash
+nodes:
+  - id: a
+    prompt: "hi"
+`,
+      );
+      const state = await runWorkflow({
+        workflow: loadWorkflow(path, { cwd: dir }),
+        workflowPath: path,
+        task: "",
+        vars: {},
+        cwd: dir,
+        print: () => {},
+      });
+      expect(state.nodes["a"]!.output).toBe("opencode-go/deepseek-v4-flash");
     } finally {
       restore();
     }
