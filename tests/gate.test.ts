@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { GateRejectedError, SaoError } from "../src/errors";
-import { parseGateReply, parseLoopReply } from "../src/gate";
+import { parseGateReply, parseLoopReply, parsePermissionReply } from "../src/gate";
 
 describe("GateRejectedError", () => {
   test("is a SaoError with its own name, so rejections are distinguishable", () => {
@@ -57,5 +57,19 @@ describe("parseLoopReply", () => {
 
   test("empty replies still re-ask", () => {
     expect(parseLoopReply("  ")).toEqual({ kind: "empty" });
+  });
+});
+
+describe("parsePermissionReply", () => {
+  test.each([
+    ["1", 1],
+    ["2", 2],
+    [" 3 ", 3],
+  ])("%p selects option index %d out of 3 offered", (reply, index) => {
+    expect(parsePermissionReply(reply, 3)).toEqual({ kind: "selected", index });
+  });
+
+  test.each([["0"], ["4"], ["-1"], ["a"], ["1.5"], [""], ["  "]])("%p is invalid against 3 offered options", (reply) => {
+    expect(parsePermissionReply(reply, 3)).toEqual({ kind: "invalid" });
   });
 });

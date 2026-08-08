@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { SaoError } from "../src/errors";
 import { composeAcpPrompt, runAcpHandshake, runAcpTurn } from "../src/acp";
 import type { AcpLaunch } from "../src/acp";
+import type { PromptUser } from "../src/gate";
 
 /** Await a promise that must reject; returns the rejection error. */
 async function rejectionOf(promise: Promise<unknown>): Promise<SaoError> {
@@ -53,6 +54,8 @@ function emitChunk(sessionId, chunk) {
   }
   send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: sessionId, update: update } });
 }
+var permReqId = null;
+var promptMsgId = null;
 function handle(msg) {
   if (msg.method === "initialize") {
     if (config.hangInitialize) return;
@@ -61,6 +64,17 @@ function handle(msg) {
     send({ jsonrpc: "2.0", id: msg.id, result: { sessionId: config.sessionId || "double-session" } });
   } else if (msg.method === "session/prompt") {
     if (config.hang) return;
+    promptMsgId = msg.id;
+    if (config.requestPermission) {
+      permReqId = "perm-1";
+      send({
+        jsonrpc: "2.0",
+        id: permReqId,
+        method: "session/request_permission",
+        params: { sessionId: config.sessionId || "double-session", options: config.requestPermission.options, toolCall: { toolCallId: "tc-1", title: config.requestPermission.title } },
+      });
+      return;
+    }
     var chunks = config.chunks || [];
     if (config.echoPrompt) {
       var blocks = (msg.params && msg.params.prompt) || [];
@@ -74,6 +88,8 @@ function handle(msg) {
     for (var i = 0; i < chunks.length; i++) emitChunk(config.sessionId || "double-session", chunks[i]);
     send({ jsonrpc: "2.0", id: msg.id, result: { stopReason: config.stopReason || "end_turn" } });
     if (config.exitAfter) process.exit(0);
+  } else if (msg.method === undefined && msg.id === permReqId) {
+    send({ jsonrpc: "2.0", id: promptMsgId, result: { stopReason: "end_turn" } });
   }
 }
 var buf = "";
@@ -208,6 +224,53 @@ describe("runAcpTurn", () => {
     expect(err).toBeInstanceOf(SaoError);
     expect(err.message).toContain("failed to spawn");
   });
+});
+
+describe("runAcpTurn — the timeout clock pauses for a permission prompt (D5)", () => {
+  test(
+    "@s-timeout-paused-during-prompt: a human answering slower than timeoutSec does not time out the node",
+    async () => {
+      const double = withAcpDouble({ requestPermission: { title: "risky", options: [{ optionId: "opt-yes", name: "Yes", kind: "allow_once" }] } });
+      const promptUser: PromptUser = () => new Promise((resolve) => setTimeout(() => resolve("1"), 1500));
+      const result = await runAcpTurn(double.launch, {
+        prompt: "hi",
+        cwd: process.cwd(),
+        env: double.env,
+        timeoutSec: 1,
+        nodeId: "n",
+        promptUser,
+      });
+      expect(result.exitCode).toBe(0);
+    },
+    10000,
+  );
+
+  test(
+    "@s-timeout-paused-while-queued: a prompt queued behind another's does not time out either, even once the total wait outlasts timeoutSec",
+    async () => {
+      const a = withAcpDouble({ requestPermission: { title: "task a", options: [{ optionId: "opt-a", name: "A", kind: "allow_once" }] } });
+      const b = withAcpDouble({ requestPermission: { title: "task b", options: [{ optionId: "opt-b", name: "B", kind: "allow_once" }] } });
+      // A single shared, hand-rolled serial queue (mirrors gate.ts's real one): the
+      // second call's own 800ms wait only starts once the first settles, so by the
+      // time it resolves, well over 1 second (b's timeoutSec) has elapsed overall.
+      let queue: Promise<unknown> = Promise.resolve();
+      const promptUser: PromptUser = () => {
+        const turn = queue.then(() => new Promise<string>((resolve) => setTimeout(() => resolve("1"), 800)));
+        queue = turn.then(
+          () => undefined,
+          () => undefined,
+        );
+        return turn;
+      };
+      const [ra, rb] = await Promise.all([
+        runAcpTurn(a.launch, { prompt: "hi", cwd: process.cwd(), env: a.env, timeoutSec: 1, nodeId: "a", promptUser }),
+        runAcpTurn(b.launch, { prompt: "hi", cwd: process.cwd(), env: b.env, timeoutSec: 1, nodeId: "b", promptUser }),
+      ]);
+      expect(ra.exitCode).toBe(0);
+      expect(rb.exitCode).toBe(0);
+    },
+    10000,
+  );
 });
 
 describe("runAcpHandshake", () => {

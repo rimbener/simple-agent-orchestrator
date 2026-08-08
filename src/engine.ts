@@ -855,7 +855,7 @@ class Engine {
         return executeAiNode(
           interpolate(node.prompt, this.ctx),
           { ...config, mcpConfigPath: this.mcpConfigPath, timeoutSec: node.timeout },
-          { cwd: this.execCwd, env: this.env, log: nodeLog.log },
+          { cwd: this.execCwd, env: this.env, log: nodeLog.log, nodeId: node.id, promptUser: this.promptUser },
         );
       }
       case "gate":
@@ -919,7 +919,7 @@ class Engine {
               resumeSessionId: body.fresh_context ? undefined : sessionId,
               timeoutSec: node.timeout,
             },
-            { cwd: this.execCwd, env: this.env, log: iterLog.log },
+            { cwd: this.execCwd, env: this.env, log: iterLog.log, nodeId: node.id, promptUser: this.promptUser },
           );
           sessionId = result.sessionId ?? sessionId;
           if (sessionId !== undefined) nodeState.sessionId = sessionId; // resume fidelity (M3)
@@ -1012,7 +1012,7 @@ class Engine {
         const result = await executeAiNode(
           prompt,
           { ...config, mcpConfigPath: this.mcpConfigPath, timeoutSec: node.timeout },
-          { cwd: this.execCwd, env: this.env, log: iterLog.log },
+          { cwd: this.execCwd, env: this.env, log: iterLog.log, nodeId: node.id, promptUser: this.promptUser },
         );
         output = result.output;
         lastAiOutput = result.output;

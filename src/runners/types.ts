@@ -1,4 +1,5 @@
 import { SaoError } from "../errors";
+import type { PromptUser } from "../gate";
 import { claudeRunner } from "./claude";
 import { codexRunner } from "./codex";
 import { opencodeRunner } from "./opencode";
@@ -16,6 +17,10 @@ export interface RunnerRequest {
   resumeSessionId?: string;
   timeoutSec?: number;
   onOutput?: (chunk: string) => void;
+  /** The owning node id — ACP runners name it in a `session/request_permission` prompt. */
+  nodeId?: string;
+  /** Terminal prompt for ACP `session/request_permission`; shares gate.ts's serialized queue. */
+  promptUser?: PromptUser;
 }
 
 export interface RunnerResult {

@@ -241,7 +241,27 @@ Terminal prompt: `[a]pprove / [r]eject / or type feedback`.
 - feedback → stored as `nodes.<id>.output` so downstream prompts can consume it,
 then continues (a gate that must re-do work should be modeled as an interactive loop).
 
+### Permission requests (ACP runners)
 
+**Invariant change:** gates are no longer the only thing that can pause a run — an
+ACP runner's `session/request_permission` pauses too, mid-AI-node. Rendering:
+the node id, what the agent wants to do (the tool call's title), and the agent's
+**own** options as a numbered menu (`1. Allow`, `2. Deny`, …). The chosen
+`optionId` is sent back verbatim — sao never interprets option meaning, and keeps
+**no** permission memory of its own ("allow for this session" is remembered
+agent-side, not by sao). An unparseable or out-of-range reply re-asks; nothing is
+sent to the agent until a valid choice is made. With no interactive terminal
+(stdin closed), the node fails the same way a gate does — never auto-approved.
+
+Permission prompts serialize on the **same terminal queue** gates and interactive
+loops already use (`src/gate.ts`'s `promptOnTerminal`) — there is no second stdin
+mechanism, so at most one prompt owns the terminal at a time, each naming the node
+it belongs to. A node's `timeout` (if any) excludes time spent waiting on — or
+queued behind — a permission prompt, exactly like a gate's wait is never
+time-boxed: the clock pauses the instant a prompt is handed to that queue and
+resumes once it is answered, so one human's slow reply to one node never times
+out an unrelated node. claude and codex have no permission-request concept and
+never gain this prompt.
 
 ### Templating
 
@@ -374,7 +394,9 @@ in a static map. No dynamic plugin loading in v1.
   `[node-id]`) → append to `.sao/runs/<id>/logs/<node-id>.log` (loops:
    `<node-id>.<iter>.log`) → persist state after every node/iteration transition.
 7. Failure (bash non-zero after retries, agent crash, loop cap — or a gate reject,
-  which marks the node and run `rejected` instead of `failed`): halt,
+  which marks the node and run `rejected` instead of `failed`; an ACP runner's
+  permission request can likewise pause and, with no terminal, fail the node —
+  see Permission requests): halt,
   mark node `failed`, print `sao resume <id>`, exit 1. Resume re-runs from the
    failed node/iteration with all prior state intact.
 8. Success: auto-commit any uncommitted worktree changes (`sao: finalize run <id>`).

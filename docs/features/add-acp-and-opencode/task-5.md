@@ -2,7 +2,7 @@
 id: 5
 title: Pausable node timeout across human waits
 slice: S3 — Permission prompts
-status: todo
+status: done
 scenarios:
   - "@s-timeout-paused-during-prompt"
   - "@s-timeout-paused-while-queued"

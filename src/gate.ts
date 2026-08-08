@@ -22,6 +22,18 @@ export function parseLoopReply(reply: string): GateReply {
   return parse(reply, LOOP_APPROVALS, LOOP_REJECTIONS);
 }
 
+export type PermissionReply = { kind: "selected"; index: number } | { kind: "invalid" };
+
+/** Permission-prompt replies accept only a bare number naming one of the offered options. */
+export function parsePermissionReply(reply: string, optionCount: number): PermissionReply {
+  const text = reply.trim();
+  if (/^[0-9]+$/.test(text)) {
+    const index = Number(text);
+    if (index >= 1 && index <= optionCount) return { kind: "selected", index };
+  }
+  return { kind: "invalid" };
+}
+
 function parse(reply: string, approvals: Set<string>, rejections: Set<string>): GateReply {
   const text = reply.trim();
   if (!text) return { kind: "empty" };

@@ -1,123 +1,91 @@
 # TDD log — ACP client + opencode runner
 
-## Unblocked (2026-08-08)
+## Slice S1 — ACP transport & opencode runner (task-1, task-2)
 
-Prior attempts were blocked on network access to fetch
-`@zed-industries/agent-client-protocol` (see `review-slice.md`). This session has
-network access; `bun add @zed-industries/agent-client-protocol` succeeded. Moved
-it into `devDependencies` alongside the other four runtime deps, matching this
-repo's existing convention (everything is bundled by `bun build`, so the
-dependencies/devDependencies split doesn't gate what ships).
+`runAcpTurn(launch, req)` spawns fresh per turn, drives `initialize` →
+`session/new` → `session/prompt` via `ClientSideConnection` + `ndJsonStream`.
+`opencodeRunner` is name + launch command (`opencode acp`, D7 confirmed) +
+delegation to `runAcpTurn`; preflight reuses `findExecutableOnPath`.
 
-## Slice S1 — ACP transport & opencode runner
-
-### task-1 — `src/acp.ts`
-
-Tests drive a hand-rolled ACP agent double (`tests/acp.test.ts`'s `DOUBLE_SCRIPT`)
-speaking newline-delimited JSON-RPC directly over stdio — no dependency on the ACP
-package on the double side, never the real opencode binary. `runAcpTurn(launch,
-req)` spawns fresh per turn (mirrors claude/codex's per-call process lifecycle),
-drives `initialize` → `session/new` → `session/prompt` via `ClientSideConnection`
-+ `ndJsonStream`, and tears the process down after the turn.
-
-@s → test map:
+@s → test map (`tests/acp.test.ts` unless noted):
 - `@s-acp-stream-and-output` → "streams live text and captures the whole turn as output"
 - `@s-acp-output-excludes-thoughts` → "reasoning and tool-call updates stay out of output and the stream"
 - `@s-acp-sentinel-ends-loop` → "successive turns each return their own isolated output"
 - `@s-acp-refusal-fails-node` → "a refusal stop reason fails the turn even on a clean exit"
 - `@s-acp-timeout-kills` → "a hung turn times out, kills the process, and rejects naming the timeout"
+- `@s-opencode-missing-binary-preflight`, `@s-opencode-agent-system-prompt`,
+  `@s-opencode-runner-selectable` → `tests/opencode.test.ts`
+- `@s-unknown-runner-lists-opencode` → `tests/runners.test.ts`
 
-Supporting (untagged) cycles: `composeAcpPrompt` no-op / preamble (mirrors codex's
-`composeCodexPrompt`); cwd + env merge-over-`process.env`; system-prompt delivery
-via an echo double; a process that dies mid-handshake rejects instead of hanging
-(added a `child.on("close", …)` settle path); a command that fails to spawn
-rejects (gated the protocol start on the `"spawn"` event, not immediately after
-`spawn()`, after a stray "ACP write error" surfaced from writing to a pipe whose
-process never launched — fixed, not silenced).
+Gate: `bun test` (673 pass), typecheck, build green. Docs: `SPEC.md`/`README.md`
+(AI execution row, adapter description, five-dependency line, Runners section).
 
-### task-2 — `src/runners/opencode.ts`
+## Slice S2 — Capability preflight (task-3)
 
-Confirmed `opencode acp` against the real installed CLI (D7 — no correction
-needed). `opencodeRunner` is name + launch command + delegation to `runAcpTurn`;
-`preflight` reuses `findExecutableOnPath`. Registered in `REGISTRY`
-(`src/runners/types.ts`).
+`Runner.preflight` takes `RunnerNeeds` and may return a promise.
+`preflightAiConfigs` stays sync; a new awaited `preflightRunnerEnvironments`
+does binary/handshake checks, once per distinct runner. `src/acp.ts` gained
+`runAcpHandshake` (spawn, `initialize`, kill, return capabilities).
 
-@s → test map:
-- `@s-opencode-missing-binary-preflight` → "preflight throws a SaoError naming the missing binary and an install hint"
-- `@s-opencode-agent-system-prompt` → "the agent file body reaches the ACP agent as the system prompt"
-- `@s-opencode-runner-selectable` → "the registry resolves opencode and it executes through the ACP client"
-- `@s-unknown-runner-lists-opencode` → `tests/runners.test.ts` "unknown runners list what is available, including opencode"
+@s → test map (`tests/engine-acp.test.ts` + `tests/opencode.test.ts` unless noted):
+`@s-capability-gap-preflight`, `@s-capability-present-passes`,
+`@s-validate-performs-handshake`, `@s-handshake-once-per-runner`,
+`@s-handshake-failure-preflight`, `@s-existing-runners-unaffected`.
 
-Supporting: name check, preflight-passes, launch-command pin (wrong binary fails
-the turn), `getRunner("opencode")` resolution.
+Review fixes (both `resolved` in `review-slice.md`): `runAcpHandshake` had no
+timeout → gave it the same timer-based settle as `runAcpTurn`
+(`DEFAULT_HANDSHAKE_TIMEOUT_SEC`); `opencodeRunner.preflight`'s handshake-failure
+catch discarded the real error → folds `err.message` into the `SaoError`.
 
-## Gate
+Gate: `bun test` (687 pass), typecheck, build green. Docs: `SPEC.md` (execution
+semantics step 2), `README.md` (`validate`, `fresh_context: false`, opencode).
 
-`bun test` (673 pass), `bun run typecheck`, `bun run build` all green. Manual CLI
-check: `sao validate` against a `runner: opencode` workflow passes preflight
-(opencode is installed on this machine); an unknown-runner error lists
-`claude, codex, opencode`. Docs landed in this slice: `SPEC.md` (AI execution row,
-`runner:` comment, ACP/opencode adapter description, directory listing,
-five-dependency line) and `README.md` (install prereqs, `runner:` comment,
-Runners section).
+## Slice S3 — Permission prompts (task-4, task-5)
 
-## Slice S2 — Capability preflight
-
-### task-3 — async runner-environment preflight
-
-`Runner.preflight` now takes `RunnerNeeds` (`{ needsSessionResume }`) and may
-return a promise. `preflightAiConfigs` stays sync (config resolution only);
-the binary/handshake probing loop moved to a new awaited
-`preflightRunnerEnvironments(workflow, configs)`, called once per distinct
-runner from `runWorkflow`, `formatDryRun` (now async), and `sao validate`.
-`src/acp.ts` gained `runAcpHandshake` (spawn, `initialize`, kill, return
-`agentCapabilities` — never a prompt turn) since opencode's capability check
-needs the ACP connection but not a full turn. `opencodeRunner.preflight`
-checks PATH first (sync fail), then handshakes and compares
-`needs.needsSessionResume` against `capabilities.loadSession`.
+**task-4** — `session/request_permission` → numbered terminal prompt.
+`gate.ts` gained `parsePermissionReply(reply, optionCount)` (bare number in
+range, else `invalid`) alongside `parseGateReply`/`parseLoopReply`.
+`RunnerRequest`/`NodeExecContext` gained `nodeId` + `promptUser` (threaded
+engine → nodes.ts → runner, at all three `executeAiNode` call sites: plain AI
+node, loop `prompt`, loop `steps` AI step). `acp.ts`'s `requestPermission`
+renders `[nodeId] permission requested: <title>` + a numbered menu, loops on
+`parsePermissionReply` until valid (nothing sent to the agent meanwhile), logs
+the request/choice via `onOutput`, and — on a `promptUser` rejection (stdin
+closed) — settles the whole turn with that same `SaoError`, never auto-approving.
 
 @s → test map:
-- `@s-capability-gap-preflight` → tests/engine-acp.test.ts + tests/opencode.test.ts (mock-runner and real-handshake versions)
-- `@s-capability-present-passes` → same two files
-- `@s-validate-performs-handshake` → tests/engine-acp.test.ts "the same preflight call validate makes..."
-- `@s-handshake-once-per-runner` → tests/engine-acp.test.ts (3 AI nodes, one mock runner, probes===1)
-- `@s-handshake-failure-preflight` → tests/engine-acp.test.ts + tests/opencode.test.ts (non-ACP binary on PATH)
-- `@s-existing-runners-unaffected` → tests/engine-acp.test.ts test.each(["claude","codex"])
+- `@s-permission-prompt-numbered`, `@s-permission-invalid-reply-reasks` →
+  `tests/gate-permission.test.ts` (hand-rolled ACP double + fake `promptUser`)
+- `@s-permission-stdin-closed-fails`, `@s-permission-serialized-with-gates` →
+  `tests/cli.test.ts` (spawned CLI, stub `opencode` binary on PATH, real stdin;
+  serialization ordering proven via a 200ms send-delay in the double so the
+  near-instant gate prompt reliably enqueues first)
+- `@s-no-new-prompts-for-claude-codex` → `tests/cli.test.ts` (stub claude+codex
+  binaries, stdin closed, run still succeeds — they never call `promptUser`)
+- Plumbing (untagged): `tests/nodes.test.ts`, `tests/engine-acp.test.ts` assert
+  `nodeId`/`promptUser` reach the runner's request.
 
-Supporting (untagged): tests/acp.test.ts's `runAcpHandshake` describe block
-(resolves capabilities, rejects on early exit, process doesn't outlive the
-call); tests/opencode.test.ts's DOUBLE_SCRIPT made `agentCapabilities`
-configurable; existing claude/codex/opencode preflight call sites across
-tests/runners.test.ts, tests/codex.test.ts, tests/opencode.test.ts updated to
-pass a `RunnerNeeds` arg; every `formatDryRun` call site in
-tests/engine-m4.test.ts made async.
+Pitfall hit and fixed, not silenced: `spawnSync` in `tests/cli.test.ts` does
+**not** pick up a `process.env.PATH` mutation made earlier in the same process
+unless `env: process.env` is passed explicitly (a real `opencode`/`claude`/
+`codex` on the dev machine's PATH was winning the race otherwise) — every
+PATH-stubbed spawn in that file now passes it.
 
-## Gate
+**task-5** — the timeout clock pauses for a permission prompt (D5). Replaced
+the flat `setTimeout` in `runAcpTurn` with a pausable one (`remainingMs` +
+`armTimer`/`pauseTimer`/`resumeTimer`, tracking elapsed via `Date.now()`);
+`requestPermission` pauses before its ask-loop and resumes in a `finally`, so
+queued time counts too (pause happens before `promptUser` is even called, not
+when it starts being answered).
 
-`bun test` (686 pass), `bun run typecheck`, `bun run build` all green. Manual
-CLI check: `sao validate` on a `fresh_context: false` + `runner: opencode`
-workflow passes (real opencode advertises `loadSession`); with a fake
-`opencode` on PATH that exits without speaking ACP, validate fails with
-"opencode failed the ACP handshake"; `--dry-run` on a plain opencode node
-awaits the handshake and prints the plan. Docs landed: `SPEC.md` (execution
-semantics step 2 — ACP capability handshake) and `README.md` (`validate`
-description, `fresh_context: false` comment, opencode bullet).
+@s → test map: `@s-timeout-paused-during-prompt`, `@s-timeout-paused-while-queued`
+→ `tests/acp.test.ts` (extended `DOUBLE_SCRIPT` with `config.requestPermission`;
+real short timers, no fake-clock injection — matches the existing timeout
+tests' real-wall-clock style).
 
-## Slice S2 review fixes
-
-Two `review-slice.md` findings: `runAcpHandshake` had no timeout (a hung
-`initialize` blocked `run`/`validate`/`resume`/`--dry-run` forever), and
-`opencodeRunner.preflight`'s handshake-failure catch discarded the real error
-behind a generic guess. Fixed both:
-- `src/acp.ts`: `runAcpHandshake` now takes the same timer-based settle as
-  `runAcpTurn`, defaulting to 10s (`DEFAULT_HANDSHAKE_TIMEOUT_SEC`), overridable
-  via `opts.timeoutSec` for the test. Test → "a hung handshake times out, kills
-  the process, and rejects naming the timeout" (added `hangInitialize` to
-  `DOUBLE_SCRIPT`).
-- `src/runners/opencode.ts`: the catch folds `err.message` into the `SaoError`
-  instead of dropping it. Strengthened `@s-handshake-failure-preflight` to
-  assert the underlying detail ("exited before completing the ACP handshake")
-  survives into the preflight error.
-
-Both findings marked `resolved` in `review-slice.md`. `bun test` (687 pass),
-`bun run typecheck`, `bun run build` all green.
+Gate: `bun test` (706 pass), typecheck, build green. Manual CLI smoke (real
+stub binaries, not just doubles): stdin-closed request fails naming
+"interactive terminal"; a `1` reply approves and the node succeeds. Docs:
+`SPEC.md` (new "Permission requests" subsection under Gate semantics, step 7
+invariant note), `README.md` (opencode bullet: prompt rendering, shared queue,
+timeout exclusion).

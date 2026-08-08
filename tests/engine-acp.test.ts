@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { preflightAiConfigs, preflightRunnerEnvironments, runWorkflow } from "../src/engine";
 import { SaoError } from "../src/errors";
 import { loadWorkflow } from "../src/parser";
-import type { Runner, RunnerNeeds } from "../src/runners/types";
+import type { Runner, RunnerNeeds, RunnerRequest } from "../src/runners/types";
 
 const quiet = () => {};
 
@@ -109,6 +109,29 @@ nodes:
     });
     await expect(run(path, dir, { resolveRunner: () => runner })).rejects.toThrow("mockacp failed the ACP handshake");
     expect(existsSync(join(dir, ".sao"))).toBe(false);
+  });
+});
+
+describe("permission-prompt plumbing", () => {
+  test("the engine passes the owning node id and its terminal prompt function to the runner", async () => {
+    const { dir, path } = setup(`
+name: plumbing
+nodes:
+  - id: fix
+    prompt: "go"
+`);
+    const calls: RunnerRequest[] = [];
+    const runner: Runner = {
+      name: "mockacp",
+      async run(req) {
+        calls.push(req);
+        return { output: "done", exitCode: 0 };
+      },
+    };
+    const promptUser = async (message: string) => message;
+    await run(path, dir, { resolveRunner: () => runner, promptUser });
+    expect(calls[0]!.nodeId).toBe("fix");
+    expect(calls[0]!.promptUser).toBe(promptUser);
   });
 });
 

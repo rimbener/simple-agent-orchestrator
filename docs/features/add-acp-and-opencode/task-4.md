@@ -2,7 +2,7 @@
 id: 4
 title: Permission requests as numbered terminal prompts
 slice: S3 — Permission prompts
-status: todo
+status: done
 scenarios:
   - "@s-permission-prompt-numbered"
   - "@s-permission-invalid-reply-reasks"

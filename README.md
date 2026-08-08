@@ -202,7 +202,25 @@ file.
   no system-prompt slot); a refused turn fails the node even on a clean exit.
   `fresh_context: false` support depends on the agent's own `initialize`
   handshake advertising session loading, checked at `validate`/`run` time —
-  not a static per-runner declaration like claude/codex.
+  not a static per-runner declaration like claude/codex. When the agent asks for
+  permission mid-turn (`session/request_permission`), sao pauses the run and
+  prints the node id, what the agent wants to do, and the agent's own options as
+  a numbered menu — reply with the number:
+
+  ```
+  [ask] permission requested: Write file src/x.ts
+    1. Allow
+    2. Deny
+  >
+  ```
+
+  The chosen option is sent back to the agent verbatim; sao keeps no permission
+  memory of its own ("allow for this session" is remembered agent-side). This
+  prompt shares the same terminal queue as gates and interactive loops, so only
+  one is ever shown at a time, and a node's `timeout` excludes time spent
+  waiting on (or queued behind) one — same as a gate's wait is never time-boxed.
+  With no interactive terminal, the node fails instead of auto-approving. claude
+  and codex have no permission-request concept and never show this prompt.
 
 Prompts are always piped over stdin — never argv.
 

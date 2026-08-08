@@ -8,10 +8,12 @@ import {
   type AgentCapabilities,
   type Client,
   type ContentBlock,
+  type RequestPermissionRequest,
   type RequestPermissionResponse,
   type SessionNotification,
 } from "@zed-industries/agent-client-protocol";
 import { SaoError, truncateDetail } from "./errors";
+import { parsePermissionReply } from "./gate";
 import { killTree, swallowStdinErrors, track } from "./procs";
 import type { RunnerRequest, RunnerResult } from "./runners/types";
 
@@ -56,17 +58,46 @@ export function runAcpTurn(launch: AcpLaunch, req: RunnerRequest): Promise<Runne
     const settle = (finish: () => void) => {
       if (settled) return;
       settled = true;
-      // Stryker disable next-line all: equivalent — clearTimeout(undefined) is a no-op, and an uncleared timer only fires a harmless killTree on an already-dead child after settling
-      if (timer) clearTimeout(timer);
+      clearTimer();
       finish();
     };
 
-    const timer = req.timeoutSec
-      ? setTimeout(() => {
-          killTree(child);
-          settle(() => reject(new SaoError(`${launch.command} timed out after ${req.timeoutSec}s`)));
-        }, req.timeoutSec * 1000)
-      : undefined;
+    // Pausable timeout (D5): the clock stops for the whole time a permission
+    // prompt is outstanding — from the moment it is enqueued, queued time
+    // included — and resumes once answered, so one human's slow reply never
+    // times out an unrelated node waiting behind it in the same terminal queue.
+    let remainingMs = req.timeoutSec !== undefined ? req.timeoutSec * 1000 : undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let timerStartedAt = 0;
+
+    function onTimeout(): void {
+      killTree(child);
+      settle(() => reject(new SaoError(`${launch.command} timed out after ${req.timeoutSec}s`)));
+    }
+
+    function armTimer(): void {
+      if (remainingMs === undefined || settled) return;
+      timerStartedAt = Date.now();
+      timer = setTimeout(onTimeout, remainingMs);
+    }
+
+    function clearTimer(): void {
+      // Stryker disable next-line all: equivalent — clearTimeout(undefined) is a no-op, and an uncleared timer only fires a harmless killTree on an already-dead child after settling
+      if (timer) clearTimeout(timer);
+      timer = undefined;
+    }
+
+    function pauseTimer(): void {
+      if (remainingMs === undefined || timer === undefined) return;
+      clearTimer();
+      remainingMs = Math.max(0, remainingMs - (Date.now() - timerStartedAt));
+    }
+
+    function resumeTimer(): void {
+      armTimer();
+    }
+
+    armTimer();
 
     child.on("error", (err: NodeJS.ErrnoException) => {
       settle(() => reject(new SaoError(`failed to spawn ${launch.command}: ${err.message}`)));
@@ -90,9 +121,35 @@ export function runAcpTurn(launch: AcpLaunch, req: RunnerRequest): Promise<Runne
         output += text;
         req.onOutput?.(text);
       },
-      async requestPermission(): Promise<RequestPermissionResponse> {
-        // No wiring yet (task 4 adds the terminal prompt) — never auto-approve.
-        return { outcome: { outcome: "cancelled" } };
+      async requestPermission(params: RequestPermissionRequest): Promise<RequestPermissionResponse> {
+        // No terminal wired (e.g. a caller that never sets promptUser) — never auto-approve.
+        if (!req.promptUser) return { outcome: { outcome: "cancelled" } };
+        const title = params.toolCall.title ?? params.toolCall.toolCallId;
+        const menu = params.options.map((opt, i) => `  ${i + 1}. ${opt.name}`).join("\n");
+        const label = req.nodeId ? `[${req.nodeId}] ` : "";
+        req.onOutput?.(`permission requested: ${title}\n${menu}\n`);
+        pauseTimer(); // the whole exchange below is human deliberation, queued time included
+        try {
+          for (;;) {
+            let reply: string;
+            try {
+              reply = await req.promptUser(`\n${label}permission requested: ${title}\n${menu}\n> `);
+            } catch (err) {
+              settle(() => {
+                killTree(child);
+                reject(err instanceof SaoError ? err : new SaoError(String(err)));
+              });
+              throw err;
+            }
+            const parsed = parsePermissionReply(reply, params.options.length);
+            if (parsed.kind === "invalid") continue; // re-ask; nothing is sent to the agent yet
+            const option = params.options[parsed.index - 1]!;
+            req.onOutput?.(`selected: ${option.name}\n`);
+            return { outcome: { outcome: "selected", optionId: option.optionId } };
+          }
+        } finally {
+          resumeTimer();
+        }
       },
     };
 
