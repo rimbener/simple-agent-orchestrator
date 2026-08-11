@@ -10,10 +10,10 @@
 #   sao run workflows/sao-features-orchestrator/sao-features-orchestrator.yaml \
 #       --var feature=<kebab-name> "the feature request, in prose"
 #
-# There is no separate harness: `base:` + `--base` cut the worktree, state.json
-# tracks the phase, and a loop hitting max_iterations halts the run — that halt IS
-# the escalation, resumable with `sao resume`. See ./README.md for the agents and
-# the scripts every bash node calls.
+# There is no separate harness: sao cuts the worktree and branch, state.json tracks
+# the phase, and a loop hitting max_iterations halts the run — that halt IS the
+# escalation, resumable with `sao resume`. See ./README.md for the agents and the
+# scripts every bash node calls.
 #
 # Repo facts baked in (sao — TypeScript, Bun toolchain, single package):
 #   there is no linter — CI is `bun run typecheck` + `bun test` (+ `bun run build`
@@ -24,7 +24,12 @@
 name: sao-features-orchestrator
 description: One feature request to a validated, PR-ready sao feature with a single human approval
 
-base: main # ref the run worktree/branch is cut from (--base wins)
+# No `base:` on purpose — the run is cut from the current HEAD, so the worktree
+# always contains the branch you are standing on, including this pipeline itself
+# before it is merged. The engine resolves HEAD to a commit SHA (not the literal
+# "HEAD"), so $SAO_BASE_REF still points at the pre-run tip once the run branch
+# has commits on it — which is what run-mutation.sh diffs against.
+# Override for a single run with `--base <ref>`.
 
 inputs:
   - name: feature # kebab name; owns docs/features/{{feature}}/ and the commit scope
@@ -32,7 +37,23 @@ inputs:
 
 defaults:
   runner: claude
-  permission_mode: acceptEdits # models come from each agent's frontmatter (opus/sonnet/haiku)
+  # models come from each agent's frontmatter (opus/sonnet/haiku)
+  #
+  # bypassPermissions, not acceptEdits: `claude -p` is headless, so anything that
+  # "requires approval" is auto-denied — there is no human on the other end. Under
+  # acceptEdits, file edits are fine and non-network Bash (`bun test`) runs inside
+  # the sandbox, but a command that must leave it — `bun add`, `npm view`, `curl` —
+  # is denied, which is what blocked an implementer mid-slice on a spec-approved
+  # new dependency.
+  #
+  # The containment here is the run's own git worktree and branch: the agents
+  # cannot touch your checkout, and you review the diff before merging. Note this
+  # does mean the agents run any command without asking, network included. To
+  # narrow it, drop this back to acceptEdits and put
+  # `permission_mode: bypassPermissions` in agents/implementer.md's frontmatter
+  # instead (node > agent > defaults), so only the agent that installs
+  # dependencies gets it.
+  permission_mode: bypassPermissions
 
 nodes:
   # ── Phase 0 — bootstrap (sao already cut the worktree from {{base}}) ──────────

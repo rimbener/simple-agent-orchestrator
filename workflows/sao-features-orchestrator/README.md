@@ -36,8 +36,12 @@ Every gate is **escalate, never fake**: a loop that hits `max_iterations` halts 
 run rather than declaring success. That halt is the escalation — fix whatever is
 stuck and continue with `sao resume <run-id>`.
 
-There is no separate harness. `base:` + `--base` cut the worktree and branch,
-`state.json` carries the phase, and the node graph is the sequencing.
+There is no separate harness. sao cuts the worktree and branch, `state.json`
+carries the phase, and the node graph is the sequencing.
+
+The workflow declares **no `base:`**, so each run is cut from the **current HEAD** —
+whatever branch you are standing on, including this pipeline itself before it is
+merged. Override for one run with `--base <ref>`.
 
 ## Agents
 
@@ -105,8 +109,12 @@ YAML. Each script is runnable and testable on its own.
 | `_lib.sh` | sourced by the rest | `die()` and `require_feature()` — the feature name becomes a path segment, so it is pattern-validated before any `join`, the same discipline `RUN_ID_PATTERN` applies to run ids in [`src/state.ts`](../../src/state.ts) |
 
 Bash nodes run with the **run worktree** as cwd, so these relative paths resolve
-inside the worktree — which means the scripts must exist on the run's base ref.
-Cutting a run from a `--base` older than this directory will fail at `bootstrap`.
+inside the worktree — which means the scripts must be **committed** on the run's
+base ref. A worktree contains tracked files only, so uncommitted or untracked
+scripts, or a `--base` older than this directory, fail at `bootstrap` with exit
+127 (`sh` cannot find the file). Cutting from HEAD makes that the default-correct
+case; `sao validate` and `--dry-run` cannot catch it, because they resolve against
+your main checkout, where the files are always present.
 
 ## The graph is fully serial
 
