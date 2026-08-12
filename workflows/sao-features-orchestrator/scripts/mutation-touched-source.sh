@@ -35,4 +35,8 @@ if ! touched="$(git diff --name-only "$(cat "$baseline")"..HEAD -- src)"; then
   exit 0
 fi
 
-printf '%s\n' "$touched" | grep -qE '\.ts$'
+# A here-string, not `printf | grep -q`: with pipefail, a `.ts` match on a large
+# $touched can make grep -q exit before printf finishes writing, SIGPIPE-ing
+# printf (128+13=141) — pipefail then reports 141 instead of grep's 0, which
+# reads as "errored" here and silently skips a review a real src/ change needed.
+grep -qE '\.ts$' <<< "$touched"
