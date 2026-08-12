@@ -25,13 +25,22 @@ exactly what failed and where, and expect to be re-run.
 
 1. Re-run the objective checks yourself, from the worktree root:
    - `bun run typecheck` — must be clean (both `tsc --noEmit` and the test project).
-   - `bun test` — full suite green. Record the pass/fail counts.
+   - `bun run test:orchestrator:ci` — full suite green. This is the same script the
+     review round runs: `--only-failures` (a clean run prints no per-test lines — that
+     is the flag, not an empty run) plus `--rerun-each=2`, so the final gate is never
+     weaker than CI. Record the pass/fail counts, and note that `--rerun-each=2`
+     **doubles** them — 654 tests report as 1308. A count that doubled is the flag; a
+     count that grew otherwise is suite growth.
    - `bun run build` — the `--target node` bundle still compiles.
    - `bun run dev -- validate <the workflow(s) the feature touches>` where the
      feature changed the schema, parser, or templating — a smoke check that the
      shipped examples still validate.
-   - Confirm the mutation threshold in `mutation.md` is genuinely met, and that
-     `review.md` has **no open blocker or major**. Any remaining item must be a
+   - Confirm the mutation threshold in `mutation.md` is genuinely met — **100 %
+     killed and zero `NoCoverage`**, read off the **overall** score, not the "based
+     on covered code" one — **or**, if the feature touched no `src/*.ts` outside
+     `cli.ts`, that `mutation.md` records `NO_CHANGED_SOURCE` (Stryker never ran;
+     that is a pass-through here, not a fail) — and that `review.md` has **no open
+     blocker or major**. Any remaining item must be a
      **minor** marked `ACCEPTED` (human risk-accepted and recorded in `spec.md`
      under Open decisions) — list those under "Accepted minors" in `dod.md`.
 2. Walk every dimension below and mark `[x]` / `[ ]` with one line of evidence each:
@@ -40,40 +49,58 @@ exactly what failed and where, and expect to be re-run.
    | --- | --- |
    | **Functionality** | Every `@s` in `gherkin-scenarios.md` is covered by a passing test; the feature does what `spec.md` says, error paths included |
    | **Code quality** | No debug leftovers, no TODO without an issue, no dead code; every `SaoError` carries a useful hint; comments explain the *why* |
-   | **Architecture & minimalism** | Layering intact (`cli` → `schema`/`parser` → `engine` → `nodes`/`runners` → `state`/`worktree`/`gate`); no upward imports; **no runtime dependency added** beyond `commander`, `yaml`, `zod`, `picocolors` unless `spec.md` records a human decision; no plugin/config surface `SPEC.md` doesn't call for |
+   | **Architecture & minimalism** | Layering intact (`cli` → `schema`/`parser` → `engine` → `nodes`/`runners` → `state`/`worktree`/`gate`); no upward imports; **no runtime dependency added, upgraded or patched** beyond `commander`, `yaml`, `zod`, `picocolors` unless `spec.md` records a human decision **and** `review.md` carries a verdict on it; no plugin/config surface `SPEC.md` doesn't call for |
    | **CLI & workflow surface** | New flags/keys documented and validated; terminal output readable in a non-TTY / under `NO_COLOR`; `sao validate` catches at parse time what it can; behavior stated for **both** runners (claude and codex) |
    | **Security** | No secret in `state.json`, a node log, or a committed file; nothing user-controlled reaching a path, an argv slot, or a git refspec unvalidated; prompts over stdin, not argv; children detached **and** tracked in `procs.ts` |
    | **Node-target compatibility** | No Bun-only API in `src/`; node builtins imported as `node:*`; `bun run build` green; `engines.node >= 20` still honest |
-   | **Testing rigor** | Strict TDD evidence in `tdd.md` (`@s → test` map, one line per cycle, ≤ 8 000 bytes); engine tests use the **mock Runner**, never a real agent CLI; mutation threshold met |
+   | **Testing rigor** | Strict TDD evidence across the `tdd-N.md` files (`@s → test` map, one line per cycle); engine tests use the **mock Runner**, never a real agent CLI; mutation threshold met — 100 % killed **and zero `NoCoverage`**, on the overall score — **or**, if the feature touched no `src/*.ts` outside `cli.ts`, `mutation.md` records `NO_CHANGED_SOURCE` |
    | **Observability & docs** | Node logs land under `.sao/runs/<id>/logs/`; state persisted after every transition so a resume loses at most the interrupted step; **`SPEC.md` updated** for the behavior change and **`README.md`** for anything user-facing, both consistent with the code |
 
 3. **Reject an empty review history.** `review.md` and each present
-   `review-spec.md` / `review-slice.md` / `mutation.md` must be **non-empty durable
-   records** with findings marked `open` / `resolved`. A 0-byte or content-wiped
-   review file → `DOD_FAILED`; retros depend on that trail.
+   `review-spec.md` / `review-slice-N.md` (every slice's own file) / `mutation.md`
+   must be **non-empty durable records** with findings marked `open` / `resolved`.
+   A 0-byte or content-wiped review file → `DOD_FAILED`; retros depend on that trail.
 4. **Mutation is escalate-only.** A `mutation.md` whose survivors were rewritten as
    killed, waived through an invented column, or propped up by a high error-mutant
    (`CompileError` / `RuntimeError`) count is a **fail** — the config or sandbox is
    off. A human waiver of a specific survivor counts only if it is documented in
    `spec.md` under Open decisions.
-5. Write the checklist and the verdict at the top of `docs/features/<feature>/dod.md`.
+   A **non-zero `NoCoverage` count is the same fail**, and it is the one that slips
+   through: "100 % killed of covered code" alongside a lower overall score means
+   there are lines **no test executes**, which is precisely what this gate exists to
+   catch. Read the overall score. Do not accept "score ≥ threshold" when the gap is
+   uncovered code.
+5. **Dependency changes are supply-chain changes.** Diff `package.json` and the
+   lockfile against `$SAO_BASE_REF`. Every added, upgraded **or patched** dependency
+   must be named in `review.md` with a verdict and recorded in `spec.md` under Open
+   decisions. A `patchedDependencies` entry or a file under `patches/` that
+   `review.md` never mentions is a **fail** — a patched dependency is unreviewed
+   third-party code that breaks on every upgrade.
+6. Write the checklist and the verdict at the top of `docs/features/<feature>/dod.md`.
 
 ## Verdict
 
 - All items pass → verdict `PASS`. Return `PASS -> docs/features/<feature>/dod.md`.
   A PASS **may** carry documented, human-accepted minors — but **never** an open
-  blocker or major, and never an unmet mutation threshold.
-- Any open blocker/major, an unmet mutation threshold, a wiped review file, or a
-  leftover minor that is **not** human-accepted → verdict `DOD_FAILED`. Return
+  blocker or major, and never an unmet mutation threshold. `mutation.md` recording
+  `NO_CHANGED_SOURCE` is not an unmet threshold — it means the feature had nothing
+  for Stryker to mutate, so treat that item as passed.
+- Any open blocker/major, an unmet mutation threshold (survivors **or**
+  `NoCoverage` — but not a genuine `NO_CHANGED_SOURCE`), an unreviewed
+  added/upgraded/patched dependency, a wiped review
+  file, or a leftover minor that is **not** human-accepted → verdict `DOD_FAILED`. Return
   `DOD_FAILED -> docs/features/<feature>/dod.md`; say exactly what failed and where,
   so `implementer` can close the gap, then re-validate.
 
-Opening and merging the PR is a **manual human step** after `pr_ready`.
+Opening and merging the PR is a **manual human step** after `finalize`.
 
 ## Hard rules
 
 - ❌ Never create branches, commits, or PRs. ❌ Never edit code or tests.
 - ❌ Never pass an item on trust — re-verify it and cite the evidence.
 - ❌ Never accept a 0-byte or wiped `review*.md`, a `mutation.md` PASS built on
-  rewritten survivors or an invented waiver, or a score propped up by error mutants.
+  rewritten survivors or an invented waiver, or a score propped up by error mutants
+  **or by reading only the covered-code number**.
+- ❌ Never pass a `patches/` file or a `patchedDependencies` entry that `review.md`
+  does not mention.
 - ✅ Every checkbox carries concrete evidence. ✅ One reference line back.

@@ -2,7 +2,7 @@
 # sao itself, in four phases:
 #
 #   0  bootstrap + user story    seed the docs, grill the request into a story
-#   1  spec                      grill → bundle → automated review → ONE human approval
+#   1  spec                      grill → bundle → automated review → the one spec sign-off
 #   2  build                     one vertical slice per iteration, reviewed each time
 #   3  quality                   full review (≤ 2 rounds) → mutation (≤ 2 rounds)
 #   4  DoD                       validate → close gaps → PR prep
@@ -10,19 +10,19 @@
 #   sao run workflows/sao-features-orchestrator/sao-features-orchestrator.yaml \
 #       --var feature=<kebab-name> "the feature request, in prose"
 #
-# There is no separate harness: sao cuts the worktree and branch, state.json tracks
-# the phase, and a loop hitting max_iterations halts the run — that halt IS the
-# escalation, resumable with `sao resume`. See ./README.md for the agents and the
-# scripts every bash node calls.
+# There is no separate harness: HEAD (or `--base`) cuts the worktree, state.json
+# tracks the phase, and a loop hitting max_iterations halts the run — that halt IS
+# the escalation, resumable with `sao resume`. See ./README.md for the agents and
+# the scripts every bash node calls.
 #
 # Repo facts baked in (sao — TypeScript, Bun toolchain, single package):
-#   there is no linter — CI is `bun run typecheck` + `bun test` (+ `bun run build`
-#   in the full review, which is what proves the Node target still compiles);
+#   there is no linter — CI is `bun run typecheck` + `test:orchestrator[:ci]` (+
+#   `bun run build` in the full review, which proves the Node target still compiles);
 #   production source is src/ and tests are tests/, so "did the fix touch source?"
 #   is a plain `git diff -- src` question; mutation is StrykerJS via stryker.conf.mjs.
 
 name: sao-features-orchestrator
-description: One feature request to a validated, PR-ready sao feature with a single human approval
+description: One feature request to a validated, PR-ready sao feature with one human sign-off on the spec
 
 # No `base:` on purpose — the run is cut from the current HEAD, so the worktree
 # always contains the branch you are standing on, including this pipeline itself
@@ -37,34 +37,58 @@ inputs:
 
 defaults:
   runner: claude
-  # models come from each agent's frontmatter (opus/sonnet/haiku)
+# Models come from each agent's frontmatter (opus/sonnet/haiku).
   #
-  # bypassPermissions, not acceptEdits: `claude -p` is headless, so anything that
-  # "requires approval" is auto-denied — there is no human on the other end. Under
-  # acceptEdits, file edits are fine and non-network Bash (`bun test`) runs inside
-  # the sandbox, but a command that must leave it — `bun add`, `npm view`, `curl` —
-  # is denied, which is what blocked an implementer mid-slice on a spec-approved
-  # new dependency.
+  # acceptEdits for every agent, no exceptions. `claude -p` is headless, so anything
+  # Claude Code marks "requires approval" is auto-denied — no human is on the other
+  # end. File edits and non-network Bash (`bun test`) are fine here, but a command
+  # that must leave the sandbox (`bun add`, `npm view`, `curl`) is denied, which is
+  # what blocked an implementer mid-slice on a spec-approved new dependency.
   #
-  # The containment here is the run's own git worktree and branch: the agents
-  # cannot touch your checkout, and you review the diff before merging. Note this
-  # does mean the agents run any command without asking, network included. To
-  # narrow it, drop this back to acceptEdits and put
-  # `permission_mode: bypassPermissions` in agents/implementer.md's frontmatter
-  # instead (node > agent > defaults), so only the agent that installs
-  # dependencies gets it.
-  permission_mode: bypassPermissions
+  # Only the implementer installs dependencies, so only it gets an escape hatch —
+  # and as a targeted `allowed_tools` allow-list in its own frontmatter, never
+  # `bypassPermissions`. Reviewers, the mutation reporter and the DoD validator
+  # carry no grant beyond the two web tools below.
+  permission_mode: acceptEdits
+
+  # WebSearch is permission-gated, so headless `claude -p` auto-denies it unless it
+  # is allow-listed here. WebFetch rides along so an agent can actually read what a
+  # search turns up. --allowedTools is ADDITIVE to permission_mode: listing a tool
+  # pre-approves it, it does not restrict the agent to only that list.
+  #
+  # ⚠ This cascade is OVERRIDE, NOT MERGE (engine.ts uses `??`, first non-nullish
+  # wins). Any agent that declares its own allowed_tools loses this default
+  # silently — so agents/implementer.md repeats both entries in its list. Add an
+  # entry here and you must add it there too.
+  allowed_tools: [WebSearch, WebFetch]
 
 nodes:
   # ── Phase 0 — bootstrap (sao already cut the worktree from {{base}}) ──────────
-  # The request goes in over a quoted heredoc rather than argv: it is freeform
-  # human text, and interpolation is raw substitution — the workflow author owns
-  # that boundary (SPEC.md §Templating).
+  # {{feature}} and {{task}} both go in through a heredoc, captured into a shell
+  # variable with `read`, and are NEVER spliced directly into quoted script text
+  # (`"{{feature}}"`) — interpolation is raw substitution (SPEC.md §Templating),
+  # so a value containing `"` would otherwise break out of that quoting before
+  # this script's own validation (_lib.sh's require_feature) ever runs. A heredoc
+  # body is never re-parsed as shell syntax, so this holds regardless of what
+  # characters the value contains; `"$feature"` then expands as one literal word
+  # wherever it's used. Every other node below that touches {{feature}} in a
+  # bash/when_bash script repeats this same read-heredoc preamble.
+  #
+  # Both delimiters carry {{run_id}} (safe — state.ts sanitizes it to
+  # [a-zA-Z0-9_-]) so a value that happens to contain a line matching a FIXED
+  # delimiter can't close the heredoc early and run the rest as shell: run_id
+  # doesn't exist until this run starts, after {{feature}}/{{task}} are already
+  # fixed on the CLI, so it can't be predicted or matched in advance. This
+  # narrows the risk, it doesn't eliminate it for an attacker who also controls
+  # run timing and has read this file — known residual, see KNOWN-ISSUES.md.
   - id: bootstrap
     bash: |
-      workflows/sao-features-orchestrator/scripts/bootstrap.sh "{{feature}}" <<'SAO_REQUEST_EOF'
+      read -r feature <<'SAO_FEATURE_EOF_{{run_id}}'
+      {{feature}}
+      SAO_FEATURE_EOF_{{run_id}}
+      workflows/sao-features-orchestrator/scripts/bootstrap.sh "$feature" <<'SAO_REQUEST_EOF_{{run_id}}'
       {{task}}
-      SAO_REQUEST_EOF
+      SAO_REQUEST_EOF_{{run_id}}
 
   # ── Phase 0b — turn the raw request into a structured user story ──────────────
   # Serialized after bootstrap on purpose: this node grills the human on stdin, and
@@ -126,20 +150,27 @@ nodes:
 
   - id: commit-spec
     depends_on: [approve-spec]
-    bash: 'workflows/sao-features-orchestrator/scripts/commit-spec.sh "{{feature}}"'
+    bash: | # {{feature}} via heredoc, never a quoted arg — see bootstrap's node
+      read -r feature <<'SAO_FEATURE_EOF_{{run_id}}'
+      {{feature}}
+      SAO_FEATURE_EOF_{{run_id}}
+      workflows/sao-features-orchestrator/scripts/commit-spec.sh "$feature"
 
   # ── Phase 2 — build, one vertical slice per iteration, light review each ─────
+  # {{loop.iteration}} IS the slice number: one slice per iteration (never more
+  # than one; see agents/implementer.md §Modes), so every step below tags its
+  # invocation with the same N — that N is what names tdd-N.md/review-slice-N.md.
   - id: build-slices
     depends_on: [commit-spec]
     loop:
       steps:
         - agent: ./agents/implementer.md
-          prompt: "Feature: {{feature}}. Mode: build-slice."
+          prompt: "Feature: {{feature}}. Mode: build-slice. Slice: {{loop.iteration}}."
         - bash: "workflows/sao-features-orchestrator/scripts/slice-gate.sh"
         - agent: ./agents/reviewer_slice.md
-          prompt: "Feature: {{feature}}. Mode: review-slice."
+          prompt: "Feature: {{feature}}. Mode: review-slice. Slice: {{loop.iteration}}."
         - agent: ./agents/implementer.md
-          prompt: "Feature: {{feature}}. Mode: fix-slice-findings."
+          prompt: "Feature: {{feature}}. Mode: fix-slice-findings. Slice: {{loop.iteration}}."
       until: ALL_SLICES_COMPLETE
       max_iterations: 8 # cap = escalation; resume after human intervention
 
@@ -161,7 +192,11 @@ nodes:
   # ── Phase 3b — mutation, ≤ 2 rounds, escalate-only (never a faked PASS) ──────
   - id: mutation-baseline
     depends_on: [full-review]
-    bash: 'workflows/sao-features-orchestrator/scripts/mutation-baseline.sh "{{feature}}"'
+    bash: | # {{feature}} via heredoc, never a quoted arg — see bootstrap's node
+      read -r feature <<'SAO_FEATURE_EOF_{{run_id}}'
+      {{feature}}
+      SAO_FEATURE_EOF_{{run_id}}
+      workflows/sao-features-orchestrator/scripts/mutation-baseline.sh "$feature"
 
   - id: mutation
     depends_on: [mutation-baseline]
@@ -169,7 +204,12 @@ nodes:
       steps:
         # Scoped to the changed src/ files vs $SAO_BASE_REF; the script's header
         # documents why --force and the hand-re-applied cli.ts exclusion matter.
-        - bash: 'workflows/sao-features-orchestrator/scripts/run-mutation.sh "{{feature}}"'
+        # {{feature}} via heredoc, never a quoted arg — see bootstrap's node.
+        - bash: |
+            read -r feature <<'SAO_FEATURE_EOF_{{run_id}}'
+            {{feature}}
+            SAO_FEATURE_EOF_{{run_id}}
+            workflows/sao-features-orchestrator/scripts/run-mutation.sh "$feature"
         - agent: ./agents/mutation_tester.md
           prompt: "Feature: {{feature}}. Mode: report."
         - agent: ./agents/implementer.md
@@ -183,7 +223,11 @@ nodes:
   # 2-round cap as a halt — resume it with `sao resume` after looking at the delta.
   - id: post-mutation-review
     depends_on: [mutation]
-    when_bash: 'workflows/sao-features-orchestrator/scripts/mutation-touched-source.sh "{{feature}}"'
+    when_bash: | # {{feature}} via heredoc, never a quoted arg — see bootstrap's node
+      read -r feature <<'SAO_FEATURE_EOF_{{run_id}}'
+      {{feature}}
+      SAO_FEATURE_EOF_{{run_id}}
+      workflows/sao-features-orchestrator/scripts/mutation-touched-source.sh "$feature"
     loop:
       steps:
         - bash: "workflows/sao-features-orchestrator/scripts/review-ci.sh"
@@ -209,4 +253,8 @@ nodes:
   # ── PR prep — guard the durable trail, commit the phase-3/4 artifacts ────────
   - id: finalize
     depends_on: [dod]
-    bash: 'workflows/sao-features-orchestrator/scripts/finalize.sh "{{feature}}"'
+    bash: | # {{feature}} via heredoc, never a quoted arg — see bootstrap's node
+      read -r feature <<'SAO_FEATURE_EOF_{{run_id}}'
+      {{feature}}
+      SAO_FEATURE_EOF_{{run_id}}
+      workflows/sao-features-orchestrator/scripts/finalize.sh "$feature"

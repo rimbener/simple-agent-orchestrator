@@ -29,9 +29,15 @@ base="${2:-${SAO_BASE_REF:-}}"
 mkdir -p "tmp/$feature"
 log="tmp/$feature/stryker.log"
 
+# git diff's own failure (bad $base, repo error) must halt loudly — it must never
+# collapse into the same empty string as "genuinely no changed files" below.
+diff_files="$(git diff --name-only "$base"...HEAD -- src)" \
+  || die "git diff against base '$base' failed — bad ref or repo error"
+
 # `|| true`: a no-match grep exits 1, which set -e would turn into a script
-# failure instead of the NO_CHANGED_SOURCE branch below.
-changed="$(git diff --name-only "$base"...HEAD -- src \
+# failure instead of the NO_CHANGED_SOURCE branch below. git diff's own failure is
+# already caught above, so this can only be swallowing a genuine empty match.
+changed="$(printf '%s\n' "$diff_files" \
   | grep -E '\.ts$' \
   | grep -v '^src/cli\.ts$' \
   | paste -sd, - || true)"

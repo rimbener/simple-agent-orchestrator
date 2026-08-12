@@ -36,6 +36,8 @@
   "scripts": {
     "dev": "bun run src/cli.ts",
     "test": "bun test",
+    "test:orchestrator": "bun test --only-failures",
+    "test:orchestrator:ci": "bun test --only-failures --rerun-each=2",
     "test:coverage": "bun test --coverage",
     "test:mutation": "stryker run",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json",

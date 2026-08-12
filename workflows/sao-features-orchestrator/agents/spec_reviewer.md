@@ -22,7 +22,7 @@ finding; there is no re-review pass.
 
 ## Protocol
 
-1. Read `docs/features/<feature>/story.md`, `SPEC.md` (binding), `README.md`, and the
+1. Read `docs/features/<feature>/user-story.md`, `SPEC.md` (binding), `README.md`, and the
    bundle: `spec.md`, `tasks.md`, `task-1..N.md`, `gherkin-scenarios.md`.
 2. Check:
 
@@ -32,10 +32,16 @@ finding; there is no re-review pass.
    flag restated acceptance criteria (→ `gherkin-scenarios.md`) or task/file detail
    (→ `task-N.md`) as findings to move or trim.
 
-   **Fit with the repo's locked design** — the highest-value check here:
-   - Does anything collide with a **`SPEC.md` non-goal or locked decision** (web
-     UI, database, plugin loading, expression-language conditionals, MCP hosting,
-     nested workflows, scheduling, bundled workflows)? A collision that is not an
+   **Fit with the repo's locked design** — the highest-value check here. Read
+   `SPEC.md`'s `Decisions (locked)` table and any decision stated inline (e.g. "not
+   a host", "no dynamic plugin loading") as the **current** source of truth — never
+   a fixed list memorized in this file. `SPEC.md` is amended over time (a non-goal
+   can be dropped, or something new can be locked), and a stale list turns into a
+   false blocker against something `SPEC.md` no longer forbids, or misses something
+   it newly does.
+   - Does anything collide with a decision `SPEC.md` **currently** locks (as of the
+     bundle under review — e.g. no database, MCP pass-through not a host, no
+     dynamic plugin loading, pure CLI interface)? A collision that is not an
      **explicit, recorded human decision** in `spec.md` is a **blocker**.
    - Any **new runtime dependency** beyond `commander` / `yaml` / `zod` /
      `picocolors` + node builtins, without a recorded human decision → **blocker**.

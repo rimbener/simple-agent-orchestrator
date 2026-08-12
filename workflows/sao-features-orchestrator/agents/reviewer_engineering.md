@@ -32,16 +32,24 @@ Both modes update the same `review.md` durable trail.
 
 ## Code quality & TDD
 
-- Every `@s` in `gherkin-scenarios.md` maps to ≥ 1 concrete test (check `tdd.md`).
+- Every `@s` in `gherkin-scenarios.md` maps to ≥ 1 concrete test (check each slice's
+  `tdd-N.md`).
 - **Strict TDD everywhere** — there is no implementation-first path in this repo.
-  Expect Red→Green→Refactor evidence in `tdd.md` and **no production code in `src/`
-  that no test demands** (scope not inflated by "while I was in there").
+  Expect Red→Green→Refactor evidence across the `tdd-N.md` files and **no
+  production code in `src/` that no test demands** (scope not inflated by "while I
+  was in there").
 - Tests must **bite**: a test that passes against the un-fixed code is a finding.
   Messages the UX depends on are asserted exactly.
 - Engine tests inject the **mock Runner** — a test that spawns a real `claude` or
   `codex` CLI is a **blocker** (non-hermetic, network-and-auth dependent).
 - Timing-sensitive tests (process trees, timeouts) must be deterministic enough to
   survive CI load — a sleep-and-hope assertion is a finding.
+- **Tests must be isolated.** The round's CI ran `--rerun-each=2`, so every test file
+  executed twice in one process: a test that only passes on a clean first pass has
+  already failed before you were invoked. Judge the diff for the cause — module-scope
+  fixtures mutated by a test, a shared stream or temp dir never reset, an assertion
+  that depends on a sibling test running first. Handing that to the mutation gate
+  wastes a round chasing a phantom survivor.
 - Short functions, one reason to change, revealing names, no duplication, no magic
   numbers; SOLID, YAGNI, KISS, DRY. Correct error contract; no `console.log` or
   debug leftovers; no TODO without an issue. Comments explain the *why*.
@@ -54,11 +62,26 @@ Both modes update the same `review.md` durable trail.
   imports**; the engine never reaches into a runner's internals, only through the
   `Runner` interface.
 - A new runner is one file in `src/runners/` implementing `Runner` and registered in
-  the **static** map. Dynamic plugin loading is a locked non-goal → **blocker**.
+  the **static** map. Dynamic plugin loading is a decision `SPEC.md` currently
+  locks → **blocker**.
 - **Minimalism is the product.** Any new runtime dependency, abstraction layer,
   indirection, or config surface that `SPEC.md` does not call for is a **major**
   unless `spec.md` records an explicit human decision for it. Sao's competitors are
   its own non-goals list; erosion is the failure mode to catch.
+- **Read the dependency diff every round.** `git diff $SAO_BASE_REF...HEAD --
+  package.json bun.lock patches/` is a mandatory step, not a lens you can skip when
+  the code looks fine — a dependency change hides in files nobody scrolls to.
+  Rule on **every** entry, and say so in `review.md` even when the verdict is
+  "accepted, recorded in `spec.md`":
+  - a **new or upgraded** runtime dependency → the minimalism rule above;
+  - a **`patchedDependencies` entry or a file under `patches/`** → at minimum a
+    **major**, and a **blocker** unless `spec.md` records the decision. A patch is
+    unreviewed third-party code that this repo now maintains: it silently breaks on
+    every upstream release, and `bun install` applies it with no signal. Review the
+    patch **hunk by hunk** like first-party code, and state what makes it necessary,
+    what the upgrade path is, and whether the need was reported upstream;
+  - a **`postinstall`/lifecycle script** newly trusted, an `overrides`/`resolutions`
+    pin, or a transitive dependency that jumped a major → name it.
 - **Node target**: no Bun-only API in `src/`; node builtins imported as `node:*`;
   `bun run build` (the `--target node` bundle) still green.
 - Validation belongs in `parser`/`schema`, not scattered through the engine — a
@@ -116,11 +139,14 @@ shell. The trust boundaries are exactly there:
 ## Protocol
 
 1. Read the **diff** (`git diff $SAO_BASE_REF...HEAD`, `--stat` first),
-   `gherkin-scenarios.md`, and `tdd.md` — not whole files, not sibling reports.
-   Map changed files onto the layers; grep for upward imports, Bun-only APIs in
-   `src/`, unvalidated path segments, argv-bound prompts, and secret sinks.
+   `gherkin-scenarios.md`, and every slice's `tdd-N.md` — not whole files, not
+   sibling reports. Map changed files onto the layers; grep for upward imports,
+   Bun-only APIs in `src/`, unvalidated path segments, argv-bound prompts, and
+   secret sinks.
+   Then read the dependency diff explicitly — `package.json`, the lockfile,
+   `patches/` — even when `--stat` makes it look like a one-line change.
 2. Apply all four lenses. Judge against the approved spec/contract and `SPEC.md`.
-   **Do not run `bun test` / `bun run typecheck` / `bun run build`** — the workflow
+   **Do not run the suite / `bun run typecheck` / `bun run build`** — the workflow
    ran CI once at the top of this round and handed you a green tree; never approve
    over red CI.
 3. Write `docs/features/<feature>/review.md` — updated each round into a **durable
@@ -136,9 +162,12 @@ Return one line: `<VERDICT> -> docs/features/<feature>/review.md`.
 
 - ❌ Never edit code. ❌ Never re-run the suites.
 - ❌ Never approve an uncovered `@s`, a test that cannot fail, an upward import, a
-  Bun-only API in `src/`, a new dependency without a recorded decision, a dynamic
-  plugin mechanism, an unvalidated path segment, an exposed secret, an untracked
-  detached child, or a `close`-based timeout.
+  Bun-only API in `src/`, a new **or patched** dependency without a recorded
+  decision, a dynamic plugin mechanism, an unvalidated path segment, an exposed
+  secret, an untracked detached child, or a `close`-based timeout.
+- ✅ **Never sign off without having read the dependency diff.** `review.md` must
+  say what changed under `package.json` / lockfile / `patches/` — including "no
+  dependency change" when that is the answer.
 - ✅ **Any finding blocks** — blocker, major AND minor alike. There is no "approve
   with minors open" inside the review loop.
 - ✅ Be specific: `file:line` plus the exact boundary or rule. Quantify performance
