@@ -3,7 +3,13 @@ import { chmodSync, existsSync, mkdtempSync, realpathSync, writeFileSync } from 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SaoError } from "../src/errors";
-import { buildCodexArgs, CodexStreamCollector, codexRunner, composeCodexPrompt, ignoredCodexSettings } from "../src/runners/codex";
+import {
+  buildCodexArgs,
+  CodexStreamCollector,
+  codexRunner,
+  composeCodexPrompt,
+  ignoredCodexSettings,
+} from "../src/runners/codex";
 
 /** Await a promise that must reject; returns the rejection error. */
 async function rejectionOf(promise: Promise<unknown>): Promise<SaoError> {
@@ -17,7 +23,13 @@ async function rejectionOf(promise: Promise<unknown>): Promise<SaoError> {
 
 describe("buildCodexArgs", () => {
   test("minimal request: exec --json, workspace-write sandbox, stdin sentinel LAST", () => {
-    expect(buildCodexArgs({ prompt: "hi", cwd: "/tmp" })).toEqual(["exec", "--json", "--sandbox", "workspace-write", "-"]);
+    expect(buildCodexArgs({ prompt: "hi", cwd: "/tmp" })).toEqual([
+      "exec",
+      "--json",
+      "--sandbox",
+      "workspace-write",
+      "-",
+    ]);
   });
 
   test("never puts the prompt on argv — the trailing '-' reads it from stdin", () => {
@@ -143,7 +155,9 @@ describe("CodexStreamCollector", () => {
     expect(failed.turnEnded).toBe(true);
 
     const mid = new CodexStreamCollector();
-    mid.push('{"type":"error","message":"transient"}\n{"type":"item.completed","item":{"type":"agent_message","text":"t"}}\n');
+    mid.push(
+      '{"type":"error","message":"transient"}\n{"type":"item.completed","item":{"type":"agent_message","text":"t"}}\n',
+    );
     expect(mid.turnEnded).toBe(false);
   });
 
@@ -303,7 +317,9 @@ printf '{"type":"item.completed","item":{"type":"agent_message","text":"%s %s"}}
     try {
       const err = await rejectionOf(codexRunner.run({ prompt: "p", cwd: process.cwd() }));
       expect(err.message).toBe("codex exited without emitting an agent message");
-      expect(err.hint).toBe("the --json event stream ended before an agent_message item; codex's stderr and error events are in the node log");
+      expect(err.hint).toBe(
+        "the --json event stream ended before an agent_message item; codex's stderr and error events are in the node log",
+      );
     } finally {
       restore();
     }
@@ -318,7 +334,9 @@ exit 0
 `);
     try {
       const chunks: string[] = [];
-      const err = await rejectionOf(codexRunner.run({ prompt: "p", cwd: process.cwd(), onOutput: (c) => chunks.push(c) }));
+      const err = await rejectionOf(
+        codexRunner.run({ prompt: "p", cwd: process.cwd(), onOutput: (c) => chunks.push(c) }),
+      );
       expect(err.message).toBe("codex reported an error");
       expect(err.hint).toBe("model quota exhausted");
       expect(chunks).toContain("model quota exhausted\n"); // failure detail reaches the node log

@@ -125,7 +125,10 @@ export const workflowTopSchema = z
   .object({
     name: z
       .string()
-      .regex(NODE_ID_PATTERN, "workflow name must start with a letter and use only letters, digits, - or _ (it becomes part of run ids and paths)"),
+      .regex(
+        NODE_ID_PATTERN,
+        "workflow name must start with a letter and use only letters, digits, - or _ (it becomes part of run ids and paths)",
+      ),
     description: z.string().optional(),
     base: settingSchema, // ref the run worktree/branch is cut from (--base wins; default: current HEAD)
     mcp: mcpSchema.optional(),

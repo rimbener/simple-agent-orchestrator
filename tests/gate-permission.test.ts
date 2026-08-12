@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { runAcpTurn } from "../src/acp";
 import type { AcpLaunch } from "../src/acp";
+import { runAcpTurn } from "../src/acp";
 import type { PromptUser } from "../src/gate";
 
 /**

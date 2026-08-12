@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createRun, createRunId, findRepoRoot, hashFile, initRunDir, saveState, type RunState } from "../src/state";
+import { createRun, createRunId, findRepoRoot, hashFile, initRunDir, type RunState, saveState } from "../src/state";
 
 const temp = () => mkdtempSync(join(tmpdir(), "sao-state-"));
 

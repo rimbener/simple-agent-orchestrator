@@ -20,14 +20,20 @@ function git(args: string[], cwd: string, env?: Record<string, string>, timeoutM
   const result = spawnSync("git", args, { cwd, encoding: "utf8", env: { ...process.env, ...env }, timeout: timeoutMs });
   // Stryker disable next-line ConditionalExpression: forcing the flavor check true is test-equivalent — a black-holed remote (ETIMEDOUT) is the only result.error any in-process test can stage; the unspawnable-git flavors below are not fabricatable
   if (result.error && (result.error as NodeJS.ErrnoException).code === "ETIMEDOUT") {
-    throw new SaoError(`git ${args[0]} timed out after ${timeoutMs}ms`, "the remote did not respond — check the network, then retry");
+    throw new SaoError(
+      `git ${args[0]} timed out after ${timeoutMs}ms`,
+      "the remote did not respond — check the network, then retry",
+    );
   }
   // Stryker disable all: result.error means git itself could not be spawned (not
   // installed, or the cwd vanished). Bun resolves executables outside process.env.PATH,
   // so no in-process test can fabricate a missing git; the cwd-vanished flavor is
   // covered only through worktreeHasChanges' conservative catch.
   if (result.error) {
-    throw new SaoError(`failed to run git: ${result.error.message}`, "worktree isolation needs git on PATH (--no-worktree skips it)");
+    throw new SaoError(
+      `failed to run git: ${result.error.message}`,
+      "worktree isolation needs git on PATH (--no-worktree skips it)",
+    );
   }
   // The ?? fallbacks fire only on that same unspawnable-git path (null status when
   // killed by a signal, null streams on spawn failure) — callers see zero vs
@@ -47,7 +53,10 @@ export function requireGitRepo(root: string): void {
   const res = git(["rev-parse", "--is-inside-work-tree"], root);
   // Stryker disable next-line ConditionalExpression: dropping the exit-code clause is equivalent — a failing rev-parse prints nothing, so the stdout clause catches it; kept for clarity
   if (res.code !== 0 || res.stdout.trim() !== "true") {
-    throw new SaoError("not a git repository — worktree isolation needs one", "run inside a git repo, or pass --no-worktree to run in place");
+    throw new SaoError(
+      "not a git repository — worktree isolation needs one",
+      "run inside a git repo, or pass --no-worktree to run in place",
+    );
   }
 }
 
@@ -55,7 +64,10 @@ export function requireGitRepo(root: string): void {
 export function resolveHead(root: string): string {
   const res = git(["rev-parse", "--verify", "HEAD^{commit}"], root);
   if (res.code !== 0) {
-    throw new SaoError("cannot resolve HEAD — does the repository have any commits?", "commit something first, or pass --no-worktree to run in place");
+    throw new SaoError(
+      "cannot resolve HEAD — does the repository have any commits?",
+      "commit something first, or pass --no-worktree to run in place",
+    );
   }
   return res.stdout.trim();
 }
@@ -82,12 +94,18 @@ export function verifyBaseRef(root: string, ref: string): void {
  */
 export function validateBranchName(root: string, branch: string): void {
   if (branch.startsWith("-")) {
-    throw new SaoError(`invalid branch name: ${branch}`, "branch names cannot start with '-' (git would parse it as an option)");
+    throw new SaoError(
+      `invalid branch name: ${branch}`,
+      "branch names cannot start with '-' (git would parse it as an option)",
+    );
   }
   // check-ref-format ACCEPTS "+x", but to `git push` a leading '+' means force —
   // a branch named "+main" would silently force-push over origin/main.
   if (branch.startsWith("+")) {
-    throw new SaoError(`invalid branch name: ${branch}`, "branch names cannot start with '+' (git push would read it as a force refspec)");
+    throw new SaoError(
+      `invalid branch name: ${branch}`,
+      "branch names cannot start with '+' (git push would read it as a force refspec)",
+    );
   }
   const res = git(["check-ref-format", `refs/heads/${branch}`], root);
   if (res.code !== 0) {
@@ -99,7 +117,10 @@ export function validateBranchName(root: string, branch: string): void {
 export function verifyBranchIsNew(root: string, branch: string): void {
   const res = git(["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`], root);
   if (res.code === 0) {
-    throw new SaoError(`branch already exists: ${branch}`, "pick another --branch name, or delete the existing branch first");
+    throw new SaoError(
+      `branch already exists: ${branch}`,
+      "pick another --branch name, or delete the existing branch first",
+    );
   }
 }
 
@@ -281,19 +302,29 @@ export function createDraftPr(
   });
   // Stryker disable next-line ConditionalExpression: forcing the flavor check true is test-equivalent — a hung stub (ETIMEDOUT) is the only result.error any in-process test can stage; unspawnable-gh flavors are not fabricatable
   if (result.error && (result.error as NodeJS.ErrnoException).code === "ETIMEDOUT") {
-    throw new SaoError(`gh pr create timed out after ${timeoutMs}ms`, "GitHub did not respond — open the PR manually with: gh pr create");
+    throw new SaoError(
+      `gh pr create timed out after ${timeoutMs}ms`,
+      "GitHub did not respond — open the PR manually with: gh pr create",
+    );
   }
   // Stryker disable all: result.error means gh itself could not be spawned. Bun falls
   // back to system paths when the mutated PATH misses, so no in-process test can
   // fabricate a missing gh (same reasoning as git() above).
   if (result.error) {
-    throw new SaoError(`failed to run gh: ${result.error.message}`, "install the GitHub CLI: https://cli.github.com (or drop --auto-open-pr)");
+    throw new SaoError(
+      `failed to run gh: ${result.error.message}`,
+      "install the GitHub CLI: https://cli.github.com (or drop --auto-open-pr)",
+    );
   }
   // Stryker restore all — placed after the brace: a restore that is the last line
   // inside a block attaches to nothing and silently disables the rest of the file.
   if (result.status !== 0) {
     // Stryker disable next-line all: the ?? fallbacks fire only when gh is killed by a signal (null status/streams) — not stageable deterministically, and every substitute value still lands in the same thrown error
-    throw gitFailure("gh pr create failed", { code: result.status ?? 1, stdout: result.stdout ?? "", stderr: result.stderr ?? "" }, "is gh authenticated (gh auth status), and does the repo have an 'origin' on GitHub?");
+    throw gitFailure(
+      "gh pr create failed",
+      { code: result.status ?? 1, stdout: result.stdout ?? "", stderr: result.stderr ?? "" },
+      "is gh authenticated (gh auth status), and does the repo have an 'origin' on GitHub?",
+    );
   }
   // gh prints the PR URL on stdout, possibly among notices — take the last line that
   // IS a URL, and treat none as a failure (the engine then falls back to the manual
@@ -302,7 +333,10 @@ export function createDraftPr(
   const lines = (result.stdout ?? "").split("\n").map((line) => line.trim());
   const url = lines.filter((line) => /^https?:\/\//.test(line)).pop();
   if (url === undefined) {
-    throw new SaoError("gh pr create printed no PR URL", truncateDetail(result.stdout) ?? "open the PR manually with: gh pr create");
+    throw new SaoError(
+      "gh pr create printed no PR URL",
+      truncateDetail(result.stdout) ?? "open the PR manually with: gh pr create",
+    );
   }
   return url;
 }

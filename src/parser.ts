@@ -7,19 +7,19 @@ import { SaoError } from "./errors";
 import {
   type AiNode,
   type AiStep,
-  type BashNode,
-  type BashStep,
-  type GateNode,
-  type LoopNode,
-  type LoopStep,
-  type Workflow,
-  type WorkflowNode,
   aiNodeSchema,
   aiStepSchema,
+  type BashNode,
+  type BashStep,
   bashNodeSchema,
   bashStepSchema,
+  type GateNode,
   gateNodeSchema,
+  type LoopNode,
+  type LoopStep,
   loopNodeSchema,
+  type Workflow,
+  type WorkflowNode,
   workflowTopSchema,
 } from "./schema";
 import { collectRefs, isLoopRef, isMetaRef, nodeOutputRef } from "./template";
@@ -50,7 +50,7 @@ export function loadWorkflow(path: string, opts: LoadWorkflowOptions = {}): Work
     throw new SaoError(`${path} must be a YAML mapping with name: and nodes:`);
   }
 
-  let top;
+  let top: ReturnType<typeof workflowTopSchema.parse>;
   try {
     top = workflowTopSchema.parse(doc);
   } catch (err) {
@@ -70,7 +70,10 @@ export function loadWorkflow(path: string, opts: LoadWorkflowOptions = {}): Work
       // Stryker disable next-line StringLiteral: mutating "utf8" to "" yields a Buffer, which JSON.parse coerces via toString() (utf8) to the identical text
       mcpRaw = readFileSync(mcpConfigPath, "utf8"); // also rejects directories (EISDIR)
     } catch {
-      throw new SaoError(`mcp: config file not found: ${mcpConfigPath}`, "the path is resolved relative to the workflow file");
+      throw new SaoError(
+        `mcp: config file not found: ${mcpConfigPath}`,
+        "the path is resolved relative to the workflow file",
+      );
     }
     let parsedMcp: unknown;
     try {
@@ -86,7 +89,10 @@ export function loadWorkflow(path: string, opts: LoadWorkflowOptions = {}): Work
     try {
       JSON.stringify(top.mcp); // validate-and-run must agree: the engine serializes this at run time
     } catch {
-      throw new SaoError("mcp: inline servers must be JSON-serializable", "YAML aliases that form cycles cannot be forwarded to the runner");
+      throw new SaoError(
+        "mcp: inline servers must be JSON-serializable",
+        "YAML aliases that form cycles cannot be forwarded to the runner",
+      );
     }
     mcpServers = top.mcp;
   }
@@ -113,7 +119,7 @@ function classifyNode(raw: unknown, index: number): WorkflowNode {
       ? `node "${(raw as { id: string }).id}"`
       : `node #${index + 1}`;
 
-  if (raw === null || typeof raw === "object" === false || Array.isArray(raw)) {
+  if (raw === null || (typeof raw === "object") === false || Array.isArray(raw)) {
     throw new SaoError(`${label()} must be a mapping`);
   }
   const record = raw as Record<string, unknown>;
@@ -274,7 +280,9 @@ function checkTemplateRefs(
     if (ref === "task") continue;
     if (isLoopRef(ref)) {
       if (!inLoopBody) {
-        throw new SaoError(`node "${node.id}": {{${ref}}} is only available inside a loop's prompt, steps, or until_bash`);
+        throw new SaoError(
+          `node "${node.id}": {{${ref}}} is only available inside a loop's prompt, steps, or until_bash`,
+        );
       }
       continue;
     }

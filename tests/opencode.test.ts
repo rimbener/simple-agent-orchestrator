@@ -2,14 +2,14 @@ import { describe, expect, test } from "bun:test";
 import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SaoError } from "../src/errors";
 import { runWorkflow } from "../src/engine";
+import { SaoError } from "../src/errors";
 import { loadWorkflow } from "../src/parser";
 import { opencodeRunner } from "../src/runners/opencode";
 import { getRunner } from "../src/runners/types";
 
 /** Await a promise that must reject; returns the rejection error. */
-async function rejectionOf(promise: void | Promise<unknown>): Promise<SaoError> {
+async function rejectionOf(promise: unknown): Promise<SaoError> {
   try {
     await promise;
   } catch (err) {
@@ -122,7 +122,9 @@ describe("opencodeRunner", () => {
       expect(err).toBeInstanceOf(SaoError);
       expect(err.message).toContain("opencode");
       expect(err.message).toContain("session");
-      expect(err.hint).toBe("fresh_context: false requires session resume — drop fresh_context, or use a runner/agent version that supports it");
+      expect(err.hint).toBe(
+        "fresh_context: false requires session resume — drop fresh_context, or use a runner/agent version that supports it",
+      );
     } finally {
       restore();
     }
@@ -155,7 +157,9 @@ describe("opencodeRunner", () => {
       expect(err).toBeInstanceOf(SaoError);
       expect(err.message).toContain("opencode");
       expect(err.message).toContain("http");
-      expect(err.hint).toBe("the workflow's mcp: block declares a http server — drop it, or use a runner/agent version that supports it");
+      expect(err.hint).toBe(
+        "the workflow's mcp: block declares a http server — drop it, or use a runner/agent version that supports it",
+      );
     } finally {
       restore();
     }
@@ -164,7 +168,9 @@ describe("opencodeRunner", () => {
   test("preflight passes when the handshake advertises the needed MCP transport", async () => {
     const restore = withStubOpencode({ agentCapabilities: { mcpCapabilities: { http: true } } });
     try {
-      await expect(opencodeRunner.preflight!({ needsSessionResume: false, mcpTransports: ["http"] })).resolves.toBeUndefined();
+      await expect(
+        opencodeRunner.preflight!({ needsSessionResume: false, mcpTransports: ["http"] }),
+      ).resolves.toBeUndefined();
     } finally {
       restore();
     }
@@ -176,7 +182,9 @@ describe("opencodeRunner", () => {
       const err = await rejectionOf(opencodeRunner.preflight!({ needsSessionResume: false, mcpTransports: ["sse"] }));
       expect(err).toBeInstanceOf(SaoError);
       expect(err.message).toContain("sse");
-      expect(err.hint).toBe("the workflow's mcp: block declares a sse server — drop it, or use a runner/agent version that supports it");
+      expect(err.hint).toBe(
+        "the workflow's mcp: block declares a sse server — drop it, or use a runner/agent version that supports it",
+      );
     } finally {
       restore();
     }
@@ -185,7 +193,9 @@ describe("opencodeRunner", () => {
   test("preflight passes when the handshake advertises sse but not http, and sse is what's needed", async () => {
     const restore = withStubOpencode({ agentCapabilities: { mcpCapabilities: { sse: true } } });
     try {
-      await expect(opencodeRunner.preflight!({ needsSessionResume: false, mcpTransports: ["sse"] })).resolves.toBeUndefined();
+      await expect(
+        opencodeRunner.preflight!({ needsSessionResume: false, mcpTransports: ["sse"] }),
+      ).resolves.toBeUndefined();
     } finally {
       restore();
     }
@@ -271,7 +281,11 @@ nodes:
   test("@s-opencode-agent-system-prompt: the agent file body reaches the ACP agent as the system prompt", async () => {
     const restore = withStubOpencode({ echoPrompt: true });
     try {
-      const result = await opencodeRunner.run({ prompt: "do it", systemPrompt: "Answer only with BANANA.", cwd: process.cwd() });
+      const result = await opencodeRunner.run({
+        prompt: "do it",
+        systemPrompt: "Answer only with BANANA.",
+        cwd: process.cwd(),
+      });
       expect(result.output).toContain("Answer only with BANANA.");
     } finally {
       restore();
@@ -281,7 +295,11 @@ nodes:
   test("@s-opencode-model-forwarded: run() forwards req.model via session/set_model", async () => {
     const restore = withStubOpencode({ echoModel: true });
     try {
-      const result = await opencodeRunner.run({ prompt: "hi", cwd: process.cwd(), model: "opencode-go/deepseek-v4-flash" });
+      const result = await opencodeRunner.run({
+        prompt: "hi",
+        cwd: process.cwd(),
+        model: "opencode-go/deepseek-v4-flash",
+      });
       expect(result.output).toBe("opencode-go/deepseek-v4-flash");
     } finally {
       restore();

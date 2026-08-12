@@ -2,9 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { chmodSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { SaoError } from "../src/errors";
 import { buildClaudeArgs, ClaudeStreamCollector, claudeRunner, findExecutableOnPath } from "../src/runners/claude";
 import { getRunner } from "../src/runners/types";
-import { SaoError } from "../src/errors";
 
 function flagValue(args: string[], flag: string): string | undefined {
   const index = args.indexOf(flag);
@@ -49,12 +49,17 @@ describe("buildClaudeArgs", () => {
       } catch (err) {
         expect(err).toBeInstanceOf(SaoError);
         expect((err as SaoError).message).toBe(`invalid session id: ${bad}`);
-        expect((err as SaoError).hint).toBe("state.json's sessionId does not look like a claude session id — start a new run");
+        expect((err as SaoError).hint).toBe(
+          "state.json's sessionId does not look like a claude session id — start a new run",
+        );
       }
     }
-    expect(flagValue(buildClaudeArgs({ prompt: "p", cwd: "/tmp", resumeSessionId: "a1b2c3d4-e5f6-7890-abcd-ef0123456789" }), "--resume")).toBe(
-      "a1b2c3d4-e5f6-7890-abcd-ef0123456789",
-    );
+    expect(
+      flagValue(
+        buildClaudeArgs({ prompt: "p", cwd: "/tmp", resumeSessionId: "a1b2c3d4-e5f6-7890-abcd-ef0123456789" }),
+        "--resume",
+      ),
+    ).toBe("a1b2c3d4-e5f6-7890-abcd-ef0123456789");
     expect(flagValue(buildClaudeArgs({ prompt: "p", cwd: "/tmp", resumeSessionId: "s" }), "--resume")).toBe("s");
   });
 
@@ -127,7 +132,9 @@ describe("ClaudeStreamCollector", () => {
   test("assistant events whose text blocks are all empty emit nothing", () => {
     const chunks: string[] = [];
     const collector = new ClaudeStreamCollector((chunk) => chunks.push(chunk));
-    collector.push('{"type":"assistant","message":{"content":[{"type":"text","text":""},{"type":"text","text":""}]}}\n');
+    collector.push(
+      '{"type":"assistant","message":{"content":[{"type":"text","text":""},{"type":"text","text":""}]}}\n',
+    );
     expect(chunks).toEqual([]);
   });
 
@@ -335,9 +342,7 @@ printf '{"type":"result","result":"%s"}\\n' "$PWD"
     };
     process.on("uncaughtException", trap);
     try {
-      const err = await rejectionOf(
-        claudeRunner.run({ prompt: "p".repeat(2 << 20), cwd: process.cwd() }),
-      );
+      const err = await rejectionOf(claudeRunner.run({ prompt: "p".repeat(2 << 20), cwd: process.cwd() }));
       expect(err.message).toBe("claude exited without emitting a result event");
       await wait(200); // give a straggling EPIPE time to surface
       expect(uncaught).toBeUndefined(); // the stdin error listener must swallow it
@@ -403,7 +408,9 @@ echo '{"type":"result","result":"credit balance too low","is_error":true,"sessio
 `);
     try {
       const chunks: string[] = [];
-      const err = await rejectionOf(claudeRunner.run({ prompt: "hi", cwd: process.cwd(), onOutput: (c) => chunks.push(c) }));
+      const err = await rejectionOf(
+        claudeRunner.run({ prompt: "hi", cwd: process.cwd(), onOutput: (c) => chunks.push(c) }),
+      );
       expect(err).toBeInstanceOf(SaoError);
       expect(err.message).toBe("claude reported an error result");
       expect(err.hint).toBe("credit balance too low");
@@ -414,28 +421,26 @@ echo '{"type":"result","result":"credit balance too low","is_error":true,"sessio
     }
   });
 
-  test(
-    "a hang after an is_error result still fails the run, logging the text",
-    async () => {
-      const restore = withStubClaude(`#!/bin/sh
+  test("a hang after an is_error result still fails the run, logging the text", async () => {
+    const restore = withStubClaude(`#!/bin/sh
 cat > /dev/null
 echo '{"type":"result","result":"credit balance too low","is_error":true}'
 sleep 30
 `);
-      process.env.SAO_CLAUDE_RESULT_GRACE_MS = "200";
-      try {
-        const chunks: string[] = [];
-        const err = await rejectionOf(claudeRunner.run({ prompt: "hi", cwd: process.cwd(), onOutput: (c) => chunks.push(c) }));
-        expect(err).toBeInstanceOf(SaoError);
-        expect(err.message).toBe("claude reported an error result");
-        expect(chunks.join("")).toContain("credit balance too low");
-      } finally {
-        delete process.env.SAO_CLAUDE_RESULT_GRACE_MS;
-        restore();
-      }
-    },
-    10000,
-  );
+    process.env.SAO_CLAUDE_RESULT_GRACE_MS = "200";
+    try {
+      const chunks: string[] = [];
+      const err = await rejectionOf(
+        claudeRunner.run({ prompt: "hi", cwd: process.cwd(), onOutput: (c) => chunks.push(c) }),
+      );
+      expect(err).toBeInstanceOf(SaoError);
+      expect(err.message).toBe("claude reported an error result");
+      expect(chunks.join("")).toContain("credit balance too low");
+    } finally {
+      delete process.env.SAO_CLAUDE_RESULT_GRACE_MS;
+      restore();
+    }
+  }, 10000);
 
   test("error-result hints are trimmed and bounded to 500 chars", async () => {
     const exactly500 = "x".repeat(500);
@@ -523,103 +528,91 @@ echo '{"type":"result","result":"slow-ok"}'
     }
   });
 
-  test(
-    "settles shortly after the result event even if claude hangs instead of exiting",
-    async () => {
-      const restore = withStubClaude(`#!/bin/sh
+  test("settles shortly after the result event even if claude hangs instead of exiting", async () => {
+    const restore = withStubClaude(`#!/bin/sh
 cat > /dev/null
 echo '{"type":"assistant","message":{"content":[{"type":"text","text":"started"}]}}'
 echo '{"type":"result","result":"done","session_id":"s-9"}'
 sleep 30
 `);
-      process.env.SAO_CLAUDE_RESULT_GRACE_MS = "700";
-      try {
-        const started = Date.now();
-        const chunks: string[] = [];
-        let outputSeenAt = 0;
-        const result = await claudeRunner.run({
-          prompt: "hi",
-          cwd: process.cwd(),
-          onOutput: (c) => {
-            chunks.push(c);
-            if (!outputSeenAt) outputSeenAt = Date.now();
-          },
-        });
-        expect(result.output).toBe("done");
-        expect(result.sessionId).toBe("s-9");
-        expect(result.exitCode).toBe(0);
-        expect(Date.now() - started).toBeLessThan(3000);
-        // The grace delay must actually be honored: measured from the moment the
-        // stream started arriving (immune to spawn overhead), settling near-instantly
-        // would mean the configured 700ms was replaced by a bogus tiny delay.
-        expect(Date.now() - outputSeenAt).toBeGreaterThanOrEqual(500);
-        // The late `close` after the grace kill must not re-settle and leak the
-        // result text into the log as if it were a failure.
-        await wait(400);
-        expect(chunks.join("")).toBe("started\n");
-      } finally {
-        delete process.env.SAO_CLAUDE_RESULT_GRACE_MS;
-        restore();
-      }
-    },
-    10000,
-  );
+    process.env.SAO_CLAUDE_RESULT_GRACE_MS = "700";
+    try {
+      const started = Date.now();
+      const chunks: string[] = [];
+      let outputSeenAt = 0;
+      const result = await claudeRunner.run({
+        prompt: "hi",
+        cwd: process.cwd(),
+        onOutput: (c) => {
+          chunks.push(c);
+          if (!outputSeenAt) outputSeenAt = Date.now();
+        },
+      });
+      expect(result.output).toBe("done");
+      expect(result.sessionId).toBe("s-9");
+      expect(result.exitCode).toBe(0);
+      expect(Date.now() - started).toBeLessThan(3000);
+      // The grace delay must actually be honored: measured from the moment the
+      // stream started arriving (immune to spawn overhead), settling near-instantly
+      // would mean the configured 700ms was replaced by a bogus tiny delay.
+      expect(Date.now() - outputSeenAt).toBeGreaterThanOrEqual(500);
+      // The late `close` after the grace kill must not re-settle and leak the
+      // result text into the log as if it were a failure.
+      await wait(400);
+      expect(chunks.join("")).toBe("started\n");
+    } finally {
+      delete process.env.SAO_CLAUDE_RESULT_GRACE_MS;
+      restore();
+    }
+  }, 10000);
 
-  test(
-    "the grace kill must not arm before the result event arrives",
-    async () => {
-      const restore = withStubClaude(`#!/bin/sh
+  test("the grace kill must not arm before the result event arrives", async () => {
+    const restore = withStubClaude(`#!/bin/sh
 cat > /dev/null
 echo '{"type":"assistant","message":{"content":[{"type":"text","text":"thinking"}]}}'
 sleep 0.4
 echo '{"type":"result","result":"late","session_id":"s-10"}'
 sleep 30
 `);
-      process.env.SAO_CLAUDE_RESULT_GRACE_MS = "150";
-      try {
-        const result = await claudeRunner.run({ prompt: "hi", cwd: process.cwd() });
-        expect(result.output).toBe("late");
-        expect(result.exitCode).toBe(0);
-      } finally {
-        delete process.env.SAO_CLAUDE_RESULT_GRACE_MS;
-        restore();
-      }
-    },
-    10000,
-  );
+    process.env.SAO_CLAUDE_RESULT_GRACE_MS = "150";
+    try {
+      const result = await claudeRunner.run({ prompt: "hi", cwd: process.cwd() });
+      expect(result.output).toBe("late");
+      expect(result.exitCode).toBe(0);
+    } finally {
+      delete process.env.SAO_CLAUDE_RESULT_GRACE_MS;
+      restore();
+    }
+  }, 10000);
 
-  test(
-    "the grace kill takes the whole process tree down (detached group)",
-    async () => {
-      const restore = withStubClaude(`#!/bin/sh
+  test("the grace kill takes the whole process tree down (detached group)", async () => {
+    const restore = withStubClaude(`#!/bin/sh
 cat > /dev/null
 sleep 30 &
 printf '{"type":"result","result":"%s"}\\n' "$!"
 wait
 `);
-      process.env.SAO_CLAUDE_RESULT_GRACE_MS = "200";
-      try {
-        const result = await claudeRunner.run({ prompt: "hi", cwd: process.cwd() });
-        const grandchild = Number(result.output);
-        expect(grandchild).toBeGreaterThan(0);
-        let dead = false;
-        for (let i = 0; i < 30; i++) {
-          try {
-            process.kill(grandchild, 0);
-            await wait(50);
-          } catch {
-            dead = true;
-            break;
-          }
+    process.env.SAO_CLAUDE_RESULT_GRACE_MS = "200";
+    try {
+      const result = await claudeRunner.run({ prompt: "hi", cwd: process.cwd() });
+      const grandchild = Number(result.output);
+      expect(grandchild).toBeGreaterThan(0);
+      let dead = false;
+      for (let i = 0; i < 30; i++) {
+        try {
+          process.kill(grandchild, 0);
+          await wait(50);
+        } catch {
+          dead = true;
+          break;
         }
-        expect(dead).toBe(true);
-      } finally {
-        delete process.env.SAO_CLAUDE_RESULT_GRACE_MS;
-        restore();
       }
-    },
-    10000,
-  );
+      expect(dead).toBe(true);
+    } finally {
+      delete process.env.SAO_CLAUDE_RESULT_GRACE_MS;
+      restore();
+    }
+  }, 10000);
 
   test("a chunk boundary inside a multi-byte character does not corrupt the output", async () => {
     const restore = withStubClaude(`#!/bin/sh

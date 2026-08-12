@@ -11,14 +11,22 @@ import { cleanRuns, formatCleanSummary, formatRunList, makeLogPoller, printLogs 
 import { findRepoRoot, loadRun } from "./state";
 
 const program = new Command();
-program.name("sao").description("simple agent orchestrator — a minimal YAML workflow engine for AI coding agents").version(pkg.version);
+program
+  .name("sao")
+  .description("simple agent orchestrator — a minimal YAML workflow engine for AI coding agents")
+  .version(pkg.version);
 
 program
   .command("run")
   .description("execute a workflow")
   .argument("<workflow>", "path to a workflow YAML file")
   .argument("[task...]", "freeform task text, available as {{task}}")
-  .option("--var <key=value>", "set a declared input (repeatable)", collectVar, Object.create(null) as Record<string, string>)
+  .option(
+    "--var <key=value>",
+    "set a declared input (repeatable)",
+    collectVar,
+    Object.create(null) as Record<string, string>,
+  )
   .option("--base <ref>", "ref to cut the run worktree/branch from (default: workflow base:, else HEAD)")
   .option("--branch <name>", "branch name for the run worktree (default: sao/<run-id>)")
   .option("--no-worktree", "run in place instead of an isolated git worktree")
@@ -43,10 +51,16 @@ program
     ) => {
       await fail(async () => {
         if (!options.worktree && (options.base !== undefined || options.branch !== undefined)) {
-          throw new SaoError("--base/--branch have no effect with --no-worktree", "they configure the run worktree — drop them or drop --no-worktree");
+          throw new SaoError(
+            "--base/--branch have no effect with --no-worktree",
+            "they configure the run worktree — drop them or drop --no-worktree",
+          );
         }
         if (!options.worktree && options.autoOpenPr === true) {
-          throw new SaoError("--auto-open-pr has no effect with --no-worktree", "a PR needs the run branch a worktree provides — drop one of the flags");
+          throw new SaoError(
+            "--auto-open-pr has no effect with --no-worktree",
+            "a PR needs the run branch a worktree provides — drop one of the flags",
+          );
         }
         const path = resolve(workflowPath);
         const repoRoot = findRepoRoot(process.cwd());
@@ -85,8 +99,14 @@ program
   .command("resume")
   .description("re-run a halted run from its failed node/iteration")
   .argument("<run-id>", "run id (see sao list)")
-  .option("--force", "resume even if the configuration changed, the recorded owner pid looks alive, or a live lock must be taken over")
-  .option("--auto-open-pr", "turn on draft-PR finalization for this halted run (already-succeeded runs cannot be resumed; open theirs with gh)")
+  .option(
+    "--force",
+    "resume even if the configuration changed, the recorded owner pid looks alive, or a live lock must be taken over",
+  )
+  .option(
+    "--auto-open-pr",
+    "turn on draft-PR finalization for this halted run (already-succeeded runs cannot be resumed; open theirs with gh)",
+  )
   .action(async (runId: string, options: { force?: boolean; autoOpenPr?: boolean }) => {
     await fail(async () => {
       const repoRoot = findRepoRoot(process.cwd());

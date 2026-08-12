@@ -147,7 +147,12 @@ export const codexRunner: Runner = {
       // Defense in depth: preflightAiConfigs rejects fresh_context: false with codex,
       // so a session id here means an engine bug — fail loudly, never silently fresh.
       if (req.resumeSessionId !== undefined) {
-        reject(new SaoError("the codex runner cannot resume sessions", "loops with fresh_context: false require the claude runner"));
+        reject(
+          new SaoError(
+            "the codex runner cannot resume sessions",
+            "loops with fresh_context: false require the claude runner",
+          ),
+        );
         return;
       }
       const ignored = ignoredCodexSettings(req);
@@ -241,7 +246,7 @@ export const codexRunner: Runner = {
           // Stryker disable next-line ConditionalExpression: unreachable under bun — non-ENOENT spawn failures throw synchronously from spawn() instead of emitting an async error event
           if (err.code === "ENOENT") {
             reject(new SaoError("codex CLI not found on PATH", INSTALL_HINT));
-          } else /* Stryker disable next-line all: unreachable under bun — non-ENOENT spawn failures (EACCES, ENOEXEC) throw synchronously from spawn() instead of emitting an async error event */ {
+          } /* Stryker disable next-line all: unreachable under bun — non-ENOENT spawn failures (EACCES, ENOEXEC) throw synchronously from spawn() instead of emitting an async error event */ else {
             // Stryker disable next-line all: unreachable under bun, as above
             reject(new SaoError(`failed to spawn codex: ${err.message}`));
           }

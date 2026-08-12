@@ -67,7 +67,7 @@ function scriptedRunner(script: string[]): () => Runner {
   let call = 0;
   const runner: Runner = {
     name: "scripted",
-    async run(req: RunnerRequest) {
+    async run(_req: RunnerRequest) {
       const output = script[Math.min(call, script.length - 1)]!;
       call++;
       return { output, exitCode: 0 };
@@ -76,7 +76,11 @@ function scriptedRunner(script: string[]): () => Runner {
   return () => runner;
 }
 
-function run(path: string, dir: string, extra: Partial<Parameters<typeof runWorkflow>[0]> = {}): ReturnType<typeof runWorkflow> {
+function run(
+  path: string,
+  dir: string,
+  extra: Partial<Parameters<typeof runWorkflow>[0]> = {},
+): ReturnType<typeof runWorkflow> {
   return runWorkflow({
     workflow: loadWorkflow(path, { cwd: dir }),
     workflowPath: path,
@@ -88,7 +92,7 @@ function run(path: string, dir: string, extra: Partial<Parameters<typeof runWork
   });
 }
 
-const FAIL_ONCE = 'test -f marker || { touch marker; echo first-try >&2; exit 1; }';
+const FAIL_ONCE = "test -f marker || { touch marker; echo first-try >&2; exit 1; }";
 
 describe("draftPrTitle", () => {
   test("workflow name and task compose the title; whitespace collapses", () => {
@@ -160,7 +164,9 @@ ${LOOP}`);
     } catch (err) {
       expect(err).toBeInstanceOf(SaoError);
       expect((err as SaoError).message).toBe('node "fix": the codex runner cannot resume sessions');
-      expect((err as SaoError).hint).toBe("fresh_context: false requires session resume — use the claude runner, or drop fresh_context");
+      expect((err as SaoError).hint).toBe(
+        "fresh_context: false requires session resume — use the claude runner, or drop fresh_context",
+      );
     }
   });
 
@@ -181,7 +187,9 @@ nodes:
 ${LOOP}`);
     mkdirSync(join(viaAgent.dir, ".agents", "agents"), { recursive: true });
     writeFileSync(join(viaAgent.dir, ".agents", "agents", "coder.md"), "---\nrunner: codex\n---\nYou code.\n");
-    expect(() => preflightAiConfigs(loadWorkflow(viaAgent.path, { cwd: viaAgent.dir }))).toThrow("cannot resume sessions");
+    expect(() => preflightAiConfigs(loadWorkflow(viaAgent.path, { cwd: viaAgent.dir }))).toThrow(
+      "cannot resume sessions",
+    );
 
     const viaOverride = setup(`
 name: bad-override
@@ -396,7 +404,11 @@ nodes:
     try {
       await run(path, dir).catch(() => {});
       const lines: string[] = [];
-      const state = await run(path, dir, { resume: loadRun(dir, loadRunId(dir)), autoOpenPr: true, print: (l) => lines.push(l) });
+      const state = await run(path, dir, {
+        resume: loadRun(dir, loadRunId(dir)),
+        autoOpenPr: true,
+        print: (l) => lines.push(l),
+      });
       expect(state.status).toBe("succeeded");
       const output = lines.join("\n");
       expect(output).toContain("⚠ --auto-open-pr ignored: this run has no branch (it ran with --no-worktree)");
@@ -420,7 +432,9 @@ nodes:
       const lines: string[] = [];
       const state = await run(path, dir, { autoOpenPr: true, print: (l) => lines.push(l) });
       expect(state.status).toBe("succeeded");
-      expect(lines.join("\n")).toContain("⚠ --auto-open-pr ignored: this run has no branch (it ran with --no-worktree)");
+      expect(lines.join("\n")).toContain(
+        "⚠ --auto-open-pr ignored: this run has no branch (it ran with --no-worktree)",
+      );
       expect(existsSync(gh.argsFile)).toBe(false);
     } finally {
       gh.restore();
@@ -558,7 +572,9 @@ nodes:
       const state = await run(path, dir, { resume: loadRun(dir, runId), print: (l) => lines.push(l) });
       expect(state.status).toBe("succeeded");
       const output = lines.join("\n");
-      expect(output).toContain("⚠ --auto-open-pr ignored: this run has no branch (state.json no longer records its branch)");
+      expect(output).toContain(
+        "⚠ --auto-open-pr ignored: this run has no branch (state.json no longer records its branch)",
+      );
       expect(output).not.toContain("--no-worktree"); // a worktree run — don't blame the wrong flag
       expect(output).not.toContain("auto-open-pr failed"); // never attempted with undefined argv
       expect(existsSync(gh.argsFile)).toBe(false);
@@ -634,7 +650,9 @@ nodes:
     mkdirSync(join(dir, ".agents", "agents"), { recursive: true });
     writeFileSync(join(dir, ".agents", "agents", "coder.md"), "---\nmodel: sonnet\n---\nYou code.\n");
     const workflow = loadWorkflow(path, { cwd: dir });
-    expect(await formatDryRun({ workflow, task: "the rollout", vars: {}, runRoot: dir, worktree: {}, autoOpenPr: true })).toEqual([
+    expect(
+      await formatDryRun({ workflow, task: "the rollout", vars: {}, runRoot: dir, worktree: {}, autoOpenPr: true }),
+    ).toEqual([
       "dry run: mini — 3 nodes, nothing executes",
       "isolation: worktree from base main, branch sao/<run-id>",
       "on success: push the branch and open a draft PR via gh (--auto-open-pr)",
@@ -661,7 +679,13 @@ nodes:
     bash: "true"
 `);
     gitify(dir);
-    const lines = await formatDryRun({ workflow: loadWorkflow(path, { cwd: dir }), task: "", vars: {}, runRoot: dir, worktree: {} });
+    const lines = await formatDryRun({
+      workflow: loadWorkflow(path, { cwd: dir }),
+      task: "",
+      vars: {},
+      runRoot: dir,
+      worktree: {},
+    });
     expect(lines[1]).toMatch(/^isolation: worktree from base [0-9a-f]{40}, branch sao\/<run-id>$/);
     expect(lines).not.toContain("task: "); // empty task: no task line at all
     // Without --auto-open-pr the plan has exactly these five lines — no PR step.
@@ -677,22 +701,28 @@ nodes:
     bash: "true"
 `);
     const workflowNoRepo = loadWorkflow(path, { cwd: dir });
-    await expect(formatDryRun({ workflow: workflowNoRepo, task: "", vars: {}, runRoot: dir, worktree: {} })).rejects.toThrow(
-      "not a git repository",
-    );
+    await expect(
+      formatDryRun({ workflow: workflowNoRepo, task: "", vars: {}, runRoot: dir, worktree: {} }),
+    ).rejects.toThrow("not a git repository");
     gitify(dir);
     const workflow = loadWorkflow(path, { cwd: dir });
-    await expect(formatDryRun({ workflow, task: "", vars: {}, runRoot: dir, worktree: { base: "no-such-ref" } })).rejects.toThrow(
-      "base ref not found: no-such-ref",
-    );
-    await expect(formatDryRun({ workflow, task: "", vars: {}, runRoot: dir, worktree: { branch: "main" } })).rejects.toThrow(
-      "branch already exists: main",
-    );
-    await expect(formatDryRun({ workflow, task: "", vars: {}, runRoot: dir, worktree: { branch: "+x" } })).rejects.toThrow(
-      "invalid branch name: +x",
-    );
+    await expect(
+      formatDryRun({ workflow, task: "", vars: {}, runRoot: dir, worktree: { base: "no-such-ref" } }),
+    ).rejects.toThrow("base ref not found: no-such-ref");
+    await expect(
+      formatDryRun({ workflow, task: "", vars: {}, runRoot: dir, worktree: { branch: "main" } }),
+    ).rejects.toThrow("branch already exists: main");
+    await expect(
+      formatDryRun({ workflow, task: "", vars: {}, runRoot: dir, worktree: { branch: "+x" } }),
+    ).rejects.toThrow("invalid branch name: +x");
     // A named branch that passes the checks is echoed verbatim.
-    const lines = await formatDryRun({ workflow, task: "", vars: {}, runRoot: dir, worktree: { base: "main", branch: "feature/x" } });
+    const lines = await formatDryRun({
+      workflow,
+      task: "",
+      vars: {},
+      runRoot: dir,
+      worktree: { base: "main", branch: "feature/x" },
+    });
     expect(lines[1]).toBe("isolation: worktree from base main, branch feature/x");
   });
 
@@ -703,7 +733,13 @@ nodes:
   - id: a
     bash: "git diff [{{base}}]..[{{branch}}] in {{run_id}}"
 `);
-    const lines = await formatDryRun({ workflow: loadWorkflow(path, { cwd: dir }), task: "", vars: {}, runRoot: dir, autoOpenPr: true });
+    const lines = await formatDryRun({
+      workflow: loadWorkflow(path, { cwd: dir }),
+      task: "",
+      vars: {},
+      runRoot: dir,
+      autoOpenPr: true,
+    });
     expect(lines).toContain("isolation: in place (--no-worktree)");
     expect(lines).toContain("   bash: git diff []..[] in <run-id>");
     expect(lines.join("\n")).not.toContain("on success: push"); // no worktree, no PR step even when asked
@@ -771,7 +807,13 @@ nodes:
     const oldPath = process.env.PATH;
     process.env.PATH = `${stub}:${oldPath}`;
     try {
-      const lines = await formatDryRun({ workflow: loadWorkflow(path, { cwd: dir }), task: "", vars: {}, runRoot: dir, runnerOverride: "codex" });
+      const lines = await formatDryRun({
+        workflow: loadWorkflow(path, { cwd: dir }),
+        task: "",
+        vars: {},
+        runRoot: dir,
+        runnerOverride: "codex",
+      });
       expect(lines).toContain("1. a  [ai · runner codex]");
     } finally {
       process.env.PATH = oldPath;
@@ -814,9 +856,9 @@ nodes:
       expect((err as SaoError).message).toBe('missing required input "ticket"');
       expect((err as SaoError).hint).toBe("pass it with --var ticket=<value>"); // the RUN hint, not resume's
     }
-    await expect(formatDryRun({ workflow, task: "", vars: { ticket: "T-1" }, runRoot: dir, runnerOverride: "nope" })).rejects.toThrow(
-      'unknown runner "nope"',
-    );
+    await expect(
+      formatDryRun({ workflow, task: "", vars: { ticket: "T-1" }, runRoot: dir, runnerOverride: "nope" }),
+    ).rejects.toThrow('unknown runner "nope"');
     expect(existsSync(join(dir, ".sao"))).toBe(false); // plans have no side effects
   });
 });

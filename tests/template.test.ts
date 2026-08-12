@@ -44,11 +44,11 @@ describe("interpolate", () => {
   });
 
   test("throws on unknown reference", () => {
-    expect(() => interpolate("{{nope}}", ctx)).toThrow('unknown template reference {{nope}}');
+    expect(() => interpolate("{{nope}}", ctx)).toThrow("unknown template reference {{nope}}");
   });
 
   test("throws when a node output is not available yet", () => {
-    expect(() => interpolate("{{nodes.missing.output}}", ctx)).toThrow('has not produced output');
+    expect(() => interpolate("{{nodes.missing.output}}", ctx)).toThrow("has not produced output");
   });
 
   test("never reads node outputs off the prototype chain", () => {

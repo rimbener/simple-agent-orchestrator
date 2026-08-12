@@ -18,7 +18,7 @@ export const opencodeRunner: Runner = {
     if (findExecutableOnPath("opencode") === undefined) {
       throw new SaoError("opencode CLI not found on PATH", INSTALL_HINT);
     }
-    let capabilities;
+    let capabilities: Awaited<ReturnType<typeof runAcpHandshake>>;
     try {
       // Stryker disable next-line ObjectLiteral: equivalent — node's child_process.spawn defaults cwd to process.cwd() when omitted, so dropping this key changes nothing observable
       capabilities = await runAcpHandshake(LAUNCH, { cwd: process.cwd() });

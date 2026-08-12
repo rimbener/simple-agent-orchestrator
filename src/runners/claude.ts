@@ -31,7 +31,10 @@ export function buildClaudeArgs(req: RunnerRequest): string[] {
     // Defense in depth: session ids round-trip through state.json, and claude's
     // --resume takes an OPTIONAL value — an option-shaped id would parse as a flag.
     if (!/^[a-zA-Z0-9][a-zA-Z0-9-]*$/.test(req.resumeSessionId)) {
-      throw new SaoError(`invalid session id: ${req.resumeSessionId}`, "state.json's sessionId does not look like a claude session id — start a new run");
+      throw new SaoError(
+        `invalid session id: ${req.resumeSessionId}`,
+        "state.json's sessionId does not look like a claude session id — start a new run",
+      );
     }
     args.push("--resume", req.resumeSessionId);
   }
@@ -220,7 +223,7 @@ export const claudeRunner: Runner = {
           // Stryker disable next-line ConditionalExpression: unreachable under bun — non-ENOENT spawn failures throw synchronously from spawn() instead of emitting an async error event
           if (err.code === "ENOENT") {
             reject(new SaoError("claude CLI not found on PATH", INSTALL_HINT));
-          } else /* Stryker disable next-line all: unreachable under bun — non-ENOENT spawn failures (EACCES, ENOEXEC) throw synchronously from spawn() instead of emitting an async error event */ {
+          } /* Stryker disable next-line all: unreachable under bun — non-ENOENT spawn failures (EACCES, ENOEXEC) throw synchronously from spawn() instead of emitting an async error event */ else {
             // Stryker disable next-line all: unreachable under bun, as above
             reject(new SaoError(`failed to spawn claude: ${err.message}`));
           }

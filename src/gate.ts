@@ -3,7 +3,11 @@ import { SaoError } from "./errors";
 
 export type PromptUser = (message: string) => Promise<string>;
 
-export type GateReply = { kind: "approve" } | { kind: "reject" } | { kind: "feedback"; text: string } | { kind: "empty" };
+export type GateReply =
+  | { kind: "approve" }
+  | { kind: "reject" }
+  | { kind: "feedback"; text: string }
+  | { kind: "empty" };
 
 const APPROVALS = new Set(["a", "approve", "approved", "y", "yes"]);
 const REJECTIONS = new Set(["r", "reject", "rejected", "n", "no"]);
@@ -137,7 +141,9 @@ export function resetPromptState(): void {
   if (waiting !== undefined) {
     const turn = waiting;
     waiting = undefined;
-    turn.reject(new SaoError("prompt state reset while a reply was pending", "resetPromptState() torn down mid-prompt"));
+    turn.reject(
+      new SaoError("prompt state reset while a reply was pending", "resetPromptState() torn down mid-prompt"),
+    );
   }
   if (rl !== undefined) {
     rl.removeAllListeners("line");

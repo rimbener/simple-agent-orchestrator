@@ -12,8 +12,8 @@ import {
   deleteBranch,
   finalizeWorktree,
   isUsableWorktree,
-  pushBranch,
   pruneWorktrees,
+  pushBranch,
   removeWorktree,
   requireGitRepo,
   resolveHead,
@@ -62,7 +62,6 @@ describe("requireGitRepo / resolveHead", () => {
     git(dir, "init", "-q", "--bare");
     expect(() => requireGitRepo(dir)).toThrow("not a git repository — worktree isolation needs one");
   });
-
 
   test("resolveHead returns the HEAD commit SHA", () => {
     const dir = repo();
@@ -219,7 +218,9 @@ describe("addWorktree / removeWorktree / deleteBranch", () => {
 
   test("removeWorktree on a non-worktree dir throws instead of deleting blindly", () => {
     const dir = repo();
-    expect(() => removeWorktree(dir, join(dir, "seed-dir-that-is-not-a-worktree"))).toThrow("git worktree remove failed");
+    expect(() => removeWorktree(dir, join(dir, "seed-dir-that-is-not-a-worktree"))).toThrow(
+      "git worktree remove failed",
+    );
   });
 
   test("deleteBranch is false for missing and option-shaped names", () => {
@@ -391,12 +392,16 @@ echo "https://github.com/o/r/pull/12"
       throw new Error("should have thrown");
     } catch (err) {
       expect((err as SaoError).message).toBe("invalid branch name: +main");
-      expect((err as SaoError).hint).toBe("branch names cannot start with '+' (git push would read it as a force refspec)");
+      expect((err as SaoError).hint).toBe(
+        "branch names cannot start with '+' (git push would read it as a force refspec)",
+      );
     }
     expect(() => pushBranch(wt, "sao/x:main")).toThrow("invalid branch name: sao/x:main"); // ':' via check-ref-format
     expect(() => createDraftPr(wt, { branch: "-f", title: "t", body: "b" })).toThrow("invalid branch name: -f");
     expect(() => createDraftPr(wt, { branch: "+main", title: "t", body: "b" })).toThrow("invalid branch name: +main");
-    expect(() => createDraftPr(wt, { branch: "sao/run-pr", title: "t", body: "b", baseBranch: "-D" })).toThrow("invalid branch name: -D");
+    expect(() => createDraftPr(wt, { branch: "sao/run-pr", title: "t", body: "b", baseBranch: "-D" })).toThrow(
+      "invalid branch name: -D",
+    );
   });
 
   test("validateBranchName rejects '+…' at creation time too", () => {
@@ -442,7 +447,16 @@ echo "https://github.com/o/r/pull/12"
       });
       expect(url).toBe("https://github.com/o/r/pull/12");
       const args = readFileSync(join(gh.dir, "args.txt"), "utf8").split("\n");
-      expect(args).toEqual(["pr", "create", "--draft", "--head=sao/run-pr", "--title=-starts with a dash: still one token", "--body-file", "-", ""]);
+      expect(args).toEqual([
+        "pr",
+        "create",
+        "--draft",
+        "--head=sao/run-pr",
+        "--title=-starts with a dash: still one token",
+        "--body-file",
+        "-",
+        "",
+      ]);
       expect(readFileSync(join(gh.dir, "body.txt"), "utf8")).toBe("line one\nline two");
     } finally {
       gh.restore();
@@ -500,7 +514,9 @@ echo "note: see https://docs.github.com for draft PRs"
 `);
     try {
       // …and a plain-http URL (GH Enterprise) still matches.
-      expect(createDraftPr(wt, { branch: "sao/run-pr", title: "t", body: "b" })).toBe("http://github.local/o/r/pull/14");
+      expect(createDraftPr(wt, { branch: "sao/run-pr", title: "t", body: "b" })).toBe(
+        "http://github.local/o/r/pull/14",
+      );
     } finally {
       noisy.restore();
     }
@@ -568,7 +584,13 @@ echo "note: see https://docs.github.com for draft PRs"
       expect(finalizeWorktree(wt, "run-env")).toBe(true);
       expect(git(wt, "log", "-1", "--format=%an")).toBe("Env T");
     } finally {
-      for (const key of ["GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0", "GIT_CONFIG_KEY_1", "GIT_CONFIG_VALUE_1"]) {
+      for (const key of [
+        "GIT_CONFIG_COUNT",
+        "GIT_CONFIG_KEY_0",
+        "GIT_CONFIG_VALUE_0",
+        "GIT_CONFIG_KEY_1",
+        "GIT_CONFIG_VALUE_1",
+      ]) {
         if (old[key] === undefined) delete process.env[key];
         else process.env[key] = old[key];
       }

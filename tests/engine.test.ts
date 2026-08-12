@@ -29,6 +29,7 @@ function mockRunner(calls: RunnerRequest[]): Runner {
 const quiet = () => {};
 
 // picocolors only adds ANSI codes on a TTY; strip defensively so assertions hold either way.
+// biome-ignore lint/suspicious/noControlCharactersInRegex: matching the ANSI ESC byte is the point.
 const stripAnsi = (line: string) => line.replace(/\u001b\[[0-9;]*m/g, "");
 
 /** The content of every `  [<id>] ` echo line, prefix removed. */
@@ -310,7 +311,9 @@ nodes:
     const { runId } = readRunState(dir);
     expect(err).toBeInstanceOf(SaoError);
     expect(err.message).toBe(`run ${runId} failed at node "a": boom-bare`);
-    expect(err.hint).toBe(`full output: ${join(dir, ".sao", "runs", runId, "logs", "a.log")}\n  resume with: sao resume ${runId}`);
+    expect(err.hint).toBe(
+      `full output: ${join(dir, ".sao", "runs", runId, "logs", "a.log")}\n  resume with: sao resume ${runId}`,
+    );
   });
 
   test("a non-Error throw from a runner is stringified into the failure message", async () => {
@@ -339,7 +342,9 @@ nodes:
     );
     const { runId } = readRunState(dir);
     expect(err.message).toBe(`run ${runId} failed at node "a": boom-string`);
-    expect(err.hint).toBe(`full output: ${join(dir, ".sao", "runs", runId, "logs", "a.log")}\n  resume with: sao resume ${runId}`);
+    expect(err.hint).toBe(
+      `full output: ${join(dir, ".sao", "runs", runId, "logs", "a.log")}\n  resume with: sao resume ${runId}`,
+    );
   });
 
   test("workflow defaults.model and permission_mode reach the runner request", async () => {
@@ -457,7 +462,9 @@ nodes:
         cwd: dir,
       });
       const logged = spy.mock.calls.map((call) => stripAnsi(String(call[0])));
-      expect(logged).toContain(`sao run ${state.id} (1 nodes, concurrency 2, logs in ${join(dir, ".sao", "runs", state.id, "logs")})`);
+      expect(logged).toContain(
+        `sao run ${state.id} (1 nodes, concurrency 2, logs in ${join(dir, ".sao", "runs", state.id, "logs")})`,
+      );
       expect(logged).toContain(`✓ run ${state.id} succeeded`);
     } finally {
       spy.mockRestore();
@@ -523,7 +530,9 @@ nodes:
     expect(contents).toHaveLength(2); // the runaway echo, then the remainder + TAIL
     expect(contents[0]!.length).toBeGreaterThan(8192);
     expect(contents.join("")).toBe("x".repeat(8300) + "TAIL"); // no junk injected between echoes
-    expect(readFileSync(join(dir, ".sao", "runs", state.id, "logs", "a.log"), "utf8")).toBe("x".repeat(8300) + "TAIL\n");
+    expect(readFileSync(join(dir, ".sao", "runs", state.id, "logs", "a.log"), "utf8")).toBe(
+      "x".repeat(8300) + "TAIL\n",
+    );
   });
 
   test("state.json reports the run and the executing node as running mid-run", async () => {
@@ -694,10 +703,8 @@ nodes:
     expect(state.nodes["n"]!.output).toBe("fallback-value");
   });
 
-  test(
-    "shutdownAll mid-run fails the run and running nodes but leaves pending nodes pending",
-    async () => {
-      const { dir, path } = setup(`
+  test("shutdownAll mid-run fails the run and running nodes but leaves pending nodes pending", async () => {
+    const { dir, path } = setup(`
 name: shutdown
 nodes:
   - id: one
@@ -706,45 +713,43 @@ nodes:
     depends_on: [one]
     bash: "echo never"
 `);
-      const run = runWorkflow({
-        workflow: loadWorkflow(path),
-        workflowPath: path,
-        task: "",
-        vars: {},
-        cwd: dir,
-        print: quiet,
-      });
+    const run = runWorkflow({
+      workflow: loadWorkflow(path),
+      workflowPath: path,
+      task: "",
+      vars: {},
+      cwd: dir,
+      print: quiet,
+    });
 
-      const runsDir = join(dir, ".sao", "runs");
-      const deadline = Date.now() + 5000;
-      // Wait until node one is genuinely running (state saved before its child spawns).
-      while (true) {
-        if (existsSync(runsDir) && readdirSync(runsDir).length > 0) {
-          const { saved } = readRunState(dir);
-          if (saved.nodes["one"]!.status === "running") {
-            expect(saved.status).toBe("running");
-            break;
-          }
+    const runsDir = join(dir, ".sao", "runs");
+    const deadline = Date.now() + 5000;
+    // Wait until node one is genuinely running (state saved before its child spawns).
+    while (true) {
+      if (existsSync(runsDir) && readdirSync(runsDir).length > 0) {
+        const { saved } = readRunState(dir);
+        if (saved.nodes["one"]!.status === "running") {
+          expect(saved.status).toBe("running");
+          break;
         }
-        if (Date.now() > deadline) throw new Error("node one never reached running");
-        await new Promise((resolve) => setTimeout(resolve, 10));
       }
+      if (Date.now() > deadline) throw new Error("node one never reached running");
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
 
-      shutdownAll();
-      // Synchronously after the hook ran, before the engine's own failure path can save:
-      const snapshot = readRunState(dir).saved;
-      expect(snapshot.status).toBe("failed");
-      expect(snapshot.nodes["one"]!.status).toBe("failed");
-      expect(snapshot.nodes["two"]!.status).toBe("pending");
+    shutdownAll();
+    // Synchronously after the hook ran, before the engine's own failure path can save:
+    const snapshot = readRunState(dir).saved;
+    expect(snapshot.status).toBe("failed");
+    expect(snapshot.nodes["one"]!.status).toBe("failed");
+    expect(snapshot.nodes["two"]!.status).toBe("pending");
 
-      await expect(run).rejects.toThrow('failed at node "one"');
-      const final = readRunState(dir).saved;
-      expect(final.status).toBe("failed");
-      expect(final.nodes["one"]!.status).toBe("failed");
-      expect(final.nodes["two"]!.status).toBe("pending");
-    },
-    15000,
-  );
+    await expect(run).rejects.toThrow('failed at node "one"');
+    const final = readRunState(dir).saved;
+    expect(final.status).toBe("failed");
+    expect(final.nodes["one"]!.status).toBe("failed");
+    expect(final.nodes["two"]!.status).toBe("pending");
+  }, 15000);
 
   test("shutdownAll after a successful run leaves state.json succeeded", async () => {
     const { dir, path } = setup(`

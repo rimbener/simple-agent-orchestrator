@@ -3,8 +3,16 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
-import { SaoError } from "../src/errors";
-import { cleanRuns, formatCleanSummary, formatRunList, humanAge, listLogFiles, makeLogPoller, printLogs } from "../src/runs";
+import type { SaoError } from "../src/errors";
+import {
+  cleanRuns,
+  formatCleanSummary,
+  formatRunList,
+  humanAge,
+  listLogFiles,
+  makeLogPoller,
+  printLogs,
+} from "../src/runs";
 import type { RunPaths, RunState } from "../src/state";
 import { addWorktree, worktreeRelPath } from "../src/worktree";
 
@@ -412,7 +420,9 @@ describe("cleanRuns", () => {
 
 describe("formatCleanSummary", () => {
   test("plain and annotated forms", () => {
-    expect(formatCleanSummary({ ...CLEAN_ZERO, worktrees: 2, branches: 1 })).toBe("cleaned: 2 worktrees, 1 branches, 0 run dirs");
+    expect(formatCleanSummary({ ...CLEAN_ZERO, worktrees: 2, branches: 1 })).toBe(
+      "cleaned: 2 worktrees, 1 branches, 0 run dirs",
+    );
     expect(
       formatCleanSummary({
         worktrees: 0,

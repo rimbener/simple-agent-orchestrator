@@ -436,10 +436,10 @@ nodes:
 
 describe("empty-string settings", () => {
   test.each([
-    ["defaults.model", "defaults:\n  model: \"\""],
-    ["defaults.runner", "defaults:\n  runner: \"\""],
-    ["defaults.permission_mode", "defaults:\n  permission_mode: \"\""],
-  ])("%s: \"\" fails validate instead of reaching argv", (_label, snippet) => {
+    ["defaults.model", 'defaults:\n  model: ""'],
+    ["defaults.runner", 'defaults:\n  runner: ""'],
+    ["defaults.permission_mode", 'defaults:\n  permission_mode: ""'],
+  ])('%s: "" fails validate instead of reaching argv', (_label, snippet) => {
     const err = failure(`
 name: empties
 ${snippet}

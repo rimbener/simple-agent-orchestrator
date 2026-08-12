@@ -371,7 +371,9 @@ nodes:
     // Only the review step ran, twice (two iterations), never the skipped fix step.
     expect(calls).toHaveLength(2);
     expect(calls.every((c) => c.prompt.startsWith("sneaky") || c.prompt === "review")).toBe(true);
-    expect(printed.some((line) => line.includes("⊘ cycle step #2") && line.includes("(skipped by when_bash)"))).toBe(true);
+    expect(printed.some((line) => line.includes("⊘ cycle step #2") && line.includes("(skipped by when_bash)"))).toBe(
+      true,
+    );
   });
 
   test("a sentinel loop ending on a bash step signals via the AI step and keeps the AI output", async () => {
@@ -634,7 +636,9 @@ nodes:
       throw new Error("should have thrown");
     } catch (err) {
       const message = (err as SaoError).message;
-      expect(message).toContain("loop hit max_iterations (1) with SETTLED signaled on the final iteration but not approved");
+      expect(message).toContain(
+        "loop hit max_iterations (1) with SETTLED signaled on the final iteration but not approved",
+      );
       expect(message).not.toContain("without signal");
     }
   });
@@ -660,7 +664,7 @@ nodes:
         // iter 1 (signaled): feedback + create the marker so iter 2's step is skipped.
         // iter 2 (all steps skipped): "a" must NOT be accepted — the engine re-asks;
         // the follow-up feedback ends iteration 2 and the loop exhausts.
-        promptUser: (async (message: string) => {
+        promptUser: async (message: string) => {
           questions.push(message);
           if (questions.length === 1) {
             writeFileSync(join(dir, "skip-now"), "");
@@ -668,7 +672,7 @@ nodes:
           }
           if (questions.length === 2) return "a"; // stale token must not make this approvable
           return "still not right";
-        }),
+        },
       });
       throw new Error("should have thrown");
     } catch (err) {
@@ -785,10 +789,8 @@ nodes:
     expect(readFileSync(join(dir, ".sao", "runs", state.id, "logs", "maybe.log"), "utf8")).toContain("probe-when");
   });
 
-  test(
-    "a hanging predicate is bounded by the node's timeout",
-    async () => {
-      const { dir, path } = setup(`
+  test("a hanging predicate is bounded by the node's timeout", async () => {
+    const { dir, path } = setup(`
 name: whenhang
 nodes:
   - id: maybe
@@ -796,12 +798,10 @@ nodes:
     timeout: 1
     bash: "echo unreached"
 `);
-      const started = Date.now();
-      await expect(run(path, dir)).rejects.toThrow("timed out after 1s");
-      expect(Date.now() - started).toBeLessThan(4000);
-    },
-    10000,
-  );
+    const started = Date.now();
+    await expect(run(path, dir)).rejects.toThrow("timed out after 1s");
+    expect(Date.now() - started).toBeLessThan(4000);
+  }, 10000);
 
   test("a loop node failing at its when_bash predicate hints at <id>.log (no iteration ran)", async () => {
     const { dir, path } = setup(`
@@ -1058,10 +1058,8 @@ nodes:
 });
 
 describe("gate timeout", () => {
-  test(
-    "a gate's hanging when_bash predicate is bounded by its timeout",
-    async () => {
-      const { dir, path } = setup(`
+  test("a gate's hanging when_bash predicate is bounded by its timeout", async () => {
+    const { dir, path } = setup(`
 name: gatewhenhang
 nodes:
   - id: ship
@@ -1070,18 +1068,16 @@ nodes:
     gate:
       message: "never asked"
 `);
-      const started = Date.now();
-      await expect(
-        run(path, dir, {
-          promptUser: async () => {
-            throw new Error("promptUser must not be called");
-          },
-        }),
-      ).rejects.toThrow("timed out after 1s");
-      expect(Date.now() - started).toBeLessThan(4000);
-    },
-    10000,
-  );
+    const started = Date.now();
+    await expect(
+      run(path, dir, {
+        promptUser: async () => {
+          throw new Error("promptUser must not be called");
+        },
+      }),
+    ).rejects.toThrow("timed out after 1s");
+    expect(Date.now() - started).toBeLessThan(4000);
+  }, 10000);
 });
 
 describe("retries by node kind", () => {

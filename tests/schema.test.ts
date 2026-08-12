@@ -58,9 +58,7 @@ describe("input name pattern", () => {
   test("reports the exact input name error message", () => {
     const result = workflowTopSchema.safeParse(withInput("x!"));
     expect(result.success).toBe(false);
-    expect(result.error!.issues[0]!.message).toBe(
-      "input names must be identifiers (letters, digits, _)",
-    );
+    expect(result.error!.issues[0]!.message).toBe("input names must be identifiers (letters, digits, _)");
   });
 });
 

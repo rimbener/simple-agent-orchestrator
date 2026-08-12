@@ -200,7 +200,12 @@ nodes:
     depends_on: [ship]
     bash: "echo shipped"
 `);
-    const result = spawnSync("bun", ["run", CLI, "run", path, "--no-worktree"], { cwd: dir, encoding: "utf8", input: "a\n", timeout: 30000 });
+    const result = spawnSync("bun", ["run", CLI, "run", path, "--no-worktree"], {
+      cwd: dir,
+      encoding: "utf8",
+      input: "a\n",
+      timeout: 30000,
+    });
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("Ship it?");
     expect(result.stdout).toContain("succeeded");
@@ -215,7 +220,12 @@ nodes:
       message: "Ship it?"
 `);
     // input: "" closes stdin immediately — the CI / `< /dev/null` case.
-    const result = spawnSync("bun", ["run", CLI, "run", path, "--no-worktree"], { cwd: dir, encoding: "utf8", input: "", timeout: 30000 });
+    const result = spawnSync("bun", ["run", CLI, "run", path, "--no-worktree"], {
+      cwd: dir,
+      encoding: "utf8",
+      input: "",
+      timeout: 30000,
+    });
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("stdin closed");
   });
@@ -235,7 +245,12 @@ nodes:
     gate:
       message: "Second?"
 `);
-    const result = spawnSync("bun", ["run", CLI, "run", path, "--no-worktree"], { cwd: dir, encoding: "utf8", input: "a\na\n", timeout: 30000 });
+    const result = spawnSync("bun", ["run", CLI, "run", path, "--no-worktree"], {
+      cwd: dir,
+      encoding: "utf8",
+      input: "a\na\n",
+      timeout: 30000,
+    });
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("✓ first");
     expect(result.stdout).toContain("✓ second");
@@ -254,7 +269,12 @@ nodes:
     gate:
       message: "Second?"
 `);
-    const result = spawnSync("bun", ["run", CLI, "run", path, "--no-worktree"], { cwd: dir, encoding: "utf8", input: "a\n", timeout: 30000 });
+    const result = spawnSync("bun", ["run", CLI, "run", path, "--no-worktree"], {
+      cwd: dir,
+      encoding: "utf8",
+      input: "a\n",
+      timeout: 30000,
+    });
     expect(result.status).toBe(1);
     expect(result.stdout).toContain("✓ first"); // the first gate did approve
     expect(result.stderr).toContain("stdin closed");
@@ -268,43 +288,48 @@ nodes:
     gate:
       message: "Ship it?"
 `);
-    const result = spawnSync("bun", ["run", CLI, "run", path, "--no-worktree"], { cwd: dir, encoding: "utf8", input: "r\n", timeout: 30000 });
+    const result = spawnSync("bun", ["run", CLI, "run", path, "--no-worktree"], {
+      cwd: dir,
+      encoding: "utf8",
+      input: "r\n",
+      timeout: 30000,
+    });
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('rejected at node "ship"');
   });
 });
 
 describe("sao run permission prompts (ACP)", () => {
-  test(
-    "@s-permission-stdin-closed-fails: with no terminal, the node fails naming an interactive terminal, never auto-approving",
-    () => {
-      const restore = withStubOpencodePermission();
-      try {
-        const { dir, path } = tempWorkflow(`
+  test("@s-permission-stdin-closed-fails: with no terminal, the node fails naming an interactive terminal, never auto-approving", () => {
+    const restore = withStubOpencodePermission();
+    try {
+      const { dir, path } = tempWorkflow(`
 name: perm-eof
 nodes:
   - id: ask
     runner: opencode
     prompt: "do the risky thing"
 `);
-        const result = spawnSync("bun", ["run", CLI, "run", path, "--no-worktree"], { cwd: dir, encoding: "utf8", input: "", timeout: 30000, env: process.env });
-        expect(result.status).toBe(1);
-        expect(result.stderr).toContain("stdin closed");
-        expect(result.stderr).toContain("interactive terminal");
-        expect(result.stderr).toContain("permission prompts"); // the hint names the caller that actually fired, not just gates/loops
-      } finally {
-        restore();
-      }
-    },
-    30000,
-  );
+      const result = spawnSync("bun", ["run", CLI, "run", path, "--no-worktree"], {
+        cwd: dir,
+        encoding: "utf8",
+        input: "",
+        timeout: 30000,
+        env: process.env,
+      });
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("stdin closed");
+      expect(result.stderr).toContain("interactive terminal");
+      expect(result.stderr).toContain("permission prompts"); // the hint names the caller that actually fired, not just gates/loops
+    } finally {
+      restore();
+    }
+  }, 30000);
 
-  test(
-    "@s-permission-serialized-with-gates: only one prompt is shown at a time, and each names its own node",
-    () => {
-      const restore = withStubOpencodePermission(200);
-      try {
-        const { dir, path } = tempWorkflow(`
+  test("@s-permission-serialized-with-gates: only one prompt is shown at a time, and each names its own node", () => {
+    const restore = withStubOpencodePermission(200);
+    try {
+      const { dir, path } = tempWorkflow(`
 name: perm-serialize
 nodes:
   - id: approve
@@ -314,42 +339,44 @@ nodes:
     runner: opencode
     prompt: "do the risky thing"
 `);
-        const result = spawnSync("bun", ["run", CLI, "run", path, "--no-worktree"], { cwd: dir, encoding: "utf8", input: "a\n1\n", timeout: 30000, env: process.env });
-        expect(result.status).toBe(0);
-        expect(result.stdout).toContain("succeeded");
-        const gateAt = result.stdout.indexOf("Approve?");
-        const permAt = result.stdout.indexOf("permission requested");
-        expect(gateAt).toBeGreaterThanOrEqual(0);
-        expect(permAt).toBeGreaterThan(gateAt); // the second prompt is shown only after the first is answered
-        expect(result.stdout).toContain("[ask]"); // names the node it belongs to
-      } finally {
-        restore();
-      }
-    },
-    30000,
-  );
+      const result = spawnSync("bun", ["run", CLI, "run", path, "--no-worktree"], {
+        cwd: dir,
+        encoding: "utf8",
+        input: "a\n1\n",
+        timeout: 30000,
+        env: process.env,
+      });
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain("succeeded");
+      const gateAt = result.stdout.indexOf("Approve?");
+      const permAt = result.stdout.indexOf("permission requested");
+      expect(gateAt).toBeGreaterThanOrEqual(0);
+      expect(permAt).toBeGreaterThan(gateAt); // the second prompt is shown only after the first is answered
+      expect(result.stdout).toContain("[ask]"); // names the node it belongs to
+    } finally {
+      restore();
+    }
+  }, 30000);
 });
 
 describe("sao run — no unexpected prompts for claude/codex", () => {
-  test(
-    "@s-no-new-prompts-for-claude-codex: a claude-and-codex-only run with no gates completes without ever prompting, even with stdin closed",
-    () => {
-      const restoreClaude = withStubBin(
-        "claude",
-        `#!/bin/sh
+  test("@s-no-new-prompts-for-claude-codex: a claude-and-codex-only run with no gates completes without ever prompting, even with stdin closed", () => {
+    const restoreClaude = withStubBin(
+      "claude",
+      `#!/bin/sh
 cat > /dev/null
 echo '{"type":"result","result":"claude done","session_id":"c1","is_error":false}'
 `,
-      );
-      const restoreCodex = withStubBin(
-        "codex",
-        `#!/bin/sh
+    );
+    const restoreCodex = withStubBin(
+      "codex",
+      `#!/bin/sh
 cat > /dev/null
 echo '{"type":"item.completed","item":{"type":"agent_message","text":"codex done"}}'
 `,
-      );
-      try {
-        const { dir, path } = tempWorkflow(`
+    );
+    try {
+      const { dir, path } = tempWorkflow(`
 name: no-prompts
 nodes:
   - id: one
@@ -360,17 +387,21 @@ nodes:
     depends_on: [one]
     prompt: "hi"
 `);
-        const result = spawnSync("bun", ["run", CLI, "run", path, "--no-worktree"], { cwd: dir, encoding: "utf8", input: "", timeout: 30000, env: process.env });
-        expect(result.status).toBe(0);
-        expect(result.stdout).toContain("succeeded");
-        expect(result.stdout).not.toContain("permission requested");
-      } finally {
-        restoreClaude();
-        restoreCodex();
-      }
-    },
-    30000,
-  );
+      const result = spawnSync("bun", ["run", CLI, "run", path, "--no-worktree"], {
+        cwd: dir,
+        encoding: "utf8",
+        input: "",
+        timeout: 30000,
+        env: process.env,
+      });
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain("succeeded");
+      expect(result.stdout).not.toContain("permission requested");
+    } finally {
+      restoreClaude();
+      restoreCodex();
+    }
+  }, 30000);
 });
 
 describe("sao run", () => {
@@ -415,49 +446,48 @@ nodes:
   - id: a
     bash: "echo \\"task=[{{task}}] one=[{{one}}] two=[{{two}}]\\""
 `);
-    const result = runCli(["run", path, "add", "dark", "mode", "--no-worktree", "--var", "one=x", "--var", "two=y"], dir);
+    const result = runCli(
+      ["run", path, "add", "dark", "mode", "--no-worktree", "--var", "one=x", "--var", "two=y"],
+      dir,
+    );
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("task=[add dark mode] one=[x] two=[y]");
   });
 
-  test(
-    "SIGINT persists state.json as failed instead of leaving it running",
-    async () => {
-      const { dir, path } = tempWorkflow(`
+  test("SIGINT persists state.json as failed instead of leaving it running", async () => {
+    const { dir, path } = tempWorkflow(`
 name: cli-sigint
 nodes:
   - id: slow
     bash: "sleep 30"
 `);
-      const child = spawn("bun", ["run", CLI, "run", path, "--no-worktree"], { cwd: dir, stdio: "ignore" });
-      const runsDir = join(dir, ".sao", "runs");
-      const findRunningState = (): string | undefined => {
-        if (!existsSync(runsDir)) return undefined;
-        const run = readdirSync(runsDir)[0];
-        if (!run) return undefined;
-        const file = join(runsDir, run, "state.json");
-        try {
-          return JSON.parse(readFileSync(file, "utf8")).nodes.slow.status === "running" ? file : undefined;
-        } catch {
-          return undefined; // state.json missing or mid-write
-        }
-      };
-
-      let stateFile: string | undefined;
-      for (let i = 0; i < 100 && !stateFile; i++) {
-        await new Promise((r) => setTimeout(r, 100));
-        stateFile = findRunningState();
+    const child = spawn("bun", ["run", CLI, "run", path, "--no-worktree"], { cwd: dir, stdio: "ignore" });
+    const runsDir = join(dir, ".sao", "runs");
+    const findRunningState = (): string | undefined => {
+      if (!existsSync(runsDir)) return undefined;
+      const run = readdirSync(runsDir)[0];
+      if (!run) return undefined;
+      const file = join(runsDir, run, "state.json");
+      try {
+        return JSON.parse(readFileSync(file, "utf8")).nodes.slow.status === "running" ? file : undefined;
+      } catch {
+        return undefined; // state.json missing or mid-write
       }
-      expect(stateFile).toBeDefined();
+    };
 
-      child.kill("SIGINT");
-      await new Promise((r) => child.once("exit", r));
-      const saved = JSON.parse(readFileSync(stateFile!, "utf8"));
-      expect(saved.status).toBe("failed");
-      expect(saved.nodes.slow.status).toBe("failed");
-    },
-    20000,
-  );
+    let stateFile: string | undefined;
+    for (let i = 0; i < 100 && !stateFile; i++) {
+      await new Promise((r) => setTimeout(r, 100));
+      stateFile = findRunningState();
+    }
+    expect(stateFile).toBeDefined();
+
+    child.kill("SIGINT");
+    await new Promise((r) => child.once("exit", r));
+    const saved = JSON.parse(readFileSync(stateFile!, "utf8"));
+    expect(saved.status).toBe("failed");
+    expect(saved.nodes.slow.status).toBe("failed");
+  }, 20000);
 
   test("rejects --var __proto__ as an unknown input instead of silently dropping it", () => {
     const { dir, path } = tempWorkflow(`

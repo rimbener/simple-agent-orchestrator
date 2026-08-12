@@ -53,7 +53,11 @@ function useRunner(script: Array<string | Error>, calls: RunnerRequest[] = []): 
   return () => runner;
 }
 
-function run(path: string, dir: string, extra: Partial<Parameters<typeof runWorkflow>[0]> = {}): ReturnType<typeof runWorkflow> {
+function run(
+  path: string,
+  dir: string,
+  extra: Partial<Parameters<typeof runWorkflow>[0]> = {},
+): ReturnType<typeof runWorkflow> {
   return runWorkflow({
     workflow: loadWorkflow(path, { cwd: dir }),
     workflowPath: path,
@@ -82,7 +86,7 @@ function onlyRunId(root: string): string {
 }
 
 /** Run to failure, then resume; returns whatever both phases produced. */
-const FAIL_ONCE = 'test -f marker || { touch marker; echo first-try >&2; exit 1; }';
+const FAIL_ONCE = "test -f marker || { touch marker; echo first-try >&2; exit 1; }";
 
 describe("resume basics", () => {
   test("completed nodes are not re-run; their outputs still feed dependents' templates", async () => {
@@ -98,7 +102,10 @@ nodes:
     const firstLines: string[] = [];
     const firstCalls: RunnerRequest[] = [];
     const err = await rejection(
-      run(path, dir, { resolveRunner: useRunner(["alpha", new SaoError("boom")], firstCalls), print: (l) => firstLines.push(l) }),
+      run(path, dir, {
+        resolveRunner: useRunner(["alpha", new SaoError("boom")], firstCalls),
+        print: (l) => firstLines.push(l),
+      }),
     );
     expect(err.message).toContain('failed at node "b"');
     expect(err.hint).toContain(`resume with: sao resume ${onlyRunId(dir)}`);
@@ -661,7 +668,9 @@ nodes:
 `);
     // Attempt 1 dies at iteration 1; the retry gets to iteration 2 and dies there —
     // so the persisted resume point is iteration 2.
-    await rejection(run(path, dir, { resolveRunner: useRunner([new SaoError("crash-0"), "no", new SaoError("crash-1")]) }));
+    await rejection(
+      run(path, dir, { resolveRunner: useRunner([new SaoError("crash-0"), "no", new SaoError("crash-1")]) }),
+    );
     const loaded = loadRun(dir, onlyRunId(dir));
     expect(loaded.state.nodes["work"]!.iterations).toBe(2);
 
@@ -1010,7 +1019,10 @@ nodes:
       const { dir, path } = setup(yaml);
       mkdirSync(join(dir, ".agents", "agents"), { recursive: true });
       writeFileSync(join(dir, ".agents", "agents", "first.md"), `---\nname: first\ndescription: d\n---\n${firstBody}`);
-      writeFileSync(join(dir, ".agents", "agents", "second.md"), `---\nname: second\ndescription: d\n---\n${secondBody}`);
+      writeFileSync(
+        join(dir, ".agents", "agents", "second.md"),
+        `---\nname: second\ndescription: d\n---\n${secondBody}`,
+      );
       return hashRunConfig(path, loadWorkflow(path, { cwd: dir }));
     };
     // Identical workflow bytes and identical concatenated agent bytes — only the

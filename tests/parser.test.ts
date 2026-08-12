@@ -680,7 +680,9 @@ nodes:
   - id: a
     bash: "echo {{audience}}"
 `);
-    expect(err.message).toBe('node "a": {{audience}} references optional input "audience", which may be unset at run time');
+    expect(err.message).toBe(
+      'node "a": {{audience}} references optional input "audience", which may be unset at run time',
+    );
     expect(err.hint).toBe("mark it required: true or give it a default: so the reference always has a value");
   });
 

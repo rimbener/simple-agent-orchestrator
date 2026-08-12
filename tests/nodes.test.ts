@@ -4,8 +4,8 @@ import { existsSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SaoError } from "../src/errors";
-import { evaluateWhenBash, executeAiNode, executeBashScript, runShell, trimBuffer, withRetries } from "../src/nodes";
 import type { AiExecConfig } from "../src/nodes";
+import { evaluateWhenBash, executeAiNode, executeBashScript, runShell, trimBuffer, withRetries } from "../src/nodes";
 import type { Runner, RunnerRequest } from "../src/runners/types";
 
 const cwd = () => mkdtempSync(join(tmpdir(), "sao-nodes-"));
@@ -13,7 +13,10 @@ const cwd = () => mkdtempSync(join(tmpdir(), "sao-nodes-"));
 // Mirrors MAX_BUFFER_CHARS in src/nodes.ts.
 const MAX_BUFFER_CHARS = 4 << 20;
 
-function fakeRunner(result: { output?: string; sessionId?: string; exitCode?: number }, calls: RunnerRequest[] = []): Runner {
+function fakeRunner(
+  result: { output?: string; sessionId?: string; exitCode?: number },
+  calls: RunnerRequest[] = [],
+): Runner {
   return {
     name: "fake",
     async run(req) {
@@ -85,35 +88,27 @@ describe("executeBashScript", () => {
     expect(Date.now() - started).toBeLessThan(3000);
   });
 
-  test(
-    "timeout settles at the deadline even when a grandchild escapes the process group",
-    async () => {
-      // perl setsid()s into its own session, out of reach of the group kill, while
-      // still holding the stdio pipes — the rejection must come from the timer, not close.
-      const script = "perl -MPOSIX -e 'POSIX::setsid(); sleep 8' & wait";
-      const started = Date.now();
-      await expect(executeBashScript(script, { cwd: cwd(), timeoutSec: 1, log: () => {} })).rejects.toThrow(
-        "timed out after 1s",
-      );
-      expect(Date.now() - started).toBeLessThan(4000);
-    },
-    10000,
-  );
+  test("timeout settles at the deadline even when a grandchild escapes the process group", async () => {
+    // perl setsid()s into its own session, out of reach of the group kill, while
+    // still holding the stdio pipes — the rejection must come from the timer, not close.
+    const script = "perl -MPOSIX -e 'POSIX::setsid(); sleep 8' & wait";
+    const started = Date.now();
+    await expect(executeBashScript(script, { cwd: cwd(), timeoutSec: 1, log: () => {} })).rejects.toThrow(
+      "timed out after 1s",
+    );
+    expect(Date.now() - started).toBeLessThan(4000);
+  }, 10000);
 
-  test(
-    "timeout kills the whole process tree, not just sh",
-    async () => {
-      // "; true" stops sh from exec-replacing itself, so sleep is a grandchild that
-      // holds the stdio pipes — killing only sh would hang this until sleep exits.
-      const script = "sleep 30; true";
-      const started = Date.now();
-      await expect(executeBashScript(script, { cwd: cwd(), timeoutSec: 1, log: () => {} })).rejects.toThrow(
-        "timed out after 1s",
-      );
-      expect(Date.now() - started).toBeLessThan(5000);
-    },
-    10000,
-  );
+  test("timeout kills the whole process tree, not just sh", async () => {
+    // "; true" stops sh from exec-replacing itself, so sleep is a grandchild that
+    // holds the stdio pipes — killing only sh would hang this until sleep exits.
+    const script = "sleep 30; true";
+    const started = Date.now();
+    await expect(executeBashScript(script, { cwd: cwd(), timeoutSec: 1, log: () => {} })).rejects.toThrow(
+      "timed out after 1s",
+    );
+    expect(Date.now() - started).toBeLessThan(5000);
+  }, 10000);
 
   test("runs the script in the given cwd", async () => {
     const dir = cwd();
@@ -133,22 +128,18 @@ describe("executeBashScript", () => {
     expect(output).toBe("done");
   });
 
-  test(
-    "timeout kills backgrounded grandchildren via the detached process group",
-    async () => {
-      // The subshell would write the marker at t=2s; the group kill at t=1s must
-      // reach it. Killing only sh (non-detached fallback) leaves it alive.
-      const dir = cwd();
-      const marker = join(dir, "marker.txt");
-      const script = `(sleep 2; echo alive > "${marker}") & wait`;
-      await expect(executeBashScript(script, { cwd: dir, timeoutSec: 1, log: () => {} })).rejects.toThrow(
-        "timed out after 1s",
-      );
-      await new Promise((resolve) => setTimeout(resolve, 2500));
-      expect(existsSync(marker)).toBe(false);
-    },
-    10000,
-  );
+  test("timeout kills backgrounded grandchildren via the detached process group", async () => {
+    // The subshell would write the marker at t=2s; the group kill at t=1s must
+    // reach it. Killing only sh (non-detached fallback) leaves it alive.
+    const dir = cwd();
+    const marker = join(dir, "marker.txt");
+    const script = `(sleep 2; echo alive > "${marker}") & wait`;
+    await expect(executeBashScript(script, { cwd: dir, timeoutSec: 1, log: () => {} })).rejects.toThrow(
+      "timed out after 1s",
+    );
+    await new Promise((resolve) => setTimeout(resolve, 2500));
+    expect(existsSync(marker)).toBe(false);
+  }, 10000);
 
   test("rejects with SaoError when the shell cannot spawn", async () => {
     const missing = join(cwd(), "does-not-exist");
@@ -161,30 +152,26 @@ describe("executeBashScript", () => {
     }
   });
 
-  test(
-    "clears the timeout timer on settle so the process can exit promptly",
-    async () => {
-      // Touch the timer path in-process first so per-test mutant coverage sees it.
-      await executeBashScript("true", { cwd: cwd(), timeoutSec: 5, log: () => {} });
+  test("clears the timeout timer on settle so the process can exit promptly", async () => {
+    // Touch the timer path in-process first so per-test mutant coverage sees it.
+    await executeBashScript("true", { cwd: cwd(), timeoutSec: 5, log: () => {} });
 
-      // An uncleared 5s timer would keep the child process's event loop alive long
-      // after the node resolves — observable as wall-clock exit time.
-      const dir = cwd();
-      const nodesPath = new URL("../src/nodes.ts", import.meta.url).pathname;
-      const scriptPath = join(dir, "exit-fast.ts");
-      writeFileSync(
-        scriptPath,
-        `import { executeBashScript } from ${JSON.stringify(nodesPath)};\n` +
-          `const output = await executeBashScript("echo ok", { cwd: process.cwd(), timeoutSec: 5, log: () => {} });\n` +
-          `console.log("RESOLVED:" + output);\n`,
-      );
-      const started = Date.now();
-      const result = spawnSync(process.execPath, [scriptPath], { cwd: dir, encoding: "utf8", timeout: 8000 });
-      expect(result.stdout).toContain("RESOLVED:ok");
-      expect(Date.now() - started).toBeLessThan(3500);
-    },
-    15000,
-  );
+    // An uncleared 5s timer would keep the child process's event loop alive long
+    // after the node resolves — observable as wall-clock exit time.
+    const dir = cwd();
+    const nodesPath = new URL("../src/nodes.ts", import.meta.url).pathname;
+    const scriptPath = join(dir, "exit-fast.ts");
+    writeFileSync(
+      scriptPath,
+      `import { executeBashScript } from ${JSON.stringify(nodesPath)};\n` +
+        `const output = await executeBashScript("echo ok", { cwd: process.cwd(), timeoutSec: 5, log: () => {} });\n` +
+        `console.log("RESOLVED:" + output);\n`,
+    );
+    const started = Date.now();
+    const result = spawnSync(process.execPath, [scriptPath], { cwd: dir, encoding: "utf8", timeout: 8000 });
+    expect(result.stdout).toContain("RESOLVED:ok");
+    expect(Date.now() - started).toBeLessThan(3500);
+  }, 15000);
 
   test("does not trim segments while the buffer stays under the cap", async () => {
     // 200 real lines + 950 trailing blanks (~2 KB total): an eager trim to the last
@@ -360,9 +347,9 @@ describe("executeAiNode", () => {
   });
 
   test("throws when the runner exits non-zero", async () => {
-    await expect(executeAiNode("p", config(fakeRunner({ exitCode: 2 })), { cwd: cwd(), log: () => {} })).rejects.toThrow(
-      "fake exited with code 2",
-    );
+    await expect(
+      executeAiNode("p", config(fakeRunner({ exitCode: 2 })), { cwd: cwd(), log: () => {} }),
+    ).rejects.toThrow("fake exited with code 2");
   });
 
   test("non-zero exit surfaces the result text as the error hint", async () => {

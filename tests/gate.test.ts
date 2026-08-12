@@ -69,7 +69,10 @@ describe("parsePermissionReply", () => {
     expect(parsePermissionReply(reply, 3)).toEqual({ kind: "selected", index });
   });
 
-  test.each([["0"], ["4"], ["-1"], ["a"], ["1.5"], [""], ["  "]])("%p is invalid against 3 offered options", (reply) => {
-    expect(parsePermissionReply(reply, 3)).toEqual({ kind: "invalid" });
-  });
+  test.each([["0"], ["4"], ["-1"], ["a"], ["1.5"], [""], ["  "]])(
+    "%p is invalid against 3 offered options",
+    (reply) => {
+      expect(parsePermissionReply(reply, 3)).toEqual({ kind: "invalid" });
+    },
+  );
 });

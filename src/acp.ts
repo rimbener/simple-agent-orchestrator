@@ -2,13 +2,13 @@ import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { Readable, Writable } from "node:stream";
 import {
-  ClientSideConnection,
-  ndJsonStream,
-  PROTOCOL_VERSION,
   type AgentCapabilities,
   type Client,
+  ClientSideConnection,
   type ContentBlock,
   type McpServer,
+  ndJsonStream,
+  PROTOCOL_VERSION,
   type RequestPermissionRequest,
   type RequestPermissionResponse,
   type SessionNotification,
@@ -134,7 +134,9 @@ export function runAcpTurn(launch: AcpLaunch, req: RunnerRequest): Promise<Runne
   return new Promise((resolve, reject) => {
     const ignored = ignoredAcpSettings(req);
     if (ignored.length > 0) {
-      req.onOutput?.(`⚠ ${launch.command} ignores ${ignored.join(", ")} — ACP has no tool-allowlist concept to map it onto\n`);
+      req.onOutput?.(
+        `⚠ ${launch.command} ignores ${ignored.join(", ")} — ACP has no tool-allowlist concept to map it onto\n`,
+      );
     }
 
     const child = spawn(launch.command, launch.args, {
@@ -280,7 +282,9 @@ export function runAcpTurn(launch: AcpLaunch, req: RunnerRequest): Promise<Runne
             // branch does nothing further — a genuine transport failure is
             // never swallowed into a "lost session" retry.
             if (settled) return;
-            req.onOutput?.(`⚠ lost session ${req.resumeSessionId} — prior conversation history was lost; continuing in a new session\n`);
+            req.onOutput?.(
+              `⚠ lost session ${req.resumeSessionId} — prior conversation history was lost; continuing in a new session\n`,
+            );
           }
         }
         if (sessionId === undefined) {
@@ -300,7 +304,9 @@ export function runAcpTurn(launch: AcpLaunch, req: RunnerRequest): Promise<Runne
             await conn.setSessionModel({ sessionId, modelId: req.model });
           } catch (err) {
             if ((err as { code?: number })?.code === -32601) {
-              req.onOutput?.(`⚠ ${launch.command} cannot select models — model ${req.model} ignored, using its default\n`);
+              req.onOutput?.(
+                `⚠ ${launch.command} cannot select models — model ${req.model} ignored, using its default\n`,
+              );
             } else {
               throw new SaoError(`${launch.command} failed to set model ${req.model}: ${(err as Error).message}`);
             }
@@ -367,7 +373,9 @@ export function runAcpHandshake(
 
     const timer = setTimeout(() => {
       killTree(child);
-      settle(() => reject(new SaoError(`${launch.command} did not respond to the ACP handshake within ${timeoutSec}s`)));
+      settle(() =>
+        reject(new SaoError(`${launch.command} did not respond to the ACP handshake within ${timeoutSec}s`)),
+      );
     }, timeoutSec * 1000);
 
     child.on("error", (err: NodeJS.ErrnoException) => {

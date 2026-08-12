@@ -1,5 +1,5 @@
-import { PassThrough } from "node:stream";
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
+import { PassThrough } from "node:stream";
 
 // The prompt machinery reads real process.stdin, so the suite replaces it with an
 // in-memory pipe: readline is driven by writes instead of a human terminal.

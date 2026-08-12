@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
-import { z, ZodError } from "zod";
+import { ZodError, z } from "zod";
 import { SaoError } from "./errors";
 import type { AgentSpec, Workflow } from "./schema";
 

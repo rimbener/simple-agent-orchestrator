@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
+import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { killTree, onShutdown, shutdownAll, swallowStdinErrors, track } from "../src/procs";
 
@@ -117,24 +117,20 @@ describe("shutdown handler wiring", () => {
 });
 
 describe("killTree", () => {
-  test(
-    "settles a detached tree whose grandchild holds the stdio pipes",
-    async () => {
-      const child = spawn("sh", ["-c", "sleep 30; true"], {
-        stdio: ["ignore", "pipe", "pipe"],
-        detached: true,
-      });
-      track(child);
-      const closed = new Promise<void>((resolve) => child.once("close", () => resolve()));
+  test("settles a detached tree whose grandchild holds the stdio pipes", async () => {
+    const child = spawn("sh", ["-c", "sleep 30; true"], {
+      stdio: ["ignore", "pipe", "pipe"],
+      detached: true,
+    });
+    track(child);
+    const closed = new Promise<void>((resolve) => child.once("close", () => resolve()));
 
-      await new Promise((resolve) => setTimeout(resolve, 200)); // let sh fork sleep
-      const started = Date.now();
-      killTree(child);
-      await closed;
-      expect(Date.now() - started).toBeLessThan(2000);
-    },
-    10000,
-  );
+    await new Promise((resolve) => setTimeout(resolve, 200)); // let sh fork sleep
+    const started = Date.now();
+    killTree(child);
+    await closed;
+    expect(Date.now() - started).toBeLessThan(2000);
+  }, 10000);
 
   test("is safe to call on an already-exited child", async () => {
     const child = spawn("sh", ["-c", "true"], { stdio: ["ignore", "pipe", "pipe"], detached: true });
@@ -143,45 +139,41 @@ describe("killTree", () => {
     expect(() => killTree(child)).not.toThrow();
   });
 
-  test(
-    "SIGKILLs the whole process group, not just the direct child",
-    async () => {
-      // sh prints the pid of its backgrounded grandchild, then waits on it.
-      const child = spawn("sh", ["-c", "sleep 30 & echo $!; wait"], {
-        stdio: ["ignore", "pipe", "pipe"],
-        detached: true,
+  test("SIGKILLs the whole process group, not just the direct child", async () => {
+    // sh prints the pid of its backgrounded grandchild, then waits on it.
+    const child = spawn("sh", ["-c", "sleep 30 & echo $!; wait"], {
+      stdio: ["ignore", "pipe", "pipe"],
+      detached: true,
+    });
+    track(child);
+    const grandchildPid = await new Promise<number>((resolve, reject) => {
+      let buf = "";
+      child.stdout?.on("data", (chunk: Buffer) => {
+        buf += String(chunk);
+        const match = buf.match(/^(\d+)\n/);
+        if (match) resolve(Number(match[1]));
       });
-      track(child);
-      const grandchildPid = await new Promise<number>((resolve, reject) => {
-        let buf = "";
-        child.stdout?.on("data", (chunk: Buffer) => {
-          buf += String(chunk);
-          const match = buf.match(/^(\d+)\n/);
-          if (match) resolve(Number(match[1]));
-        });
-        child.once("error", reject);
-      });
+      child.once("error", reject);
+    });
 
+    try {
+      expect(() => process.kill(grandchildPid, 0)).not.toThrow(); // grandchild is alive
+      killTree(child);
+      // Only a group kill (negative pid, SIGKILL) reaches the grandchild.
+      expect(await eventuallyDead(grandchildPid, 3000)).toBe(true);
+    } finally {
       try {
-        expect(() => process.kill(grandchildPid, 0)).not.toThrow(); // grandchild is alive
-        killTree(child);
-        // Only a group kill (negative pid, SIGKILL) reaches the grandchild.
-        expect(await eventuallyDead(grandchildPid, 3000)).toBe(true);
-      } finally {
-        try {
-          process.kill(grandchildPid, "SIGKILL");
-        } catch {
-          // already dead — the expected case
-        }
-        try {
-          if (child.pid !== undefined) process.kill(-child.pid, "SIGKILL");
-        } catch {
-          // already dead — the expected case
-        }
+        process.kill(grandchildPid, "SIGKILL");
+      } catch {
+        // already dead — the expected case
       }
-    },
-    10000,
-  );
+      try {
+        if (child.pid !== undefined) process.kill(-child.pid, "SIGKILL");
+      } catch {
+        // already dead — the expected case
+      }
+    }
+  }, 10000);
 
   test("falls back to child.kill(SIGKILL) when the group kill fails", () => {
     // pid 99999999 exceeds any real pid, so process.kill(-pid) throws ESRCH.
@@ -230,31 +222,27 @@ describe("swallowStdinErrors", () => {
 });
 
 describe("shutdownAll", () => {
-  test(
-    "kills tracked children that are still running",
-    async () => {
-      const child = spawn("sleep", ["30"], { stdio: "ignore", detached: true });
-      track(child);
-      try {
-        const exited = new Promise<boolean>((resolve) => {
-          const timer = setTimeout(() => resolve(false), 3000);
-          child.once("exit", () => {
-            clearTimeout(timer);
-            resolve(true);
-          });
+  test("kills tracked children that are still running", async () => {
+    const child = spawn("sleep", ["30"], { stdio: "ignore", detached: true });
+    track(child);
+    try {
+      const exited = new Promise<boolean>((resolve) => {
+        const timer = setTimeout(() => resolve(false), 3000);
+        child.once("exit", () => {
+          clearTimeout(timer);
+          resolve(true);
         });
-        shutdownAll();
-        expect(await exited).toBe(true);
-      } finally {
-        try {
-          if (child.pid !== undefined) process.kill(-child.pid, "SIGKILL");
-        } catch {
-          // already dead — the expected case
-        }
+      });
+      shutdownAll();
+      expect(await exited).toBe(true);
+    } finally {
+      try {
+        if (child.pid !== undefined) process.kill(-child.pid, "SIGKILL");
+      } catch {
+        // already dead — the expected case
       }
-    },
-    10000,
-  );
+    }
+  }, 10000);
 
   test("runs each shutdown hook exactly once across repeated calls", () => {
     let runs = 0;

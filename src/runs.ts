@@ -2,7 +2,7 @@ import { closeSync, existsSync, openSync, readdirSync, readSync, rmSync, statSyn
 import { basename, join, resolve } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { SaoError } from "./errors";
-import { isPidAlive, listRuns, runLockHolder, type RunPaths } from "./state";
+import { isPidAlive, listRuns, type RunPaths, runLockHolder } from "./state";
 import {
   branchExists,
   branchIsMergedElsewhere,
@@ -36,10 +36,19 @@ export function humanAge(fromIso: string, now: Date): string {
 export function formatRunList(root: string, now: Date): string[] {
   const listings = listRuns(root);
   if (listings.length === 0) return ["no runs found (nothing under .sao/runs)"];
-  const rows = listings.map(({ state }) => [state.id, basename(state.workflow), state.status, humanAge(state.createdAt, now)]);
+  const rows = listings.map(({ state }) => [
+    state.id,
+    basename(state.workflow),
+    state.status,
+    humanAge(state.createdAt, now),
+  ]);
   const header = ["RUN", "WORKFLOW", "STATUS", "AGE"];
   const widths = header.map((title, col) => Math.max(title.length, ...rows.map((row) => row[col]!.length)));
-  const line = (row: string[]) => row.map((cell, col) => cell.padEnd(widths[col]!)).join("  ").trimEnd();
+  const line = (row: string[]) =>
+    row
+      .map((cell, col) => cell.padEnd(widths[col]!))
+      .join("  ")
+      .trimEnd();
   return [line(header), ...rows.map(line)];
 }
 
@@ -221,7 +230,9 @@ export function cleanRuns(root: string, all: boolean, print: (line: string) => v
           // Only succeeded runs get this far (the unfinished check above), and
           // resume refuses those — so point at the manual fix, not a dead end.
           if (!all && worktreeHasChanges(worktreePath)) {
-            print(`⚠ ${state.id}: worktree has uncommitted changes — kept (commit them in the worktree, or pass --all to discard)`);
+            print(
+              `⚠ ${state.id}: worktree has uncommitted changes — kept (commit them in the worktree, or pass --all to discard)`,
+            );
             summary.keptDirty++;
             continue;
           }

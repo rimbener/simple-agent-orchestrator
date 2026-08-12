@@ -2,9 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SaoError } from "../src/errors";
-import { composeAcpPrompt, ignoredAcpSettings, runAcpHandshake, runAcpTurn } from "../src/acp";
 import type { AcpLaunch } from "../src/acp";
+import { composeAcpPrompt, ignoredAcpSettings, runAcpHandshake, runAcpTurn } from "../src/acp";
+import { SaoError } from "../src/errors";
 import type { PromptUser } from "../src/gate";
 
 /** Await a promise that must reject; returns the rejection error. */
@@ -137,7 +137,11 @@ process.stdin.on("data", function (data) {
 });
 `;
 
-function withAcpDouble(config: Record<string, unknown>): { launch: AcpLaunch; env: Record<string, string>; pidFile: string } {
+function withAcpDouble(config: Record<string, unknown>): {
+  launch: AcpLaunch;
+  env: Record<string, string>;
+  pidFile: string;
+} {
   const dir = mkdtempSync(join(tmpdir(), "sao-acp-double-"));
   const script = join(dir, "double.js");
   writeFileSync(script, DOUBLE_SCRIPT);
@@ -187,7 +191,12 @@ describe("runAcpTurn", () => {
       ],
     });
     const chunks: string[] = [];
-    const result = await runAcpTurn(double.launch, { prompt: "hi", cwd: process.cwd(), env: double.env, onOutput: (c) => chunks.push(c) });
+    const result = await runAcpTurn(double.launch, {
+      prompt: "hi",
+      cwd: process.cwd(),
+      env: double.env,
+      onOutput: (c) => chunks.push(c),
+    });
     expect(result.output).toBe("part one part two");
     expect(chunks.join("")).toBe("part one part two");
   });
@@ -202,44 +211,55 @@ describe("runAcpTurn", () => {
   });
 
   test("@s-acp-refusal-fails-node: a refusal stop reason fails the turn even on a clean exit", async () => {
-    const double = withAcpDouble({ chunks: [{ text: "I can't help with that" }], stopReason: "refusal", exitAfter: true });
+    const double = withAcpDouble({
+      chunks: [{ text: "I can't help with that" }],
+      stopReason: "refusal",
+      exitAfter: true,
+    });
     const err = await rejectionOf(runAcpTurn(double.launch, { prompt: "hi", cwd: process.cwd(), env: double.env }));
     expect(err).toBeInstanceOf(SaoError);
     expect(err.message).toContain("refused");
   });
 
-  test(
-    "@s-acp-timeout-kills: a hung turn times out, kills the process, and rejects naming the timeout",
-    async () => {
-      const double = withAcpDouble({ hang: true });
-      const err = await rejectionOf(runAcpTurn(double.launch, { prompt: "hi", cwd: process.cwd(), env: double.env, timeoutSec: 1 }));
-      expect(err).toBeInstanceOf(SaoError);
-      expect(err.message).toContain("timed out after 1s");
+  test("@s-acp-timeout-kills: a hung turn times out, kills the process, and rejects naming the timeout", async () => {
+    const double = withAcpDouble({ hang: true });
+    const err = await rejectionOf(
+      runAcpTurn(double.launch, { prompt: "hi", cwd: process.cwd(), env: double.env, timeoutSec: 1 }),
+    );
+    expect(err).toBeInstanceOf(SaoError);
+    expect(err.message).toContain("timed out after 1s");
 
-      const pid = Number(readFileSync(double.pidFile, "utf8"));
-      let dead = false;
-      for (let i = 0; i < 60; i++) {
-        if (!isAlive(pid)) {
-          dead = true;
-          break;
-        }
-        await wait(50);
+    const pid = Number(readFileSync(double.pidFile, "utf8"));
+    let dead = false;
+    for (let i = 0; i < 60; i++) {
+      if (!isAlive(pid)) {
+        dead = true;
+        break;
       }
-      expect(dead).toBe(true);
-    },
-    15000,
-  );
+      await wait(50);
+    }
+    expect(dead).toBe(true);
+  }, 15000);
 
   test("delivers the composed system prompt to the agent over the protocol", async () => {
     const double = withAcpDouble({ echoPrompt: true });
-    const result = await runAcpTurn(double.launch, { prompt: "do it", systemPrompt: "You are careful.", cwd: process.cwd(), env: double.env });
+    const result = await runAcpTurn(double.launch, {
+      prompt: "do it",
+      systemPrompt: "You are careful.",
+      cwd: process.cwd(),
+      env: double.env,
+    });
     expect(result.output).toBe("You are careful.\n\n---\n\ndo it");
   });
 
   test("runs the agent in the requested cwd with the request env merged over process.env", async () => {
     const double = withAcpDouble({ echoCwd: true, echoEnv: "SAO_RUN_ID" });
     const dir = mkdtempSync(join(tmpdir(), "sao-acp-cwd-"));
-    const result = await runAcpTurn(double.launch, { prompt: "hi", cwd: dir, env: { ...double.env, SAO_RUN_ID: "run-77" } });
+    const result = await runAcpTurn(double.launch, {
+      prompt: "hi",
+      cwd: dir,
+      env: { ...double.env, SAO_RUN_ID: "run-77" },
+    });
     expect(result.output).toBe(`${realpathSync(dir)} run-77`);
   });
 
@@ -272,50 +292,48 @@ describe("runAcpTurn", () => {
 });
 
 describe("runAcpTurn — the timeout clock pauses for a permission prompt (D5)", () => {
-  test(
-    "@s-timeout-paused-during-prompt: a human answering slower than timeoutSec does not time out the node",
-    async () => {
-      const double = withAcpDouble({ requestPermission: { title: "risky", options: [{ optionId: "opt-yes", name: "Yes", kind: "allow_once" }] } });
-      const promptUser: PromptUser = () => new Promise((resolve) => setTimeout(() => resolve("1"), 1500));
-      const result = await runAcpTurn(double.launch, {
-        prompt: "hi",
-        cwd: process.cwd(),
-        env: double.env,
-        timeoutSec: 1,
-        nodeId: "n",
-        promptUser,
-      });
-      expect(result.exitCode).toBe(0);
-    },
-    10000,
-  );
+  test("@s-timeout-paused-during-prompt: a human answering slower than timeoutSec does not time out the node", async () => {
+    const double = withAcpDouble({
+      requestPermission: { title: "risky", options: [{ optionId: "opt-yes", name: "Yes", kind: "allow_once" }] },
+    });
+    const promptUser: PromptUser = () => new Promise((resolve) => setTimeout(() => resolve("1"), 1500));
+    const result = await runAcpTurn(double.launch, {
+      prompt: "hi",
+      cwd: process.cwd(),
+      env: double.env,
+      timeoutSec: 1,
+      nodeId: "n",
+      promptUser,
+    });
+    expect(result.exitCode).toBe(0);
+  }, 10000);
 
-  test(
-    "@s-timeout-paused-while-queued: a prompt queued behind another's does not time out either, even once the total wait outlasts timeoutSec",
-    async () => {
-      const a = withAcpDouble({ requestPermission: { title: "task a", options: [{ optionId: "opt-a", name: "A", kind: "allow_once" }] } });
-      const b = withAcpDouble({ requestPermission: { title: "task b", options: [{ optionId: "opt-b", name: "B", kind: "allow_once" }] } });
-      // A single shared, hand-rolled serial queue (mirrors gate.ts's real one): the
-      // second call's own 800ms wait only starts once the first settles, so by the
-      // time it resolves, well over 1 second (b's timeoutSec) has elapsed overall.
-      let queue: Promise<unknown> = Promise.resolve();
-      const promptUser: PromptUser = () => {
-        const turn = queue.then(() => new Promise<string>((resolve) => setTimeout(() => resolve("1"), 800)));
-        queue = turn.then(
-          () => undefined,
-          () => undefined,
-        );
-        return turn;
-      };
-      const [ra, rb] = await Promise.all([
-        runAcpTurn(a.launch, { prompt: "hi", cwd: process.cwd(), env: a.env, timeoutSec: 1, nodeId: "a", promptUser }),
-        runAcpTurn(b.launch, { prompt: "hi", cwd: process.cwd(), env: b.env, timeoutSec: 1, nodeId: "b", promptUser }),
-      ]);
-      expect(ra.exitCode).toBe(0);
-      expect(rb.exitCode).toBe(0);
-    },
-    10000,
-  );
+  test("@s-timeout-paused-while-queued: a prompt queued behind another's does not time out either, even once the total wait outlasts timeoutSec", async () => {
+    const a = withAcpDouble({
+      requestPermission: { title: "task a", options: [{ optionId: "opt-a", name: "A", kind: "allow_once" }] },
+    });
+    const b = withAcpDouble({
+      requestPermission: { title: "task b", options: [{ optionId: "opt-b", name: "B", kind: "allow_once" }] },
+    });
+    // A single shared, hand-rolled serial queue (mirrors gate.ts's real one): the
+    // second call's own 800ms wait only starts once the first settles, so by the
+    // time it resolves, well over 1 second (b's timeoutSec) has elapsed overall.
+    let queue: Promise<unknown> = Promise.resolve();
+    const promptUser: PromptUser = () => {
+      const turn = queue.then(() => new Promise<string>((resolve) => setTimeout(() => resolve("1"), 800)));
+      queue = turn.then(
+        () => undefined,
+        () => undefined,
+      );
+      return turn;
+    };
+    const [ra, rb] = await Promise.all([
+      runAcpTurn(a.launch, { prompt: "hi", cwd: process.cwd(), env: a.env, timeoutSec: 1, nodeId: "a", promptUser }),
+      runAcpTurn(b.launch, { prompt: "hi", cwd: process.cwd(), env: b.env, timeoutSec: 1, nodeId: "b", promptUser }),
+    ]);
+    expect(ra.exitCode).toBe(0);
+    expect(rb.exitCode).toBe(0);
+  }, 10000);
 });
 
 describe("runAcpHandshake", () => {
@@ -332,28 +350,26 @@ describe("runAcpHandshake", () => {
     expect(err.message).toContain("handshake");
   });
 
-  test(
-    "a hung handshake times out, kills the process, and rejects naming the timeout",
-    async () => {
-      const double = withAcpDouble({ hangInitialize: true });
-      const err = await rejectionOf(runAcpHandshake(double.launch, { cwd: process.cwd(), env: double.env, timeoutSec: 1 }));
-      expect(err).toBeInstanceOf(SaoError);
-      expect(err.message).toContain("handshake");
-      expect(err.message).toContain("1s");
+  test("a hung handshake times out, kills the process, and rejects naming the timeout", async () => {
+    const double = withAcpDouble({ hangInitialize: true });
+    const err = await rejectionOf(
+      runAcpHandshake(double.launch, { cwd: process.cwd(), env: double.env, timeoutSec: 1 }),
+    );
+    expect(err).toBeInstanceOf(SaoError);
+    expect(err.message).toContain("handshake");
+    expect(err.message).toContain("1s");
 
-      const pid = Number(readFileSync(double.pidFile, "utf8"));
-      let dead = false;
-      for (let i = 0; i < 60; i++) {
-        if (!isAlive(pid)) {
-          dead = true;
-          break;
-        }
-        await wait(50);
+    const pid = Number(readFileSync(double.pidFile, "utf8"));
+    let dead = false;
+    for (let i = 0; i < 60; i++) {
+      if (!isAlive(pid)) {
+        dead = true;
+        break;
       }
-      expect(dead).toBe(true);
-    },
-    15000,
-  );
+      await wait(50);
+    }
+    expect(dead).toBe(true);
+  }, 15000);
 
   test("the handshake process does not outlive the call", async () => {
     const double = withAcpDouble({ agentCapabilities: {} });
@@ -385,7 +401,12 @@ describe("runAcpTurn — sessions (task 6)", () => {
     const double = withAcpDouble({ sessionId: "sess-1", echoSessionEvent: true });
     const r1 = await runAcpTurn(double.launch, { prompt: "go", cwd: process.cwd(), env: double.env });
     expect(r1.output).toBe("new:sess-1");
-    const r2 = await runAcpTurn(double.launch, { prompt: "go", cwd: process.cwd(), env: double.env, resumeSessionId: r1.sessionId });
+    const r2 = await runAcpTurn(double.launch, {
+      prompt: "go",
+      cwd: process.cwd(),
+      env: double.env,
+      resumeSessionId: r1.sessionId,
+    });
     expect(r2.output).toBe("load:sess-1");
     expect(r2.sessionId).toBe("sess-1");
   });
@@ -423,7 +444,13 @@ describe("ignoredAcpSettings", () => {
 
   test("allowed_tools set: flagged as ignored; mcp and permission_mode never are", () => {
     expect(
-      ignoredAcpSettings({ prompt: "p", cwd: "/tmp", allowedTools: ["Bash"], mcpConfigPath: "/x", permissionMode: "acceptEdits" }),
+      ignoredAcpSettings({
+        prompt: "p",
+        cwd: "/tmp",
+        allowedTools: ["Bash"],
+        mcpConfigPath: "/x",
+        permissionMode: "acceptEdits",
+      }),
     ).toEqual(["allowed_tools"]);
   });
 });
@@ -437,7 +464,12 @@ describe("runAcpTurn — MCP passthrough and ignored settings (task 7)", () => {
       JSON.stringify({ mcpServers: { jira: { command: "npx", args: ["-y", "mcp-remote"], env: { TOKEN: "abc" } } } }),
     );
     const double = withAcpDouble({ echoMcpServers: true });
-    const result = await runAcpTurn(double.launch, { prompt: "hi", cwd: process.cwd(), env: double.env, mcpConfigPath });
+    const result = await runAcpTurn(double.launch, {
+      prompt: "hi",
+      cwd: process.cwd(),
+      env: double.env,
+      mcpConfigPath,
+    });
     expect(JSON.parse(result.output)).toEqual([
       { name: "jira", command: "npx", args: ["-y", "mcp-remote"], env: [{ name: "TOKEN", value: "abc" }] },
     ]);
@@ -448,10 +480,17 @@ describe("runAcpTurn — MCP passthrough and ignored settings (task 7)", () => {
     const mcpConfigPath = join(dir, "mcp.json");
     writeFileSync(
       mcpConfigPath,
-      JSON.stringify({ mcpServers: { docs: { url: "https://example.com/mcp", type: "sse", headers: { "X-Key": "abc" } } } }),
+      JSON.stringify({
+        mcpServers: { docs: { url: "https://example.com/mcp", type: "sse", headers: { "X-Key": "abc" } } },
+      }),
     );
     const double = withAcpDouble({ echoMcpServers: true });
-    const result = await runAcpTurn(double.launch, { prompt: "hi", cwd: process.cwd(), env: double.env, mcpConfigPath });
+    const result = await runAcpTurn(double.launch, {
+      prompt: "hi",
+      cwd: process.cwd(),
+      env: double.env,
+      mcpConfigPath,
+    });
     expect(JSON.parse(result.output)).toEqual([
       { name: "docs", type: "sse", url: "https://example.com/mcp", headers: [{ name: "X-Key", value: "abc" }] },
     ]);
@@ -473,7 +512,9 @@ describe("runAcpTurn — MCP passthrough and ignored settings (task 7)", () => {
       allowedTools: ["Bash"],
       onOutput: (c) => chunks.push(c),
     });
-    expect(chunks.join("")).toBe(`⚠ ${double.launch.command} ignores allowed_tools — ACP has no tool-allowlist concept to map it onto\n`);
+    expect(chunks.join("")).toBe(
+      `⚠ ${double.launch.command} ignores allowed_tools — ACP has no tool-allowlist concept to map it onto\n`,
+    );
     expect(result.exitCode).toBe(0);
   });
 
@@ -512,7 +553,10 @@ describe("runAcpTurn — model selection via session/set_model", () => {
   });
 
   test("@s-model-unsupported-warns: an agent that does not implement session/set_model warns and runs with its default", async () => {
-    const double = withAcpDouble({ rejectModel: { code: -32601, message: "Method not found" }, chunks: [{ text: "ok" }] });
+    const double = withAcpDouble({
+      rejectModel: { code: -32601, message: "Method not found" },
+      chunks: [{ text: "ok" }],
+    });
     const chunks: string[] = [];
     const result = await runAcpTurn(double.launch, {
       prompt: "hi",
@@ -521,14 +565,18 @@ describe("runAcpTurn — model selection via session/set_model", () => {
       model: "x/y",
       onOutput: (c) => chunks.push(c),
     });
-    expect(chunks.join("")).toContain(`⚠ ${double.launch.command} cannot select models — model x/y ignored, using its default`);
+    expect(chunks.join("")).toContain(
+      `⚠ ${double.launch.command} cannot select models — model x/y ignored, using its default`,
+    );
     expect(result.output).toBe("ok");
     expect(result.exitCode).toBe(0);
   });
 
   test("@s-model-invalid-fails: a rejected model fails the turn instead of silently running the wrong one", async () => {
     const double = withAcpDouble({ rejectModel: { code: -32602, message: "Invalid params: model not found: nope/x" } });
-    const err = await rejectionOf(runAcpTurn(double.launch, { prompt: "hi", cwd: process.cwd(), env: double.env, model: "nope/x" }));
+    const err = await rejectionOf(
+      runAcpTurn(double.launch, { prompt: "hi", cwd: process.cwd(), env: double.env, model: "nope/x" }),
+    );
     expect(err).toBeInstanceOf(SaoError);
     expect(err.message).toContain("failed to set model nope/x");
   });

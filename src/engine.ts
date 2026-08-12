@@ -1,16 +1,24 @@
 import { createHash } from "node:crypto";
-import { createWriteStream, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { createWriteStream, readFileSync, writeFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { finished } from "node:stream/promises";
 import pc from "picocolors";
 import { GateRejectedError, SaoError } from "./errors";
-import { parseGateReply, parseLoopReply, promptOnTerminal, type PromptUser } from "./gate";
+import { type PromptUser, parseGateReply, parseLoopReply, promptOnTerminal } from "./gate";
 import { evaluateWhenBash, executeAiNode, executeBashScript, withRetries } from "./nodes";
 import { orderNodes } from "./parser";
 import { onShutdown } from "./procs";
 import { getRunner, type Runner, type RunnerNeeds, type RunnerResolver } from "./runners/types";
 import type { AgentSpec, GateNode, LoopNode, LoopStep, Workflow, WorkflowNode } from "./schema";
-import { acquireRunLock, createRun, isPidAlive, saveState, type NodeState, type RunPaths, type RunState } from "./state";
+import {
+  acquireRunLock,
+  createRun,
+  isPidAlive,
+  type NodeState,
+  type RunPaths,
+  type RunState,
+  saveState,
+} from "./state";
 import { interpolate, type RunMetaVars, type TemplateContext } from "./template";
 import {
   addWorktree,
@@ -267,11 +275,19 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunState> {
     SAO_WORKTREE: execCwd,
   };
   // Null prototype: {{nodes.constructor.output}} must never read Object.prototype.
-  const ctx: TemplateContext = { task: opts.task, inputs, nodeOutputs: Object.create(null) as Record<string, string>, meta };
+  const ctx: TemplateContext = {
+    task: opts.task,
+    inputs,
+    nodeOutputs: Object.create(null) as Record<string, string>,
+    meta,
+  };
 
   saveState(paths, state);
   const verb = opts.resume !== undefined ? "resume" : "run";
-  print(pc.bold(`sao ${verb} ${runId}`) + pc.dim(` (${ordered.length} nodes, concurrency ${concurrency}, logs in ${paths.logsDir})`));
+  print(
+    pc.bold(`sao ${verb} ${runId}`) +
+      pc.dim(` (${ordered.length} nodes, concurrency ${concurrency}, logs in ${paths.logsDir})`),
+  );
 
   // A Ctrl-C / SIGTERM mid-run must not leave state.json claiming "running" forever.
   const releaseShutdownHook = onShutdown(() => {
@@ -328,7 +344,11 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunState> {
     if (finalizeFailed) {
       // A PR now would silently omit whatever the finalize could not commit — the
       // worktree still holds it, and a succeeded run cannot be resumed to retry.
-      print(pc.yellow("⚠ auto-open-pr skipped: the finalize commit failed, so the branch is missing the uncommitted work — commit it in the worktree, then push and open the PR by hand"));
+      print(
+        pc.yellow(
+          "⚠ auto-open-pr skipped: the finalize commit failed, so the branch is missing the uncommitted work — commit it in the worktree, then push and open the PR by hand",
+        ),
+      );
     } else if (state.worktree !== undefined && state.branch !== undefined) {
       try {
         pushBranch(execCwd, state.branch);
@@ -340,7 +360,8 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunState> {
           // doesn't open a PR against the default branch carrying every release
           // commit. A resolved-HEAD base is a SHA (40 hex, or 64 in sha256-object
           // repos) — no PR base to name; gh defaults.
-          baseBranch: state.base !== undefined && !/^([0-9a-f]{40}|[0-9a-f]{64})$/.test(state.base) ? state.base : undefined,
+          baseBranch:
+            state.base !== undefined && !/^([0-9a-f]{40}|[0-9a-f]{64})$/.test(state.base) ? state.base : undefined,
         });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -351,7 +372,8 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunState> {
     } else {
       // In-place runs never had a branch; a worktree run landing here had its
       // recorded branch stripped from state.json — blame the right thing.
-      const why = state.worktree === undefined ? "it ran with --no-worktree" : "state.json no longer records its branch";
+      const why =
+        state.worktree === undefined ? "it ran with --no-worktree" : "state.json no longer records its branch";
       print(pc.yellow(`⚠ --auto-open-pr ignored: this run has no branch (${why})`));
     }
   }
@@ -454,11 +476,17 @@ export async function formatDryRun(opts: {
     const cont = " ".repeat(head.length);
     interpolate(text, c)
       .split("\n")
-      .forEach((line, i) => lines.push((i === 0 ? head : cont) + line));
+      .forEach((line, i) => {
+        lines.push((i === 0 ? head : cont) + line);
+      });
   };
 
   lines.push(`dry run: ${opts.workflow.name} — ${ordered.length} nodes, nothing executes`);
-  lines.push(opts.worktree !== undefined ? `isolation: worktree from base ${base}, branch ${branch}` : "isolation: in place (--no-worktree)");
+  lines.push(
+    opts.worktree !== undefined
+      ? `isolation: worktree from base ${base}, branch ${branch}`
+      : "isolation: in place (--no-worktree)",
+  );
   if (opts.autoOpenPr === true && opts.worktree !== undefined) {
     lines.push("on success: push the branch and open a draft PR via gh (--auto-open-pr)");
   }
@@ -510,7 +538,12 @@ function describePlanNode(node: WorkflowNode, aiConfigs: Map<string, ResolvedAiC
   return `[${node.kind}]`;
 }
 
-function describePlanStep(node: LoopNode, stepIndex: number, step: LoopStep, aiConfigs: Map<string, ResolvedAiConfig>): string {
+function describePlanStep(
+  node: LoopNode,
+  stepIndex: number,
+  step: LoopStep,
+  aiConfigs: Map<string, ResolvedAiConfig>,
+): string {
   if (step.kind === "bash") return "[bash]";
   const parts = ["ai", `runner ${aiConfigs.get(`${node.id}#${stepIndex}`)!.runner.name}`];
   const agent = step.agent ?? node.agent;
@@ -622,7 +655,10 @@ export function preflightAiConfigs(
  * guarantee as before the split: called before any run-directory/worktree side
  * effect, so a missing binary or capability gap fails here, not at the first node.
  */
-export async function preflightRunnerEnvironments(workflow: Workflow, configs: Map<string, ResolvedAiConfig>): Promise<void> {
+export async function preflightRunnerEnvironments(
+  workflow: Workflow,
+  configs: Map<string, ResolvedAiConfig>,
+): Promise<void> {
   const mcpTransports = neededMcpTransports(workflow);
   const needsByRunner = new Map<Runner, RunnerNeeds>();
   const needsFor = (runner: Runner): RunnerNeeds => {
@@ -704,7 +740,11 @@ function resolveAiConfig(
 function agentOf(workflow: Workflow, ref: string | undefined): AgentSpec | undefined {
   if (ref === undefined) return undefined;
   const agent = workflow.agents.get(ref);
-  if (!agent) throw new SaoError(`agent "${ref}" was not loaded`, "workflows built without loadWorkflow must populate workflow.agents");
+  if (!agent)
+    throw new SaoError(
+      `agent "${ref}" was not loaded`,
+      "workflows built without loadWorkflow must populate workflow.agents",
+    );
   return agent;
 }
 
@@ -756,7 +796,8 @@ class Engine {
         this.print(pc.dim(`↷ ${node.id} (already ${prior.status})`));
       } else if (
         // Stryker disable next-line ConditionalExpression,LogicalOperator: forcing this true is equivalent — a hint built from an untouched node carries iteration undefined / feedback "" / sessionId undefined, exactly the fresh-loop defaults executeLoop falls back to
-        node.kind === "loop" && prior.iterations !== undefined
+        node.kind === "loop" &&
+        prior.iterations !== undefined
       ) {
         this.loopResume.set(node.id, {
           iteration: prior.iterations,
@@ -932,7 +973,8 @@ class Engine {
       try {
         if (body.prompt !== undefined) {
           const config = this.aiConfigs.get(node.id)!;
-          const prompt = interpolate(body.prompt, loopCtx) + (body.until !== undefined ? sentinelInstruction(body.until) : "");
+          const prompt =
+            interpolate(body.prompt, loopCtx) + (body.until !== undefined ? sentinelInstruction(body.until) : "");
           const result = await executeAiNode(
             prompt,
             {
@@ -967,8 +1009,7 @@ class Engine {
 
       if (untilBashPassed) return { output, sessionId };
 
-      const signaled =
-        body.until !== undefined && instructedOutput !== undefined && instructedOutput.includes(sentinelToken(body.until));
+      const signaled = body.until !== undefined && (instructedOutput?.includes(sentinelToken(body.until)) ?? false);
       signaledOnFinalIteration = signaled;
       if (body.interactive) {
         const verdict = await this.askLoopGate(node, iteration, signaled, body.until!);
@@ -1060,7 +1101,9 @@ class Engine {
       const reply = parseLoopReply(await this.promptUser(question));
       if (reply.kind === "approve") {
         if (signaled) return { kind: "approve" };
-        this.print(pc.yellow(`${node.id}: the agent has not emitted ${sentinelToken(signal)} yet — type feedback to continue`));
+        this.print(
+          pc.yellow(`${node.id}: the agent has not emitted ${sentinelToken(signal)} yet — type feedback to continue`),
+        );
         continue;
       }
       // Stryker disable next-line StringLiteral: the wrap in runOne names the node and drops this inner message by design

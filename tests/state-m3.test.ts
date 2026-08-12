@@ -4,7 +4,17 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, writeFil
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SaoError } from "../src/errors";
-import { acquireRunLock, findRepoRoot, isPidAlive, listRuns, loadRun, runLockHolder, saveState, type RunPaths, type RunState } from "../src/state";
+import {
+  acquireRunLock,
+  findRepoRoot,
+  isPidAlive,
+  listRuns,
+  loadRun,
+  type RunPaths,
+  type RunState,
+  runLockHolder,
+  saveState,
+} from "../src/state";
 
 function temp(): string {
   return mkdtempSync(join(tmpdir(), "sao-st3-"));

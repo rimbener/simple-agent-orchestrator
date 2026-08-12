@@ -17,7 +17,11 @@ function setup(yaml: string): { dir: string; path: string } {
   return { dir, path };
 }
 
-function run(path: string, dir: string, extra: Partial<Parameters<typeof runWorkflow>[0]> = {}): ReturnType<typeof runWorkflow> {
+function run(
+  path: string,
+  dir: string,
+  extra: Partial<Parameters<typeof runWorkflow>[0]> = {},
+): ReturnType<typeof runWorkflow> {
   return runWorkflow({
     workflow: loadWorkflow(path, { cwd: dir }),
     workflowPath: path,
@@ -53,9 +57,12 @@ describe("preflightRunnerEnvironments", () => {
   test("@s-capability-gap-preflight: a capability the agent does not advertise fails preflight before any node executes", async () => {
     const { dir, path } = setup(RESUME_LOOP);
     const runner = mockAcpRunner((needs) => {
-      if (needs.needsSessionResume) throw new SaoError("mockacp does not advertise session loading", "drop fresh_context");
+      if (needs.needsSessionResume)
+        throw new SaoError("mockacp does not advertise session loading", "drop fresh_context");
     });
-    await expect(run(path, dir, { resolveRunner: () => runner })).rejects.toThrow("mockacp does not advertise session loading");
+    await expect(run(path, dir, { resolveRunner: () => runner })).rejects.toThrow(
+      "mockacp does not advertise session loading",
+    );
     expect(existsSync(join(dir, ".sao"))).toBe(false);
   });
 
@@ -69,11 +76,14 @@ describe("preflightRunnerEnvironments", () => {
   test("@s-validate-performs-handshake: the same preflight call validate makes surfaces the capability gap without running anything", async () => {
     const { dir, path } = setup(RESUME_LOOP);
     const runner = mockAcpRunner((needs) => {
-      if (needs.needsSessionResume) throw new SaoError("mockacp does not advertise session loading", "drop fresh_context");
+      if (needs.needsSessionResume)
+        throw new SaoError("mockacp does not advertise session loading", "drop fresh_context");
     });
     const workflow = loadWorkflow(path, { cwd: dir });
     const configs = preflightAiConfigs(workflow, undefined, () => runner);
-    await expect(preflightRunnerEnvironments(workflow, configs)).rejects.toThrow("mockacp does not advertise session loading");
+    await expect(preflightRunnerEnvironments(workflow, configs)).rejects.toThrow(
+      "mockacp does not advertise session loading",
+    );
   });
 
   test("@s-handshake-once-per-runner: the handshake happens once per distinct runner, not once per node", async () => {
@@ -125,7 +135,9 @@ nodes:
     const runner = mockAcpRunner((needs) => {
       if (needs.mcpTransports?.includes("http")) throw new SaoError("mockacp does not support the http MCP transport");
     });
-    await expect(run(path, dir, { resolveRunner: () => runner })).rejects.toThrow("mockacp does not support the http MCP transport");
+    await expect(run(path, dir, { resolveRunner: () => runner })).rejects.toThrow(
+      "mockacp does not support the http MCP transport",
+    );
     expect(existsSync(join(dir, ".sao"))).toBe(false);
   });
 
@@ -137,7 +149,10 @@ nodes:
   - id: a
     prompt: "hi"
 `);
-    writeFileSync(join(dir, "mcp.json"), JSON.stringify({ mcpServers: { docs: { url: "https://example.com/mcp", type: "sse" } } }));
+    writeFileSync(
+      join(dir, "mcp.json"),
+      JSON.stringify({ mcpServers: { docs: { url: "https://example.com/mcp", type: "sse" } } }),
+    );
     let seenTransports: string[] = [];
     const runner = mockAcpRunner((needs) => {
       seenTransports = needs.mcpTransports ?? [];
@@ -252,16 +267,19 @@ nodes:
 });
 
 describe("@s-existing-runners-unaffected", () => {
-  test.each(["claude", "codex"])("%s: preflightRunnerEnvironments performs only the existing binary check", async (runnerName) => {
-    const { dir, path } = setup(`
+  test.each(["claude", "codex"])(
+    "%s: preflightRunnerEnvironments performs only the existing binary check",
+    async (runnerName) => {
+      const { dir, path } = setup(`
 name: unaffected
 nodes:
   - id: a
     runner: ${runnerName}
     prompt: "hi"
 `);
-    const workflow = loadWorkflow(path, { cwd: dir });
-    const configs = preflightAiConfigs(workflow);
-    await expect(preflightRunnerEnvironments(workflow, configs)).resolves.toBeUndefined();
-  });
+      const workflow = loadWorkflow(path, { cwd: dir });
+      const configs = preflightAiConfigs(workflow);
+      await expect(preflightRunnerEnvironments(workflow, configs)).resolves.toBeUndefined();
+    },
+  );
 });
