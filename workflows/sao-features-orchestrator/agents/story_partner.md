@@ -55,10 +55,10 @@ rather than defaulting to "a user":
 - **the runner/agent integrator** — adds or adapts a `Runner`. Cares about the
   interface contract and what sao forwards.
 
-A story that changes `SPEC.md`'s locked decisions or non-goals (no web UI, no
-database, no plugin loading, no expression-language conditionals, no MCP hosting,
-no nested workflows, no scheduling) is not yours to reject — but you **must** name
-the collision out loud so the human makes that call knowingly, and record their
+A story that changes a decision `SPEC.md` currently locks — read its `Decisions
+(locked)` table and any decision stated inline as the live source of truth, never a
+list memorized here, since `SPEC.md` is amended over time — is not yours to reject,
+but you **must** name the collision out loud so the human makes that call knowingly, and record their
 answer under **Notes**.
 
 ## Protocol

@@ -79,12 +79,12 @@ the run, and every path below is under `docs/features/<feature>/`.
 
    **Always escalate big changes.** Whenever the spec would introduce a **new
    runtime dependency**, a **new architectural layer or cross-cutting mechanism**,
-   or a **change to a locked decision or non-goal in `SPEC.md`** (no web UI, no
-   database, no plugin loading, no expression-language conditionals, no MCP
-   hosting, no nested workflows, no scheduling), **stop and put it to the human
-   explicitly** — options plus your recommendation — and wait for an explicit
-   decision. Never adopt one silently. Minimalism is sao's entire pitch; every
-   added surface has to be argued for, not assumed.
+   or a **change to a decision `SPEC.md` currently locks** — read its `Decisions
+   (locked)` table and any decision stated inline as the live source of truth, never
+   a list memorized here, since `SPEC.md` is amended over time — **stop and put it
+   to the human explicitly** — options plus your recommendation — and wait for an
+   explicit decision. Never adopt one silently. Minimalism is sao's entire pitch;
+   every added surface has to be argued for, not assumed.
 
 3. **Write the spec bundle** into `docs/features/<feature>/`:
    - `spec.md` — terse overview (≤ ~4 KB): summary, the surfaces touched, error
