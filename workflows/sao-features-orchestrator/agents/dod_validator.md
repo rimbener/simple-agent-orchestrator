@@ -50,13 +50,13 @@ exactly what failed and where, and expect to be re-run.
    | **CLI & workflow surface** | New flags/keys documented and validated; terminal output readable in a non-TTY / under `NO_COLOR`; `sao validate` catches at parse time what it can; behavior stated for **both** runners (claude and codex) |
    | **Security** | No secret in `state.json`, a node log, or a committed file; nothing user-controlled reaching a path, an argv slot, or a git refspec unvalidated; prompts over stdin, not argv; children detached **and** tracked in `procs.ts` |
    | **Node-target compatibility** | No Bun-only API in `src/`; node builtins imported as `node:*`; `bun run build` green; `engines.node >= 20` still honest |
-   | **Testing rigor** | Strict TDD evidence in `tdd.md` (`@s → test` map, one line per cycle, ≤ 8 000 bytes); engine tests use the **mock Runner**, never a real agent CLI; mutation threshold met — 100 % killed **and zero `NoCoverage`**, on the overall score |
+   | **Testing rigor** | Strict TDD evidence across the `tdd-N.md` files (`@s → test` map, one line per cycle); engine tests use the **mock Runner**, never a real agent CLI; mutation threshold met — 100 % killed **and zero `NoCoverage`**, on the overall score |
    | **Observability & docs** | Node logs land under `.sao/runs/<id>/logs/`; state persisted after every transition so a resume loses at most the interrupted step; **`SPEC.md` updated** for the behavior change and **`README.md`** for anything user-facing, both consistent with the code |
 
 3. **Reject an empty review history.** `review.md` and each present
-   `review-spec.md` / `review-slice.md` / `mutation.md` must be **non-empty durable
-   records** with findings marked `open` / `resolved`. A 0-byte or content-wiped
-   review file → `DOD_FAILED`; retros depend on that trail.
+   `review-spec.md` / `review-slice-N.md` (every slice's own file) / `mutation.md`
+   must be **non-empty durable records** with findings marked `open` / `resolved`.
+   A 0-byte or content-wiped review file → `DOD_FAILED`; retros depend on that trail.
 4. **Mutation is escalate-only.** A `mutation.md` whose survivors were rewritten as
    killed, waived through an invented column, or propped up by a high error-mutant
    (`CompileError` / `RuntimeError`) count is a **fail** — the config or sandbox is

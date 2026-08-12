@@ -30,12 +30,15 @@ not demand first.
 ## Modes
 
 Every invocation arrives as `Feature: <feature>. Mode: <mode>.` — `<feature>` names
-the run, and every path below is under `docs/features/<feature>/`.
+the run, and every path below is under `docs/features/<feature>/`. The two
+build-phase modes below also carry `Slice: <N>` — `{{loop.iteration}}` from the
+`build-slices` loop, one slice per iteration — and `<N>` is exactly the number that
+names that slice's `tdd-<N>.md` / `review-slice-<N>.md`.
 
 | Mode | What you do | Completion signal |
 | --- | --- | --- |
-| `build-slice` | Implement the **next unfinished** slice from `tasks.md` per §Protocol — strict TDD for every file in `src/`. Land the slice's `SPEC.md` (and `README.md`, where user-facing) update in the same slice. Flip the `task-N.md` status. Keep `tdd.md` ≤ 8 000 bytes. Stop when the slice is green | none — the fix step closes the iteration |
-| `fix-slice-findings` | Fix **every** finding in `review-slice.md` via TDD, no minors skipped, mark each `resolved`, then **commit the slice** | emit once `tasks.md` shows every slice done |
+| `build-slice` | Implement the **next unfinished** slice from `tasks.md` per §Protocol — strict TDD for every file in `src/`. Land the slice's `SPEC.md` (and `README.md`, where user-facing) update in the same slice. Flip the `task-N.md` status. Stop when the slice is green | none — the fix step closes the iteration |
+| `fix-slice-findings` | Fix **every** finding in `review-slice-<N>.md` via TDD, no minors skipped, mark each `resolved`, then **commit the slice** | emit once `tasks.md` shows every slice done |
 | `fix-review-findings` | Fix **every** open finding in `review.md` — blocker, major **and** minor — via TDD, and mark each `resolved` | emit when `review.md` has zero open findings |
 | `kill-mutants` | Kill every surviving mutant **and cover every `NoCoverage` mutant** in `mutation.md` per §Mutation-kill discipline — prefer a red **test**; change `src/` only when the mutant exposes a real defect. **Re-verify each kill**: never trust a survivor row you have not reproduced | emit when `mutation.md` shows 100 % killed **and zero `NoCoverage`** on the changed files |
 | `close-dod-gaps` | If `dod.md` reports gaps, close them via TDD and re-run the checks that failed | emit when `dod.md` is all-pass |
@@ -62,7 +65,7 @@ files, and `SPEC.md` (binding) before touching code.
 
 **There is no linter.** Green means `bun run typecheck` + `bun run test:orchestrator`.
 Scope to one test file during Red→Green→Refactor; run the full suite at the slice
-gate. Never paste reporter output into `tdd.md` or chat.
+gate. Never paste reporter output into `tdd-<N>.md` or chat.
 
 Both suite scripts pass `--only-failures`, so a clean run prints no per-test lines —
 that is the flag, not a run that found nothing. The `:ci` variant adds
@@ -129,14 +132,15 @@ in_progress, then:
   `claude`/`codex` CLI from a test.
 - **GREEN** — the minimum code that passes.
 - **REFACTOR** — on green only.
-- Log each cycle and the `@s → test` map in `docs/features/<feature>/tdd.md`.
+- Log each cycle and the `@s → test` map in `docs/features/<feature>/tdd-<N>.md`
+  — this slice's **own** file, never a prior slice's.
 
 **Per-slice gate**, before the slice's Conventional Commit and before the next
 slice: every `@s` the slice owns is covered by a passing test;
 `bun run test:orchestrator` green;
 `bun run typecheck` clean; `bun run build` clean if the slice touched `src/`; the
-slice's `SPEC.md`/`README.md` updates landed; `tdd.md` within its **8 000-byte**
-budget — trim it to the `@s → test` map plus one line per cycle **now**, not pre-PR.
+slice's `SPEC.md`/`README.md` updates landed; `tdd-<N>.md` trimmed to the
+`@s → test` map plus one line per cycle **now**, not pre-PR.
 
 ## Re-work (Phases 3–4)
 
@@ -187,8 +191,8 @@ This repo's Stryker setup has sharp edges — all five have bitten before:
 
 ## Communication
 
-Return one line: `green -> docs/features/<feature>/tdd.md` or
-`blocked -> docs/features/<feature>/tdd.md`. Never paste diffs into chat.
+Return one line: `green -> docs/features/<feature>/tdd-<N>.md` or
+`blocked -> docs/features/<feature>/tdd-<N>.md`. Never paste diffs into chat.
 
 ## Hard rules
 

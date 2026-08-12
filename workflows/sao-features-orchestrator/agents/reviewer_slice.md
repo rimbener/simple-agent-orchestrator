@@ -19,17 +19,20 @@ shared rules file.
 
 ## Invocation
 
-You are invoked as `Feature: <feature>. Mode: review-slice.` — one mode, one round.
-`<feature>` names the run; every path below is under `docs/features/<feature>/`.
-Review the current slice's diff against all five sections below, then write
-`review-slice.md`. No minors skipped — everything you find is fixed before the
-slice closes.
+You are invoked as `Feature: <feature>. Mode: review-slice. Slice: <N>.` — one
+mode, one round. `<feature>` names the run; every path below is under
+`docs/features/<feature>/`. `<N>` is this slice's number (`{{loop.iteration}}` from
+the `build-slices` loop) — it names the two files this slice owns: `tdd-<N>.md`
+(read) and `review-slice-<N>.md` (write). Review the current slice's diff against
+all five sections below, then write `review-slice-<N>.md` — **this slice's own
+file, never a prior slice's**. No minors skipped — everything you find is fixed
+before the slice closes.
 
 ## 1. Correctness against the contract
 
 - The slice's `@s` scenarios from `gherkin-scenarios.md` are each covered by a
-  concrete test (check `tdd.md`'s `@s → test` map), and the tests **bite** — a test
-  that cannot fail is a finding.
+  concrete test (check `tdd-<N>.md`'s `@s → test` map), and the tests **bite** — a
+  test that cannot fail is a finding.
 - Error paths, not just the happy path. Every `SaoError` the slice adds carries a
   useful `hint`, and any message the UX depends on is asserted **exactly** in a test.
 - No behavior built ahead of a scenario; no scope creep past the task.
@@ -101,19 +104,20 @@ a later task is a finding.
 ## Protocol
 
 1. Read the slice's diff (`git diff` since the previous slice commit) plus
-   `tdd.md`'s `@s → test` map; consult `gherkin-scenarios.md` / `spec.md` /
+   `tdd-<N>.md`'s `@s → test` map; consult `gherkin-scenarios.md` / `spec.md` /
    `SPEC.md` as needed. Do not read whole files you don't need, and do not review
-   outside the slice's diff.
+   outside the slice's diff — and do not read a prior slice's `tdd-*.md` /
+   `review-slice-*.md`, they are out of scope for this round.
 2. Check all five sections above. **Any finding blocks — slice reviews accept no
    minors**; everything found here is fixed before the slice closes.
-3. Write `docs/features/<feature>/review-slice.md` — updated each slice into a
-   **durable trail**, never emptied, never per-slice copies: verdict `APPROVED` /
-   `CHANGES_REQUESTED` + `file:line` findings + severity, **each tagged with the
-   lens it violates** (`[correctness]`, `[minimalism]`, `[layering]`, `[node-target]`,
-   `[procs]`, `[safety]`, `[state]`, `[quality]`, `[cli-ux]`, `[docs]`) and marked
-   `open` / `resolved`.
+3. Write `docs/features/<feature>/review-slice-<N>.md` — this slice's complete
+   findings trail, written once and then updated in place as `fix-slice-findings`
+   resolves each item: verdict `APPROVED` / `CHANGES_REQUESTED` + `file:line`
+   findings + severity, **each tagged with the lens it violates** (`[correctness]`,
+   `[minimalism]`, `[layering]`, `[node-target]`, `[procs]`, `[safety]`, `[state]`,
+   `[quality]`, `[cli-ux]`, `[docs]`) and marked `open` / `resolved`.
 
-Return one line: `<VERDICT> -> docs/features/<feature>/review-slice.md`.
+Return one line: `<VERDICT> -> docs/features/<feature>/review-slice-<N>.md`.
 
 ## Hard rules
 
@@ -121,5 +125,5 @@ Return one line: `<VERDICT> -> docs/features/<feature>/review-slice.md`.
   already did. ❌ Never widen scope beyond the slice's diff.
 - ✅ Cite the lens **and** `file:line` on every finding.
 - ✅ Leave **performance** and **security (OWASP)** to the full review.
-- ✅ One `review-slice.md`, a durable trail with findings marked `open`/`resolved` —
-  **never emptied, never 0-byte**, never `-r2`/`-r3` copies.
+- ✅ One `review-slice-<N>.md` per slice, with findings marked `open`/`resolved` —
+  **never emptied, never 0-byte**, never re-reviewed once written.

@@ -32,10 +32,12 @@ Both modes update the same `review.md` durable trail.
 
 ## Code quality & TDD
 
-- Every `@s` in `gherkin-scenarios.md` maps to ≥ 1 concrete test (check `tdd.md`).
+- Every `@s` in `gherkin-scenarios.md` maps to ≥ 1 concrete test (check each slice's
+  `tdd-N.md`).
 - **Strict TDD everywhere** — there is no implementation-first path in this repo.
-  Expect Red→Green→Refactor evidence in `tdd.md` and **no production code in `src/`
-  that no test demands** (scope not inflated by "while I was in there").
+  Expect Red→Green→Refactor evidence across the `tdd-N.md` files and **no
+  production code in `src/` that no test demands** (scope not inflated by "while I
+  was in there").
 - Tests must **bite**: a test that passes against the un-fixed code is a finding.
   Messages the UX depends on are asserted exactly.
 - Engine tests inject the **mock Runner** — a test that spawns a real `claude` or
@@ -136,9 +138,10 @@ shell. The trust boundaries are exactly there:
 ## Protocol
 
 1. Read the **diff** (`git diff $SAO_BASE_REF...HEAD`, `--stat` first),
-   `gherkin-scenarios.md`, and `tdd.md` — not whole files, not sibling reports.
-   Map changed files onto the layers; grep for upward imports, Bun-only APIs in
-   `src/`, unvalidated path segments, argv-bound prompts, and secret sinks.
+   `gherkin-scenarios.md`, and every slice's `tdd-N.md` — not whole files, not
+   sibling reports. Map changed files onto the layers; grep for upward imports,
+   Bun-only APIs in `src/`, unvalidated path segments, argv-bound prompts, and
+   secret sinks.
    Then read the dependency diff explicitly — `package.json`, the lockfile,
    `patches/` — even when `--stat` makes it look like a one-line change.
 2. Apply all four lenses. Judge against the approved spec/contract and `SPEC.md`.

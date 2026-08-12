@@ -136,17 +136,20 @@ nodes:
     bash: 'workflows/sao-features-orchestrator/scripts/commit-spec.sh "{{feature}}"'
 
   # ── Phase 2 — build, one vertical slice per iteration, light review each ─────
+  # {{loop.iteration}} IS the slice number: one slice per iteration (never more
+  # than one; see agents/implementer.md §Modes), so every step below tags its
+  # invocation with the same N — that N is what names tdd-N.md/review-slice-N.md.
   - id: build-slices
     depends_on: [commit-spec]
     loop:
       steps:
         - agent: ./agents/implementer.md
-          prompt: "Feature: {{feature}}. Mode: build-slice."
+          prompt: "Feature: {{feature}}. Mode: build-slice. Slice: {{loop.iteration}}."
         - bash: "workflows/sao-features-orchestrator/scripts/slice-gate.sh"
         - agent: ./agents/reviewer_slice.md
-          prompt: "Feature: {{feature}}. Mode: review-slice."
+          prompt: "Feature: {{feature}}. Mode: review-slice. Slice: {{loop.iteration}}."
         - agent: ./agents/implementer.md
-          prompt: "Feature: {{feature}}. Mode: fix-slice-findings."
+          prompt: "Feature: {{feature}}. Mode: fix-slice-findings. Slice: {{loop.iteration}}."
       until: ALL_SLICES_COMPLETE
       max_iterations: 8 # cap = escalation; resume after human intervention
 

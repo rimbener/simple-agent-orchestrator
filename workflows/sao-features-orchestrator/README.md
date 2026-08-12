@@ -188,24 +188,28 @@ interleave with the question being asked.
 ## Artifacts
 
 Everything lands in `docs/features/<feature>/`, and every review file is a
-**durable trail** — findings marked `open`/`resolved`, never emptied, never
-per-round copies. `finalize.sh` fails the run if any of them is 0 bytes, and
-`dod_validator` fails a wiped review file, because the trail is the only evidence a
-retro has.
+**durable trail** — findings marked `open`/`resolved`, never emptied. `review.md`,
+`review-spec.md`, `mutation.md` and `dod.md` accumulate across rounds in one file
+each; `tdd-N.md` and `review-slice-N.md` are the exception — one pair **per
+slice**, by design, so each build iteration's context stays small and scoped to
+that slice's own diff, rather than one growing file across every slice. `finalize.sh`
+fails the run if any present file (including every `review-slice-N.md`) is 0 bytes,
+and `dod_validator` fails a wiped review file, because the trail is the only
+evidence a retro has.
 
 ```
-story.md         the raw request, verbatim
-user-story.md    the grilled user story
-spec.md          terse overview (≤ ~4 KB)
-tasks.md         task index, by slice
-task-1..N.md     one atomic task each
+story.md               the raw request, verbatim
+user-story.md          the grilled user story
+spec.md                terse overview (≤ ~4 KB)
+tasks.md               task index, by slice
+task-1..N.md           one atomic task each
 gherkin-scenarios.md   the @s acceptance contract
-review-spec.md   pre-gate spec review
-tdd.md           the @s → test map (≤ 8 000 bytes)
-review-slice.md  per-slice review trail
-review.md        full review trail
-mutation.md      score + surviving mutants
-dod.md           the Definition of Done checklist
+review-spec.md         pre-gate spec review
+tdd-1..N.md            per-slice @s → test map
+review-slice-1..N.md   per-slice review trail (one file per slice)
+review.md              full review trail
+mutation.md            score + surviving mutants
+dod.md                 the Definition of Done checklist
 ```
 
 `tmp/<feature>/` holds run scratch (`mut-start-sha`, `stryker.log`) and is excluded

@@ -11,10 +11,18 @@ feature="${1:-}"
 require_feature "$feature"
 
 # The review trail is the retro's only evidence — a 0-byte artifact here means an
-# agent emptied a file it was told to keep.
-for f in review-spec.md review-slice.md review.md mutation.md dod.md; do
+# agent emptied a file it was told to keep. review-slice-*.md is one file per
+# slice (never a single accumulating file), so it is globbed rather than named.
+for f in review-spec.md review.md mutation.md dod.md; do
   p="docs/features/$feature/$f"
   if [ -e "$p" ] && [ ! -s "$p" ]; then
+    die "empty review artifact: $p — the durable trail was wiped"
+  fi
+done
+
+for p in "docs/features/$feature"/review-slice-*.md; do
+  [ -e "$p" ] || continue
+  if [ ! -s "$p" ]; then
     die "empty review artifact: $p — the durable trail was wiped"
   fi
 done
