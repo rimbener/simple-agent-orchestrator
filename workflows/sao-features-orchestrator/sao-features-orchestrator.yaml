@@ -64,18 +64,29 @@ defaults:
 
 nodes:
   # ── Phase 0 — bootstrap (sao already cut the worktree from {{base}}) ──────────
-  # The request goes in over a quoted heredoc rather than argv: it is freeform
-  # human text, and interpolation is raw substitution — the workflow author owns
-  # that boundary (SPEC.md §Templating). The delimiter carries {{run_id}} (safe —
-  # state.ts sanitizes it to [a-zA-Z0-9_-]) so a task line that happens to equal a
-  # FIXED delimiter can't close the heredoc early and run the rest of the task as
-  # shell: run_id doesn't exist until this run starts, after {{task}} is already
-  # fixed on the CLI, so it can't be predicted or matched in advance. This narrows
-  # the risk, it doesn't eliminate it for an attacker who can also control when the
-  # run starts and read this file — known residual, see KNOWN-ISSUES.md.
+  # {{feature}} and {{task}} both go in through a heredoc, captured into a shell
+  # variable with `read`, and are NEVER spliced directly into quoted script text
+  # (`"{{feature}}"`) — interpolation is raw substitution (SPEC.md §Templating),
+  # so a value containing `"` would otherwise break out of that quoting before
+  # this script's own validation (_lib.sh's require_feature) ever runs. A heredoc
+  # body is never re-parsed as shell syntax, so this holds regardless of what
+  # characters the value contains; `"$feature"` then expands as one literal word
+  # wherever it's used. Every other node below that touches {{feature}} in a
+  # bash/when_bash script repeats this same read-heredoc preamble.
+  #
+  # Both delimiters carry {{run_id}} (safe — state.ts sanitizes it to
+  # [a-zA-Z0-9_-]) so a value that happens to contain a line matching a FIXED
+  # delimiter can't close the heredoc early and run the rest as shell: run_id
+  # doesn't exist until this run starts, after {{feature}}/{{task}} are already
+  # fixed on the CLI, so it can't be predicted or matched in advance. This
+  # narrows the risk, it doesn't eliminate it for an attacker who also controls
+  # run timing and has read this file — known residual, see KNOWN-ISSUES.md.
   - id: bootstrap
     bash: |
-      workflows/sao-features-orchestrator/scripts/bootstrap.sh "{{feature}}" <<'SAO_REQUEST_EOF_{{run_id}}'
+      read -r feature <<'SAO_FEATURE_EOF_{{run_id}}'
+      {{feature}}
+      SAO_FEATURE_EOF_{{run_id}}
+      workflows/sao-features-orchestrator/scripts/bootstrap.sh "$feature" <<'SAO_REQUEST_EOF_{{run_id}}'
       {{task}}
       SAO_REQUEST_EOF_{{run_id}}
 
@@ -139,7 +150,11 @@ nodes:
 
   - id: commit-spec
     depends_on: [approve-spec]
-    bash: 'workflows/sao-features-orchestrator/scripts/commit-spec.sh "{{feature}}"'
+    bash: | # {{feature}} via heredoc, never a quoted arg — see bootstrap's node
+      read -r feature <<'SAO_FEATURE_EOF_{{run_id}}'
+      {{feature}}
+      SAO_FEATURE_EOF_{{run_id}}
+      workflows/sao-features-orchestrator/scripts/commit-spec.sh "$feature"
 
   # ── Phase 2 — build, one vertical slice per iteration, light review each ─────
   # {{loop.iteration}} IS the slice number: one slice per iteration (never more
@@ -177,7 +192,11 @@ nodes:
   # ── Phase 3b — mutation, ≤ 2 rounds, escalate-only (never a faked PASS) ──────
   - id: mutation-baseline
     depends_on: [full-review]
-    bash: 'workflows/sao-features-orchestrator/scripts/mutation-baseline.sh "{{feature}}"'
+    bash: | # {{feature}} via heredoc, never a quoted arg — see bootstrap's node
+      read -r feature <<'SAO_FEATURE_EOF_{{run_id}}'
+      {{feature}}
+      SAO_FEATURE_EOF_{{run_id}}
+      workflows/sao-features-orchestrator/scripts/mutation-baseline.sh "$feature"
 
   - id: mutation
     depends_on: [mutation-baseline]
@@ -185,7 +204,12 @@ nodes:
       steps:
         # Scoped to the changed src/ files vs $SAO_BASE_REF; the script's header
         # documents why --force and the hand-re-applied cli.ts exclusion matter.
-        - bash: 'workflows/sao-features-orchestrator/scripts/run-mutation.sh "{{feature}}"'
+        # {{feature}} via heredoc, never a quoted arg — see bootstrap's node.
+        - bash: |
+            read -r feature <<'SAO_FEATURE_EOF_{{run_id}}'
+            {{feature}}
+            SAO_FEATURE_EOF_{{run_id}}
+            workflows/sao-features-orchestrator/scripts/run-mutation.sh "$feature"
         - agent: ./agents/mutation_tester.md
           prompt: "Feature: {{feature}}. Mode: report."
         - agent: ./agents/implementer.md
@@ -199,7 +223,11 @@ nodes:
   # 2-round cap as a halt — resume it with `sao resume` after looking at the delta.
   - id: post-mutation-review
     depends_on: [mutation]
-    when_bash: 'workflows/sao-features-orchestrator/scripts/mutation-touched-source.sh "{{feature}}"'
+    when_bash: | # {{feature}} via heredoc, never a quoted arg — see bootstrap's node
+      read -r feature <<'SAO_FEATURE_EOF_{{run_id}}'
+      {{feature}}
+      SAO_FEATURE_EOF_{{run_id}}
+      workflows/sao-features-orchestrator/scripts/mutation-touched-source.sh "$feature"
     loop:
       steps:
         - bash: "workflows/sao-features-orchestrator/scripts/review-ci.sh"
@@ -225,4 +253,8 @@ nodes:
   # ── PR prep — guard the durable trail, commit the phase-3/4 artifacts ────────
   - id: finalize
     depends_on: [dod]
-    bash: 'workflows/sao-features-orchestrator/scripts/finalize.sh "{{feature}}"'
+    bash: | # {{feature}} via heredoc, never a quoted arg — see bootstrap's node
+      read -r feature <<'SAO_FEATURE_EOF_{{run_id}}'
+      {{feature}}
+      SAO_FEATURE_EOF_{{run_id}}
+      workflows/sao-features-orchestrator/scripts/finalize.sh "$feature"
