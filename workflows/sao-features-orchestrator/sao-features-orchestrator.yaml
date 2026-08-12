@@ -10,21 +10,26 @@
 #   sao run workflows/sao-features-orchestrator/sao-features-orchestrator.yaml \
 #       --var feature=<kebab-name> "the feature request, in prose"
 #
-# There is no separate harness: `base:` + `--base` cut the worktree, state.json
+# There is no separate harness: HEAD (or `--base`) cuts the worktree, state.json
 # tracks the phase, and a loop hitting max_iterations halts the run — that halt IS
 # the escalation, resumable with `sao resume`. See ./README.md for the agents and
 # the scripts every bash node calls.
 #
 # Repo facts baked in (sao — TypeScript, Bun toolchain, single package):
-#   there is no linter — CI is `bun run typecheck` + `bun test` (+ `bun run build`
-#   in the full review, which is what proves the Node target still compiles);
+#   there is no linter — CI is `bun run typecheck` + `test:orchestrator[:ci]` (+
+#   `bun run build` in the full review, which proves the Node target still compiles);
 #   production source is src/ and tests are tests/, so "did the fix touch source?"
 #   is a plain `git diff -- src` question; mutation is StrykerJS via stryker.conf.mjs.
 
 name: sao-features-orchestrator
 description: One feature request to a validated, PR-ready sao feature with a single human approval
 
-base: main # ref the run worktree/branch is cut from (--base wins)
+# No `base:` on purpose — the run is cut from the current HEAD, so the worktree
+# always contains the branch you are standing on, including this pipeline itself
+# before it is merged. The engine resolves HEAD to a commit SHA (not the literal
+# "HEAD"), so $SAO_BASE_REF still points at the pre-run tip once the run branch
+# has commits on it — which is what run-mutation.sh diffs against.
+# Override for a single run with `--base <ref>`.
 
 inputs:
   - name: feature # kebab name; owns docs/features/{{feature}}/ and the commit scope
@@ -32,7 +37,30 @@ inputs:
 
 defaults:
   runner: claude
-  permission_mode: acceptEdits # models come from each agent's frontmatter (opus/sonnet/haiku)
+  # Models come from each agent's frontmatter (opus/sonnet/haiku).
+  #
+  # acceptEdits for every agent, no exceptions. `claude -p` is headless, so anything
+  # Claude Code marks "requires approval" is auto-denied — no human is on the other
+  # end. File edits and non-network Bash (`bun test`) are fine here, but a command
+  # that must leave the sandbox (`bun add`, `npm view`, `curl`) is denied, which is
+  # what blocked an implementer mid-slice on a spec-approved new dependency.
+  #
+  # Only the implementer installs dependencies, so only it gets an escape hatch —
+  # and as a targeted `allowed_tools` allow-list in its own frontmatter, never
+  # `bypassPermissions`. Reviewers, the mutation reporter and the DoD validator
+  # carry no grant beyond the two web tools below.
+  permission_mode: acceptEdits
+
+  # WebSearch is permission-gated, so headless `claude -p` auto-denies it unless it
+  # is allow-listed here. WebFetch rides along so an agent can actually read what a
+  # search turns up. --allowedTools is ADDITIVE to permission_mode: listing a tool
+  # pre-approves it, it does not restrict the agent to only that list.
+  #
+  # ⚠ This cascade is OVERRIDE, NOT MERGE (engine.ts uses `??`, first non-nullish
+  # wins). Any agent that declares its own allowed_tools loses this default
+  # silently — so agents/implementer.md repeats both entries in its list. Add an
+  # entry here and you must add it there too.
+  allowed_tools: [WebSearch, WebFetch]
 
 nodes:
   # ── Phase 0 — bootstrap (sao already cut the worktree from {{base}}) ──────────

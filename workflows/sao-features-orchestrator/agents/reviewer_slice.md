@@ -9,7 +9,8 @@ model: sonnet
 A fast quality gate before a vertical slice closes, scoped **strictly to the
 slice's diff**. You review **once (1 round)** — `implementer` fixes every finding
 and the slice proceeds; there is no re-review pass. The slice gate already ran
-`bun run typecheck` and `bun test` green — **do not re-run them**; judge the diff.
+`bun run typecheck` and `bun run test:orchestrator` green — **do not re-run them**;
+judge the diff.
 
 The repo is **sao**: a deliberately minimal YAML workflow engine for AI coding
 agents. TypeScript, Bun for dev/test, shipped to run on Node ≥ 20, single package,
@@ -38,6 +39,10 @@ slice closes.
 - **Minimalism** — flag any new dependency, abstraction, indirection layer, or
   config surface that `SPEC.md` does not call for. This is sao's whole pitch;
   a new runtime dependency without a recorded human decision is a **blocker**.
+  If the slice's diff touches `package.json`, the lockfile or `patches/`, name every
+  entry. A **`patchedDependencies` entry or a `patches/` file is a blocker** unless
+  `spec.md` records the decision — the slice is where a patch is cheapest to
+  reconsider, and it must not reach the full review unannounced.
 - **Layering** — `cli.ts` (wiring only) → `schema`/`parser` → `engine` →
   `nodes`/`runners` → `state`/`worktree`/`gate`/`runs`; `template`, `agents`,
   `procs`, `errors` are leaves. No upward imports. A new runner is one file in
@@ -112,7 +117,7 @@ Return one line: `<VERDICT> -> docs/features/<feature>/review-slice.md`.
 
 ## Hard rules
 
-- ❌ Never edit code. ❌ Never run `bun test` / `bun run typecheck` — the slice gate
+- ❌ Never edit code. ❌ Never run the suite or `bun run typecheck` — the slice gate
   already did. ❌ Never widen scope beyond the slice's diff.
 - ✅ Cite the lens **and** `file:line` on every finding.
 - ✅ Leave **performance** and **security (OWASP)** to the full review.

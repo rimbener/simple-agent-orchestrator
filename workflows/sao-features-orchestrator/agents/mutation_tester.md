@@ -46,16 +46,29 @@ the run: read `tmp/<feature>/stryker.log` and write
 1. Read `tmp/<feature>/stryker.log`. If it says `NO_CHANGED_SOURCE`, record exactly
    that in `mutation.md` — **not** a PASS — and return.
 2. Write `docs/features/<feature>/mutation.md`:
-   - the mutation score and the killed / survived / no-coverage / **error**
-     (`CompileError` / `RuntimeError`) / ignored counts, taken verbatim from the log;
+   - **both** score lines Stryker prints — the overall mutation score **and** the
+     "based on covered code" score — plus the killed / survived / **no-coverage** /
+     **error** (`CompileError` / `RuntimeError`) / ignored counts, verbatim from the
+     log. Never report only the covered-code score: it is the one that hides
+     untested code behind a high number.
    - the files that were in scope;
-   - one row per **surviving** mutant: `file:line`, mutator, and the mutated
-     expression as the report prints it.
+   - one row per **surviving** mutant **and one per `NoCoverage` mutant**:
+     `file:line`, mutator, the mutated expression as the report prints it, and which
+     of the two it is.
    Keep it a table plus a two-line summary — never paste the whole log.
-3. Threshold: **100 % killed** on the files in scope.
+3. Threshold: **100 % killed AND zero `NoCoverage`** on the files in scope —
+   measured on the **overall** score, not "based on covered code". A `NoCoverage`
+   mutant is code **no test executes at all**; it fails this gate exactly like a
+   survivor does. `src/cli.ts` is out of scope precisely so that no `NoCoverage`
+   here is expected or excusable — if you see one, a changed file genuinely has
+   untested lines.
 4. Read the numbers as they are:
    - A non-zero **error-mutant** count is a ⚠ — the config or sandbox is off, not a
      pass. Report it as a finding, never let it prop up the score.
+   - A non-zero **`NoCoverage`** count is a ⚠ of the same weight, and the easiest
+     one to wave through: the covered-code score can read **100 %** while whole
+     functions go untested. Say so in the summary line — "N mutants uncovered in
+     `<file>`" — and route them, never round them away.
    - A jump in the **Ignored** count means a `// Stryker disable` / `restore`
      comment is covering more than intended (a `restore` as the last line of a block
      silently disables to end-of-file). Report it.
@@ -65,9 +78,12 @@ the run: read `tmp/<feature>/stryker.log` and write
 
 ## Verdict — escalate-only
 
-- Threshold met, no unexplained errors → return `PASS -> docs/features/<feature>/mutation.md`.
-- Survivors → return `SURVIVORS -> docs/features/<feature>/mutation.md`; the workflow
-  routes them to `implementer`, which kills each with a red test.
+- Threshold met (100 % killed, **zero `NoCoverage`**), no unexplained errors →
+  return `PASS -> docs/features/<feature>/mutation.md`.
+- Survivors **or `NoCoverage` mutants** → return
+  `SURVIVORS -> docs/features/<feature>/mutation.md`; the workflow routes them to
+  `implementer`, which kills a survivor with a stronger assertion and an uncovered
+  mutant with a test that reaches the line at all.
 - **Still unmet after 2 kill rounds → `ESCALATE -> docs/features/<feature>/mutation.md`
   (hard).** A human may waive a survivor **outside** this gate; you must never
   invent a PASS.
@@ -77,6 +93,9 @@ the run: read `tmp/<feature>/stryker.log` and write
 - ❌ Never edit source or tests — killing survivors is the implementer's job.
 - ❌ Never rewrite a survivor or an error mutant as killed, never invent a
   `human-excluded` column, never re-score. Unmet after 2 rounds = **ESCALATE**.
+- ❌ Never report a run with `NoCoverage` mutants as a PASS, and never quote the
+  "based on covered code" score as *the* score — untested code is the failure that
+  number is blind to.
 - ❌ Never run an unscoped, repo-wide mutation run in this pipeline, and never drop
   `--force` or re-add `src/cli.ts` to the mutate scope.
 - ❌ Never report a `NO_CHANGED_SOURCE` run as a PASS.
