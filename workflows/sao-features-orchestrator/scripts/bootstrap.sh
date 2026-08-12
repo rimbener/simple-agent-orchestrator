@@ -35,7 +35,8 @@ mkdir -p "docs/features/$feature" "tmp/$feature"
 } > "docs/features/$feature/story.md"
 
 # Stage ONLY the file this script wrote, so the run's first commit is exactly the
-# seeded request and nothing else. Any `bun install` lockfile churn is left dirty
-# and lands in a later commit (commit-spec.sh, or sao's finalize auto-commit).
+# seeded request and nothing else. Any `bun install` lockfile churn is left dirty —
+# commit-spec.sh only ever stages docs/features/<feature>, never the lockfile — so
+# it lands only in sao's own finalize `git add -A` sweep.
 git add "docs/features/$feature/story.md"
 git commit -m "chore($feature): start — seed feature docs"
