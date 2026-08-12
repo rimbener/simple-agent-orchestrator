@@ -47,7 +47,7 @@
     "format:fix": "biome format src tests --write",
     "build": "bun build src/cli.ts --outdir dist --target node",
     "prepack": "bun run build",
-    "bootstrap": "bun run typecheck && bun test && bun run build"
+    "bootstrap": "bun run format && bun run lint && bun run typecheck && bun test --only-failures && bun run build"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.8",
