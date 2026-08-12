@@ -448,30 +448,3 @@ src/
     codex.ts
 tests/               # bun test; engine tests use a mock Runner
 ```
-
-Dependencies (kept minimal): `commander`, `yaml`, `zod`, `picocolors`. Everything else
-is node builtins (`child_process`, `readline`, `crypto`, `fs`). Build: `bun build`
-targeting node (or tsup) → `dist/`, `bin: { "sao": "dist/cli.js" }`.
-
-## Milestones
-
-1. **M1 — linear engine**: schema, parser, template, AI+bash nodes, claude runner,
-  `run`/`validate`, in-place execution (no worktree), logs. A 3-node workflow works end to end.
-2. **M2 — control flow**: concurrent execution of independent branches, loop nodes
-  (sentinel + until_bash + interactive + multi-step `steps`), gate nodes, `when_bash`,
-  agent files (`.agents/agents/`), MCP/allowed-tools passthrough.
-3. **M3 — durability & isolation**: state persistence, `resume`, `list`, `logs`,
-  worktree-per-run with `--base`/`--branch`, `SAO_*` env vars, `clean`.
-4. **M4 — ship**: codex adapter, `--auto-open-pr` draft-PR finalization, `--dry-run`,
-  README, npm publish.
-
-
-
-## Non-goals (v1, explicitly)
-
-Web UI/dashboard · database · bundled/default workflows · skills system · natural-language
-workflow router · chat platform adapters (Slack/Telegram/Discord/GitHub) · telemetry ·
-acting as an MCP host (sao only forwards config to runners) ·
-dynamic plugin loading · nested/sub-workflows · expression-language conditionals
-(`if:` with comparisons/logic — `when_bash` shell predicates are the only branching) ·
-cron/scheduled runs.
