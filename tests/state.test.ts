@@ -295,7 +295,7 @@ describe("saveState", () => {
     };
     saveState(paths, state);
     expect(JSON.parse(readFileSync(paths.stateFile, "utf8"))).toEqual(state);
-    expect(existsSync(paths.stateFile + ".tmp")).toBe(false); // atomic write leaves no temp file
+    expect(existsSync(`${paths.stateFile}.tmp`)).toBe(false); // atomic write leaves no temp file
   });
 
   test("writes pretty-printed JSON with a trailing newline, byte for byte", () => {
@@ -313,6 +313,6 @@ describe("saveState", () => {
       nodes: {},
     };
     saveState(paths, state);
-    expect(readFileSync(paths.stateFile, "utf8")).toBe(JSON.stringify(state, null, 2) + "\n");
+    expect(readFileSync(paths.stateFile, "utf8")).toBe(`${JSON.stringify(state, null, 2)}\n`);
   });
 });

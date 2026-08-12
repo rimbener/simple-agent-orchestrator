@@ -190,7 +190,7 @@ describe("executeBashScript", () => {
     // 100 lines × 65536 chars = 6.25 MiB; the surviving buffer is always the last
     // MAX_BUFFER_CHARS chars of the stream = exactly the last 64 lines.
     const dir = cwd();
-    const line = (i: number) => `line${String(i).padStart(4, "0")} ` + "a".repeat(65526) + "\n";
+    const line = (i: number) => `line${String(i).padStart(4, "0")} ${"a".repeat(65526)}\n`;
     writeFileSync(join(dir, "big.txt"), Array.from({ length: 100 }, (_, i) => line(i + 1)).join(""));
     const output = await executeBashScript("cat big.txt", { cwd: dir, log: () => {} });
     const lines = output.split("\n");
@@ -206,7 +206,7 @@ describe("executeBashScript", () => {
     const dir = cwd();
     const real = Array.from({ length: 200 }, (_, i) => `line${String(i + 1).padStart(4, "0")}\n`).join("");
     const blanks = "\n".repeat(950);
-    const filler = "a".repeat(MAX_BUFFER_CHARS - real.length - blanks.length - 1) + "\n";
+    const filler = `${"a".repeat(MAX_BUFFER_CHARS - real.length - blanks.length - 1)}\n`;
     const content = filler + real + blanks;
     expect(content).toHaveLength(MAX_BUFFER_CHARS);
     writeFileSync(join(dir, "exact.txt"), content);
@@ -258,7 +258,7 @@ describe("trimBuffer", () => {
   test("returns the kept window untouched when it is under the hard cap", () => {
     // 2000 × 3000-char lines (6 MB): the kept window (999 lines ≈ 2.9 MB) is between
     // MAX/2 and MAX, where a stray negative-start slice would truncate it.
-    const lines = Array.from({ length: 2000 }, (_, i) => String(i + 1).padStart(4, "0") + "y".repeat(2995) + "\n");
+    const lines = Array.from({ length: 2000 }, (_, i) => `${String(i + 1).padStart(4, "0") + "y".repeat(2995)}\n`);
     expect(trimBuffer(lines.join(""))).toBe(lines.slice(1001).join(""));
   });
 
@@ -270,21 +270,21 @@ describe("trimBuffer", () => {
   test("a kept window still over the cap is hard-capped from the front", () => {
     // 1100 × 8192-char lines: the kept 999 lines are ~7.8 MB, so the hard cap
     // applies — exactly the last 512 lines (512 × 8192 = MAX_BUFFER_CHARS).
-    const lines = Array.from({ length: 1100 }, (_, i) => String(i + 1).padStart(4, "0") + "z".repeat(8187) + "\n");
+    const lines = Array.from({ length: 1100 }, (_, i) => `${String(i + 1).padStart(4, "0") + "z".repeat(8187)}\n`);
     expect(trimBuffer(lines.join(""))).toBe(lines.slice(588).join(""));
   });
 
   test("a walk that lands on a leading newline keeps the whole text", () => {
     // Exactly 1000 newlines with the 1000th-from-last at position 0: idx reaches 0
     // and the idx <= 0 branch must keep everything (slice(1) would drop the "\n").
-    const text = "\n" + "z\n".repeat(999) + "tail";
+    const text = `\n${"z\n".repeat(999)}tail`;
     expect(trimBuffer(text)).toBe(text);
   });
 
   test("the segment walk stops exactly at the 1000th newline from the end", () => {
     // The 1000th newline from the end sits at position 1; the walk must stop there
     // (keeping text.slice(2)), not treat position 1 as a break sentinel.
-    const text = "a\n" + "bb\n".repeat(999) + "cc";
+    const text = `a\n${"bb\n".repeat(999)}cc`;
     expect(trimBuffer(text)).toBe(text.slice(2));
   });
 });
@@ -378,12 +378,12 @@ describe("executeAiNode", () => {
 
   test("a 500-char detail (after trimming) becomes the hint untruncated", async () => {
     const detail = "x".repeat(500);
-    expect(await failHint(detail + "\n\n")).toBe(detail);
+    expect(await failHint(`${detail}\n\n`)).toBe(detail);
   });
 
   test("a 501-char detail is truncated to 500 chars plus an ellipsis", async () => {
     const detail = "x".repeat(501);
-    expect(await failHint(detail)).toBe("x".repeat(500) + " …");
+    expect(await failHint(detail)).toBe(`${"x".repeat(500)} …`);
   });
 
   test("whitespace-only output yields no hint", async () => {

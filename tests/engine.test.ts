@@ -87,10 +87,10 @@ nodes:
 
     expect(state.status).toBe("succeeded");
     expect(calls[0]!.prompt).toBe("plan dark mode #42");
-    expect(state.nodes["plan"]!.output).toBe("echo:plan dark mode #42");
-    expect(state.nodes["check"]!.output).toBe("plan was: echo:plan dark mode #42");
+    expect(state.nodes.plan!.output).toBe("echo:plan dark mode #42");
+    expect(state.nodes.check!.output).toBe("plan was: echo:plan dark mode #42");
     expect(calls[1]!.prompt).toBe("sum plan was: echo:plan dark mode #42");
-    expect(state.nodes["summarize"]!.status).toBe("succeeded");
+    expect(state.nodes.summarize!.status).toBe("succeeded");
   });
 
   test("echoes a line delivered across multiple chunks as one line", async () => {
@@ -208,7 +208,7 @@ nodes:
       cwd: dir,
       print: quiet,
     });
-    expect(state.nodes["flaky"]!.status).toBe("succeeded");
+    expect(state.nodes.flaky!.status).toBe("succeeded");
   });
 
   test("rejects missing required inputs and unknown vars", async () => {
@@ -507,7 +507,7 @@ nodes:
       print: (line) => printed.push(line),
     });
     // 8192 chars is not "> 8192": nothing echoes until END lands, then exactly one line.
-    expect(echoContents(printed, "a")).toEqual(["x".repeat(8192) + "END"]);
+    expect(echoContents(printed, "a")).toEqual([`${"x".repeat(8192)}END`]);
   });
 
   test("echoes a runaway newline-less line past 8192 chars and resets the buffer", async () => {
@@ -529,9 +529,9 @@ nodes:
     const contents = echoContents(printed, "a");
     expect(contents).toHaveLength(2); // the runaway echo, then the remainder + TAIL
     expect(contents[0]!.length).toBeGreaterThan(8192);
-    expect(contents.join("")).toBe("x".repeat(8300) + "TAIL"); // no junk injected between echoes
+    expect(contents.join("")).toBe(`${"x".repeat(8300)}TAIL`); // no junk injected between echoes
     expect(readFileSync(join(dir, ".sao", "runs", state.id, "logs", "a.log"), "utf8")).toBe(
-      "x".repeat(8300) + "TAIL\n",
+      `${"x".repeat(8300)}TAIL\n`,
     );
   });
 
@@ -550,9 +550,9 @@ nodes:
       cwd: dir,
       print: quiet,
     });
-    const midRun = JSON.parse(state.nodes["peek"]!.output!) as RunState;
+    const midRun = JSON.parse(state.nodes.peek!.output!) as RunState;
     expect(midRun.status).toBe("running");
-    expect(midRun.nodes["peek"]!.status).toBe("running");
+    expect(midRun.nodes.peek!.status).toBe("running");
   });
 
   test("records the runner sessionId only when one is returned", async () => {
@@ -571,7 +571,7 @@ nodes:
       resolveRunner: () => mockRunner([]),
       print: quiet,
     });
-    expect(withSession.nodes["a"]!.sessionId).toBe("s-1");
+    expect(withSession.nodes.a!.sessionId).toBe("s-1");
 
     const noSessionRunner: Runner = {
       name: "nosess",
@@ -588,7 +588,7 @@ nodes:
       resolveRunner: () => noSessionRunner,
       print: quiet,
     });
-    expect("sessionId" in withoutSession.nodes["a"]!).toBe(false);
+    expect("sessionId" in withoutSession.nodes.a!).toBe(false);
   });
 
   test("unknown var hint lists the declared inputs exactly", async () => {
@@ -699,8 +699,8 @@ nodes:
       cwd: dir,
       print: quiet,
     });
-    expect(state.vars["opt"]).toBe("fallback-value");
-    expect(state.nodes["n"]!.output).toBe("fallback-value");
+    expect(state.vars.opt).toBe("fallback-value");
+    expect(state.nodes.n!.output).toBe("fallback-value");
   });
 
   test("shutdownAll mid-run fails the run and running nodes but leaves pending nodes pending", async () => {
@@ -728,7 +728,7 @@ nodes:
     while (true) {
       if (existsSync(runsDir) && readdirSync(runsDir).length > 0) {
         const { saved } = readRunState(dir);
-        if (saved.nodes["one"]!.status === "running") {
+        if (saved.nodes.one!.status === "running") {
           expect(saved.status).toBe("running");
           break;
         }
@@ -741,14 +741,14 @@ nodes:
     // Synchronously after the hook ran, before the engine's own failure path can save:
     const snapshot = readRunState(dir).saved;
     expect(snapshot.status).toBe("failed");
-    expect(snapshot.nodes["one"]!.status).toBe("failed");
-    expect(snapshot.nodes["two"]!.status).toBe("pending");
+    expect(snapshot.nodes.one!.status).toBe("failed");
+    expect(snapshot.nodes.two!.status).toBe("pending");
 
     await expect(run).rejects.toThrow('failed at node "one"');
     const final = readRunState(dir).saved;
     expect(final.status).toBe("failed");
-    expect(final.nodes["one"]!.status).toBe("failed");
-    expect(final.nodes["two"]!.status).toBe("pending");
+    expect(final.nodes.one!.status).toBe("failed");
+    expect(final.nodes.two!.status).toBe("pending");
   }, 15000);
 
   test("shutdownAll after a successful run leaves state.json succeeded", async () => {
@@ -769,7 +769,7 @@ nodes:
     shutdownAll(); // the run released its shutdown hook, so this must not touch its state
     const { saved } = readRunState(dir);
     expect(saved.status).toBe("succeeded");
-    expect(saved.nodes["a"]!.status).toBe("succeeded");
+    expect(saved.nodes.a!.status).toBe("succeeded");
   });
 
   test("a log stream error does not crash the run", async () => {
@@ -793,7 +793,7 @@ nodes:
       print: quiet,
     });
     expect(state.status).toBe("succeeded");
-    expect(state.nodes["vic"]!.output).toBe("survived");
+    expect(state.nodes.vic!.output).toBe("survived");
   });
 });
 

@@ -258,7 +258,7 @@ nodes:
         cwd: dir,
         print: () => {},
       });
-      expect(state.nodes["a"]!.sessionId).toBe("double-session");
+      expect(state.nodes.a!.sessionId).toBe("double-session");
     } finally {
       restore();
     }
@@ -331,7 +331,7 @@ nodes:
         cwd: dir,
         print: () => {},
       });
-      expect(state.nodes["a"]!.output).toBe("opencode-go/deepseek-v4-flash");
+      expect(state.nodes.a!.output).toBe("opencode-go/deepseek-v4-flash");
     } finally {
       restore();
     }

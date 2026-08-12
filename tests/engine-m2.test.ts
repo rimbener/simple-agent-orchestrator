@@ -78,13 +78,13 @@ nodes:
     const runner = scriptedRunner(["not yet", "still no", `finished ${sentinelToken("DONE")}`], calls);
     const state = await run(path, dir, { resolveRunner: () => runner });
     expect(state.status).toBe("succeeded");
-    expect(state.nodes["work"]!.iterations).toBe(3);
-    expect(state.nodes["work"]!.output).toContain("finished");
+    expect(state.nodes.work!.iterations).toBe(3);
+    expect(state.nodes.work!.output).toContain("finished");
     expect(calls).toHaveLength(3);
     expect(calls[0]!.prompt).toContain("iteration 1");
     expect(calls[2]!.prompt).toContain("iteration 3");
     expect(calls[0]!.cwd).toBe(dir); // loop iterations execute in the run cwd
-    expect(Object.hasOwn(state.nodes["work"]!, "lastFeedback")).toBe(false); // non-interactive loops record none
+    expect(Object.hasOwn(state.nodes.work!, "lastFeedback")).toBe(false); // non-interactive loops record none
   });
 
   test("the engine appends the exact sentinel instruction to every iteration prompt", async () => {
@@ -99,7 +99,7 @@ nodes:
 `);
     const calls: RunnerRequest[] = [];
     await run(path, dir, { resolveRunner: () => scriptedRunner([sentinelToken("ALL_TASKS_COMPLETE")], calls) });
-    expect(calls[0]!.prompt).toBe("do it" + sentinelInstruction("ALL_TASKS_COMPLETE"));
+    expect(calls[0]!.prompt).toBe(`do it${sentinelInstruction("ALL_TASKS_COMPLETE")}`);
     // Literal contract (SPEC: Loop semantics) — not derived from sentinelInstruction,
     // so a mutated instruction template cannot hide behind its own test.
     expect(calls[0]!.prompt).toContain(
@@ -248,8 +248,8 @@ nodes:
     const printed: string[] = [];
     const state = await run(path, dir, { print: (line) => printed.push(line) });
     expect(state.status).toBe("succeeded");
-    expect(state.nodes["work"]!.iterations).toBe(2);
-    expect(state.nodes["work"]!.output).toBe("tick"); // last executed step's tail
+    expect(state.nodes.work!.iterations).toBe(2);
+    expect(state.nodes.work!.output).toBe("tick"); // last executed step's tail
     expect(readFileSync(join(dir, "count.txt"), "utf8").trim().split("\n")).toHaveLength(2);
     // Iteration echoes carry the <id>#<iteration> label.
     expect(printed.some((line) => line.includes("[work#1]") && line.includes("tick"))).toBe(true);
@@ -270,7 +270,7 @@ nodes:
     const state = await run(path, dir, { resolveRunner: () => scriptedRunner(["counted"], calls) });
     expect(state.status).toBe("succeeded");
     expect(calls[0]!.prompt).toBe("tally 1"); // exactly — no <promise> instruction appended
-    expect(state.nodes["work"]!.output).toBe("counted");
+    expect(state.nodes.work!.output).toBe("counted");
   });
 
   test("an iteration whose steps were all skipped yields an empty output, not stale text", async () => {
@@ -287,7 +287,7 @@ nodes:
 `);
     const state = await run(path, dir);
     expect(state.status).toBe("succeeded");
-    expect(state.nodes["work"]!.output).toBe("");
+    expect(state.nodes.work!.output).toBe("");
   });
 
   test("a never-passing predicate exhausts max_iterations", async () => {
@@ -323,12 +323,12 @@ nodes:
     const runner = scriptedRunner(["built", `ok ${sentinelToken("CLEAN")}`], calls);
     const state = await run(path, dir, { resolveRunner: () => runner });
     expect(state.status).toBe("succeeded");
-    expect(state.nodes["cycle"]!.iterations).toBe(1);
+    expect(state.nodes.cycle!.iterations).toBe(1);
     expect(calls).toHaveLength(2);
     expect(calls[0]!.prompt).toBe("build"); // no instruction on a non-final AI step
     expect(calls[0]!.cwd).toBe(dir);
-    expect(calls[1]!.prompt).toBe("review" + sentinelInstruction("CLEAN"));
-    expect(state.nodes["cycle"]!.output).toContain("ok"); // last AI step's output
+    expect(calls[1]!.prompt).toBe(`review${sentinelInstruction("CLEAN")}`);
+    expect(state.nodes.cycle!.output).toContain("ok"); // last AI step's output
   });
 
   test("a failing bash step fails the whole loop node", async () => {
@@ -393,10 +393,10 @@ nodes:
     const state = await run(path, dir, { resolveRunner: () => runner });
     expect(state.status).toBe("succeeded");
     // The AI step is the last AI step, so it carries the instruction…
-    expect(calls[0]!.prompt).toBe("review" + sentinelInstruction("DONE"));
+    expect(calls[0]!.prompt).toBe(`review${sentinelInstruction("DONE")}`);
     // …and the node's output is the AI step's, not the trailing bash tail.
-    expect(state.nodes["cycle"]!.output).toContain("fine");
-    expect(state.nodes["cycle"]!.output).not.toContain("bash-tail");
+    expect(state.nodes.cycle!.output).toContain("fine");
+    expect(state.nodes.cycle!.output).not.toContain("bash-tail");
   });
 
   test("until_bash steps loops send AI prompts verbatim — no sentinel instruction", async () => {
@@ -489,9 +489,9 @@ nodes:
       promptUser: scriptedPrompts(["blue, not red", "a"], questions),
     });
     expect(state.status).toBe("succeeded");
-    expect(state.nodes["grill"]!.iterations).toBe(2);
-    expect(state.nodes["grill"]!.output).toContain("done");
-    expect(state.nodes["grill"]!.lastFeedback).toBe("blue, not red"); // persisted for M3 resume
+    expect(state.nodes.grill!.iterations).toBe(2);
+    expect(state.nodes.grill!.output).toContain("done");
+    expect(state.nodes.grill!.lastFeedback).toBe("blue, not red"); // persisted for M3 resume
     expect(calls[0]!.prompt).toContain("feedback: []");
     expect(calls[1]!.prompt).toContain("feedback: [blue, not red]");
     expect(questions[0]).toContain("no signal yet");
@@ -542,7 +542,7 @@ nodes:
       print: (line) => printed.push(line),
     });
     expect(state.status).toBe("succeeded");
-    expect(state.nodes["grill"]!.iterations).toBe(2);
+    expect(state.nodes.grill!.iterations).toBe(2);
     expect(questions).toHaveLength(3);
     expect(
       printed.some((line) => line.includes("has not emitted <promise>SETTLED</promise>") && line.includes("grill")),
@@ -616,7 +616,7 @@ nodes:
       run: async () => ({ output: sentinelToken("DONE"), exitCode: 0 }),
     };
     const state = await run(path, dir, { resolveRunner: () => runner });
-    expect(Object.hasOwn(state.nodes["work"]!, "sessionId")).toBe(false);
+    expect(Object.hasOwn(state.nodes.work!, "sessionId")).toBe(false);
   });
 
   test("exhaustion after a signaled-but-unapproved final iteration says so, not 'without signal'", async () => {
@@ -697,8 +697,8 @@ nodes:
 `);
     const state = await run(path, dir, { promptUser: scriptedPrompts(["a"]) });
     expect(state.status).toBe("succeeded");
-    expect(state.nodes["ship"]!.output).toBe("approved");
-    expect(state.nodes["after"]!.output).toBe("gate said approved");
+    expect(state.nodes.ship!.output).toBe("approved");
+    expect(state.nodes.after!.output).toBe("gate said approved");
   });
 
   test("feedback becomes the gate's output for downstream templates", async () => {
@@ -713,7 +713,7 @@ nodes:
     bash: "echo {{nodes.ship.output}}"
 `);
     const state = await run(path, dir, { promptUser: scriptedPrompts(["rename the flag first"]) });
-    expect(state.nodes["after"]!.output).toBe("rename the flag first");
+    expect(state.nodes.after!.output).toBe("rename the flag first");
   });
 
   test("empty replies re-ask until a real answer arrives", async () => {
@@ -781,9 +781,9 @@ nodes:
     const printed: string[] = [];
     const state = await run(path, dir, { print: (line) => printed.push(line) });
     expect(state.status).toBe("succeeded");
-    expect(state.nodes["maybe"]!.status).toBe("skipped");
-    expect(state.nodes["maybe"]!.output).toBe("");
-    expect(state.nodes["after"]!.output).toBe("got []");
+    expect(state.nodes.maybe!.status).toBe("skipped");
+    expect(state.nodes.maybe!.output).toBe("");
+    expect(state.nodes.after!.output).toBe("got []");
     expect(printed.some((line) => line.includes("⊘ maybe") && line.includes("(skipped by when_bash)"))).toBe(true);
     // The predicate's own output lands in the node log.
     expect(readFileSync(join(dir, ".sao", "runs", state.id, "logs", "maybe.log"), "utf8")).toContain("probe-when");
@@ -834,8 +834,8 @@ nodes:
     bash: "echo ran"
 `);
     const state = await run(path, dir);
-    expect(state.nodes["maybe"]!.status).toBe("succeeded");
-    expect(state.nodes["maybe"]!.output).toBe("ran");
+    expect(state.nodes.maybe!.status).toBe("succeeded");
+    expect(state.nodes.maybe!.output).toBe("ran");
   });
 
   test("when_bash predicates are interpolated", async () => {
@@ -850,7 +850,7 @@ nodes:
     bash: "echo ran"
 `);
     const state = await run(path, dir);
-    expect(state.nodes["maybe"]!.status).toBe("succeeded");
+    expect(state.nodes.maybe!.status).toBe("succeeded");
   });
 
   test("a gate behind a failing when_bash is skipped without prompting", async () => {
@@ -867,7 +867,7 @@ nodes:
         throw new Error("promptUser must not be called");
       },
     });
-    expect(state.nodes["ship"]!.status).toBe("skipped");
+    expect(state.nodes.ship!.status).toBe("skipped");
   });
 });
 
@@ -1006,7 +1006,7 @@ nodes:
     const state = await run(path, dir, { runRoot });
     expect(existsSync(join(runRoot, ".sao", "runs", state.id, "state.json"))).toBe(true);
     expect(existsSync(join(dir, ".sao"))).toBe(false);
-    expect(state.nodes["a"]!.output).toBe((await import("node:fs")).realpathSync(dir));
+    expect(state.nodes.a!.output).toBe((await import("node:fs")).realpathSync(dir));
   });
 });
 
@@ -1125,7 +1125,7 @@ nodes:
     };
     const state = await run(path, dir, { resolveRunner: () => runner });
     expect(state.status).toBe("succeeded");
-    expect(state.nodes["work"]!.output).toContain("yes");
+    expect(state.nodes.work!.output).toContain("yes");
     // The retry must APPEND to work.1.log — attempt 1's evidence survives.
     const log = readFileSync(join(dir, ".sao", "runs", state.id, "logs", "work.1.log"), "utf8");
     expect(log).toContain("marker-attempt-1");

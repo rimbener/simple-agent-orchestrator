@@ -70,7 +70,7 @@ describe("preflightRunnerEnvironments", () => {
     const { dir, path } = setup(RESUME_LOOP);
     const runner = mockAcpRunner(() => {}); // never throws: capability present
     const state = await run(path, dir, { resolveRunner: () => runner });
-    expect(state.nodes["fix"]!.status).toBe("succeeded");
+    expect(state.nodes.fix!.status).toBe("succeeded");
   });
 
   test("@s-validate-performs-handshake: the same preflight call validate makes surfaces the capability gap without running anything", async () => {

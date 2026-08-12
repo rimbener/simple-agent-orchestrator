@@ -257,7 +257,7 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunState> {
     // Inline mcp: servers become a per-run config file; a path form was already resolved.
     if (opts.workflow.mcpConfigPath === undefined && opts.workflow.mcpServers !== undefined) {
       mcpConfigPath = join(paths.dir, "mcp.json");
-      writeFileSync(mcpConfigPath, JSON.stringify({ mcpServers: opts.workflow.mcpServers }, null, 2) + "\n");
+      writeFileSync(mcpConfigPath, `${JSON.stringify({ mcpServers: opts.workflow.mcpServers }, null, 2)}\n`);
     }
   } catch (err) {
     state.status = "failed";
@@ -308,7 +308,7 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunState> {
     // Stryker disable next-line ConditionalExpression: forcing the guard true is equivalent — every error the engine throws is a SaoError; the guard only protects hypothetical non-Sao crashes
     if (err instanceof SaoError) {
       // Stryker disable next-line ConditionalExpression,StringLiteral: forcing the hint-check true (or junking the unreachable else-branch) is equivalent — runOne attaches at least the log-path hint to every error it throws
-      err.hint = (err.hint !== undefined ? err.hint + "\n  " : "") + `resume with: sao resume ${runId}`;
+      err.hint = `${err.hint !== undefined ? `${err.hint}\n  ` : ""}resume with: sao resume ${runId}`;
     }
     // Stryker disable next-line BlockStatement: leaving the hook registered after a failure only causes a redundant re-save of already-failed state at teardown — unobservable
     releaseShutdownHook();
@@ -567,7 +567,7 @@ export function hashRunConfig(workflowPath: string, workflow: Workflow): string 
     // Stryker disable next-line StringLiteral: boundary marker — a collision without it needs bytes moved across the agent/mcp seam to still parse as JSON, which concatenated JSON documents never do
     hash.update("\0mcp\0").update(readFileSync(workflow.mcpConfigPath));
   }
-  return "sha256:" + hash.digest("hex");
+  return `sha256:${hash.digest("hex")}`;
 }
 
 /** Null-prototype node-state map: ids like "constructor" must never hit Object.prototype. */

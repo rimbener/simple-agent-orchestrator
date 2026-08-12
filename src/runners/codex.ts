@@ -102,12 +102,12 @@ export class CodexStreamCollector {
     try {
       parsed = JSON.parse(line);
     } catch /* Stryker disable next-line all: equivalent — with an empty catch, `parsed` stays undefined and the scalar guard below emits the same line */ {
-      this.onOutput?.(line + "\n");
+      this.onOutput?.(`${line}\n`);
       return;
     }
     if (parsed === null || typeof parsed !== "object") {
       // JSON scalars are stray output, not events.
-      this.onOutput?.(line + "\n");
+      this.onOutput?.(`${line}\n`);
       return;
     }
     const event = parsed as CodexEvent;
@@ -117,7 +117,7 @@ export class CodexStreamCollector {
       const text = event.item.text ?? "";
       this.sawMessage = true;
       this.output = text; // the last completed agent message is the node output
-      if (text) this.onOutput?.(text + "\n");
+      if (text) this.onOutput?.(`${text}\n`);
     } else if (event.type === "turn.completed") {
       this.turnEnded = true;
     } else if (event.type === "turn.failed") {
@@ -190,7 +190,7 @@ export const codexRunner: Runner = {
         collector.finish();
         if (collector.errorMessage !== undefined) {
           // Failure detail often lives only on the error event — put it in the log.
-          req.onOutput?.(collector.errorMessage + "\n");
+          req.onOutput?.(`${collector.errorMessage}\n`);
         }
         if (exitCode === 0) {
           if (collector.errorMessage !== undefined) {

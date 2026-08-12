@@ -79,7 +79,7 @@ export function createRunId(workflowName: string, now = new Date()): string {
 }
 
 export function hashFile(path: string): string {
-  return "sha256:" + createHash("sha256").update(readFileSync(path)).digest("hex");
+  return `sha256:${createHash("sha256").update(readFileSync(path)).digest("hex")}`;
 }
 
 /** Generate a run id and create its directory, retrying on the (rare) id collision. */
@@ -116,7 +116,7 @@ export function saveState(paths: RunPaths, state: RunState): void {
   // (a concurrent resume) ENOENT-crash on each other's rename.
   // Stryker disable next-line all: dropping the suffix turns write+rename into write+rename-onto-itself, which only degrades crash-atomicity — unobservable in-process
   const tmp = `${paths.stateFile}.${process.pid}.tmp`;
-  writeFileSync(tmp, JSON.stringify(state, null, 2) + "\n");
+  writeFileSync(tmp, `${JSON.stringify(state, null, 2)}\n`);
   renameSync(tmp, paths.stateFile);
 }
 
@@ -339,7 +339,7 @@ function ensureGitExclude(root: string): void {
     const current = existsSync(excludeFile) ? readFileSync(excludeFile, "utf8") : "";
     if (current.split("\n").some((line) => line.trim() === ".sao/")) return;
     mkdirSync(infoDir, { recursive: true });
-    appendFileSync(excludeFile, (current.endsWith("\n") || current === "" ? "" : "\n") + ".sao/\n");
+    appendFileSync(excludeFile, `${current.endsWith("\n") || current === "" ? "" : "\n"}.sao/\n`);
   } catch {
     // best-effort: a failed exclude write must never block a run
   }

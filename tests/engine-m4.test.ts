@@ -480,7 +480,7 @@ nodes:
       const stateFile = join(dir, ".sao", "runs", runId, "state.json");
       const onDisk = JSON.parse(readFileSync(stateFile, "utf8"));
       onDisk.branch = "+sao/evil:main"; // force-refspec shape — must never reach git push
-      writeFileSync(stateFile, JSON.stringify(onDisk, null, 2) + "\n");
+      writeFileSync(stateFile, `${JSON.stringify(onDisk, null, 2)}\n`);
 
       const lines: string[] = [];
       const state = await run(path, dir, { resume: loadRun(dir, runId), print: (l) => lines.push(l) });
@@ -566,7 +566,7 @@ nodes:
       const stateFile = join(dir, ".sao", "runs", runId, "state.json");
       const onDisk = JSON.parse(readFileSync(stateFile, "utf8"));
       delete onDisk.branch; // worktree present, branch gone — one clause true, not both
-      writeFileSync(stateFile, JSON.stringify(onDisk, null, 2) + "\n");
+      writeFileSync(stateFile, `${JSON.stringify(onDisk, null, 2)}\n`);
 
       const lines: string[] = [];
       const state = await run(path, dir, { resume: loadRun(dir, runId), print: (l) => lines.push(l) });

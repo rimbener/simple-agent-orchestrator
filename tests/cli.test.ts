@@ -608,7 +608,7 @@ describe("sao run in a worktree + resume/list/logs/clean", () => {
     const { dir, path } = tempWorkflow(FLAKY_YAML);
     runCli(["run", path, "--no-worktree"], dir);
     const runId = readdirSync(join(dir, ".sao", "runs"))[0]!;
-    writeFileSync(path, readFileSync(path, "utf8") + "# edited\n");
+    writeFileSync(path, `${readFileSync(path, "utf8")}# edited\n`);
 
     const refused = runCli(["resume", runId], dir);
     expect(refused.status).toBe(1);

@@ -197,7 +197,7 @@ describe("saveState", () => {
     // stand-in: nothing but state.json remains, and no ".tmp" of a fixed name was used.
     for (const entry of readdirSync(paths.dir)) if (!dirBefore.has(entry)) observed.push(entry);
     expect(observed).toEqual([]);
-    expect(existsSync(paths.stateFile + ".tmp")).toBe(false);
+    expect(existsSync(`${paths.stateFile}.tmp`)).toBe(false);
   });
 });
 

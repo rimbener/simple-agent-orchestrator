@@ -124,8 +124,8 @@ nodes:
     expect(state.status).toBe("succeeded");
     expect(resumeCalls).toHaveLength(1); // a did NOT re-run
     expect(resumeCalls[0]!.prompt).toBe("consume alpha"); // restored output interpolated
-    expect(state.nodes["a"]!.output).toBe("alpha");
-    expect(state.nodes["b"]!.output).toBe("beta");
+    expect(state.nodes.a!.output).toBe("alpha");
+    expect(state.nodes.b!.output).toBe("beta");
     const resumeOutput = resumeLines.join("\n");
     expect(resumeOutput).toContain(`sao resume ${state.id}`);
     expect(resumeOutput).toContain("↷ a (already succeeded)");
@@ -142,7 +142,7 @@ nodes:
     await rejection(run(path, dir, { resume: loadRun(dir, onlyRunId(dir)) }));
     const { state } = loadRun(dir, onlyRunId(dir));
     expect(state.status).toBe("failed");
-    expect(state.nodes["a"]!.status).toBe("failed");
+    expect(state.nodes.a!.status).toBe("failed");
   });
 
   test("resume ignores a worktree option — the original run's isolation wins", async () => {
@@ -170,7 +170,7 @@ nodes:
 `);
     await rejection(run(path, dir, { resolveRunner: useRunner(["alpha", new SaoError("boom")]) }));
     const loaded = loadRun(dir, onlyRunId(dir));
-    delete loaded.state.nodes["a"]!.output;
+    delete loaded.state.nodes.a!.output;
     const resumeCalls: RunnerRequest[] = [];
     await run(path, dir, { resolveRunner: useRunner(["beta"], resumeCalls), resume: loaded });
     expect(resumeCalls[0]!.prompt).toBe("consume []");
@@ -188,11 +188,11 @@ nodes:
     bash: "${FAIL_ONCE}"
 `);
     await rejection(run(path, dir));
-    expect(loadRun(dir, onlyRunId(dir)).state.nodes["a"]!.status).toBe("skipped");
+    expect(loadRun(dir, onlyRunId(dir)).state.nodes.a!.status).toBe("skipped");
     const lines: string[] = [];
     const state = await run(path, dir, { resume: loadRun(dir, onlyRunId(dir)), print: (l) => lines.push(l) });
     expect(state.status).toBe("succeeded");
-    expect(state.nodes["a"]!.status).toBe("skipped");
+    expect(state.nodes.a!.status).toBe("skipped");
     expect(lines.join("\n")).toContain("↷ a (already skipped)");
   });
 
@@ -206,12 +206,12 @@ nodes:
 `);
     await rejection(run(path, dir)); // predicate passes (and flips itself false), body fails once
     const loaded = loadRun(dir, onlyRunId(dir));
-    expect(loaded.state.nodes["a"]!.status).toBe("failed");
-    expect(loaded.state.nodes["a"]!.whenPassed).toBe(true); // persisted BEFORE the body — a crash mid-body must not re-gate
+    expect(loaded.state.nodes.a!.status).toBe("failed");
+    expect(loaded.state.nodes.a!.whenPassed).toBe(true); // persisted BEFORE the body — a crash mid-body must not re-gate
     const state = await run(path, dir, { resume: loaded });
     expect(state.status).toBe("succeeded");
-    expect(state.nodes["a"]!.status).toBe("succeeded"); // re-ran the body; a re-evaluated predicate would have skipped it
-    expect(state.nodes["a"]!.output).toContain("body-ran");
+    expect(state.nodes.a!.status).toBe("succeeded"); // re-ran the body; a re-evaluated predicate would have skipped it
+    expect(state.nodes.a!.output).toContain("body-ran");
   });
 
   test("a predicate that itself failed IS re-evaluated on resume — the body never started", async () => {
@@ -226,11 +226,11 @@ nodes:
     const err = await rejection(run(path, dir)); // predicate times out → node failed, whenPassed never set
     expect(err.message).toContain('failed at node "a"');
     const loaded = loadRun(dir, onlyRunId(dir));
-    expect(loaded.state.nodes["a"]!.whenPassed).toBeUndefined();
+    expect(loaded.state.nodes.a!.whenPassed).toBeUndefined();
     writeFileSync(join(dir, "allow"), "");
     const state = await run(path, dir, { resume: loaded });
     expect(state.status).toBe("succeeded");
-    expect(state.nodes["a"]!.output).toContain("body-ran");
+    expect(state.nodes.a!.output).toContain("body-ran");
   });
 
   test("a run that already succeeded refuses to resume", async () => {
@@ -355,7 +355,7 @@ nodes:
 `);
     await rejection(run(path, dir));
     const runId = onlyRunId(dir);
-    writeFileSync(path, readFileSync(path, "utf8") + "# edited\n");
+    writeFileSync(path, `${readFileSync(path, "utf8")}# edited\n`);
 
     const err = await rejection(run(path, dir, { resume: loadRun(dir, runId) }));
     expect(err.message).toBe("the run's configuration changed since it started (workflow, agent files, or mcp config)");
@@ -465,7 +465,7 @@ nodes:
     const loaded = loadRun(dir, onlyRunId(dir));
     const state = await run(path, dir, { vars: loaded.state.vars, resume: loaded });
     expect(state.status).toBe("succeeded"); // the required input arrived through the filter
-    expect(state.nodes["a"]!.output).toBe("kept=[v1]");
+    expect(state.nodes.a!.output).toBe("kept=[v1]");
   });
 });
 
@@ -590,7 +590,7 @@ nodes:
     );
     await rejection(run(path, dir, { resume: { ...loadRun(dir, runId), force: true } }));
     const { state } = loadRun(dir, runId);
-    expect(state.nodes["later"]).toEqual({ status: "pending" });
+    expect(state.nodes.later).toEqual({ status: "pending" });
   });
 });
 
@@ -609,8 +609,8 @@ nodes:
     const firstCalls: RunnerRequest[] = [];
     await rejection(run(path, dir, { resolveRunner: useRunner(["no", new SaoError("crash")], firstCalls) }));
     const loaded = loadRun(dir, onlyRunId(dir));
-    expect(loaded.state.nodes["work"]!.iterations).toBe(2);
-    expect(loaded.state.nodes["work"]!.sessionId).toBe("session-1");
+    expect(loaded.state.nodes.work!.iterations).toBe(2);
+    expect(loaded.state.nodes.work!.sessionId).toBe("session-1");
 
     const resumeCalls: RunnerRequest[] = [];
     const state = await run(path, dir, {
@@ -621,7 +621,7 @@ nodes:
     expect(resumeCalls).toHaveLength(1);
     expect(resumeCalls[0]!.prompt).toContain("iteration 2 fb[]"); // resumed mid-loop, no stale feedback
     expect(resumeCalls[0]!.resumeSessionId).toBe("session-1"); // conversation resumed
-    expect(state.nodes["work"]!.iterations).toBe(2);
+    expect(state.nodes.work!.iterations).toBe(2);
   });
 
   test("an interactive loop resumes with the feedback that fed the failed iteration", async () => {
@@ -643,7 +643,7 @@ nodes:
       }),
     );
     const loaded = loadRun(dir, onlyRunId(dir));
-    expect(loaded.state.nodes["chat"]!.lastFeedback).toBe("make it blue");
+    expect(loaded.state.nodes.chat!.lastFeedback).toBe("make it blue");
 
     const resumeCalls: RunnerRequest[] = [];
     const state = await run(path, dir, {
@@ -672,7 +672,7 @@ nodes:
       run(path, dir, { resolveRunner: useRunner([new SaoError("crash-0"), "no", new SaoError("crash-1")]) }),
     );
     const loaded = loadRun(dir, onlyRunId(dir));
-    expect(loaded.state.nodes["work"]!.iterations).toBe(2);
+    expect(loaded.state.nodes.work!.iterations).toBe(2);
 
     const resumeCalls: RunnerRequest[] = [];
     const state = await run(path, dir, {
@@ -717,6 +717,7 @@ nodes:
     expect(state.status).toBe("succeeded");
     expect(readFileSync(join(dir, "proto-count.txt"), "utf8")).toBe("ran\n");
     const persisted = JSON.parse(readFileSync(loadRun(dir, runId).paths.stateFile, "utf8")) as RunState;
+    // biome-ignore lint/complexity/useLiteralKeys: `.constructor` resolves to the prototype property, not the node — bracket access is required here.
     expect(persisted.nodes["constructor"]!.status).toBe("succeeded"); // recorded, not lost to the prototype
     expect(Object.hasOwn(Object as object, "status")).toBe(false); // and the global was not polluted
   });
@@ -746,8 +747,8 @@ nodes:
     expect(existsSync(join(worktree, "artifact.txt"))).toBe(true);
     expect(existsSync(join(dir, "artifact.txt"))).toBe(false); // main tree untouched
     expect(git(worktree, "log", "-1", "--format=%s")).toBe(`sao: finalize run ${state.id}`);
-    expect(state.nodes["env"]!.output).toContain(`id=${state.id} base=[${state.base}] branch=[sao/${state.id}]`);
-    expect(state.nodes["env"]!.output).toContain(`env=${state.id}:sao/${state.id}`);
+    expect(state.nodes.env!.output).toContain(`id=${state.id} base=[${state.base}] branch=[sao/${state.id}]`);
+    expect(state.nodes.env!.output).toContain(`env=${state.id}:sao/${state.id}`);
     const report = lines.join("\n");
     expect(report).toContain(`worktree ${state.worktree} on branch sao/${state.id} (base ${state.base})`);
     expect(report).toContain("finalized: committed remaining worktree changes");
@@ -945,7 +946,7 @@ nodes:
     bash: "echo id={{run_id}} base=[{{base}}] branch=[{{branch}}] wt=$SAO_WORKTREE ref=[$SAO_BASE_REF]"
 `);
     const state = await run(path, dir);
-    const output = state.nodes["a"]!.output!;
+    const output = state.nodes.a!.output!;
     expect(output).toContain(`id=${state.id}`);
     expect(output).toContain("base=[]");
     expect(output).toContain("branch=[]");
@@ -1000,7 +1001,7 @@ nodes:
     const afterMcp = hashRunConfig(path, load());
     expect(afterMcp).not.toBe(afterAgent);
 
-    writeFileSync(path, readFileSync(path, "utf8") + "# tweak\n");
+    writeFileSync(path, `${readFileSync(path, "utf8")}# tweak\n`);
     expect(hashRunConfig(path, load())).not.toBe(afterMcp);
   });
 

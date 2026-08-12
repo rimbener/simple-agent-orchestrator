@@ -462,7 +462,7 @@ echo '{"type":"result","result":"${over}","is_error":true}'
 `);
     try {
       const err = await rejectionOf(claudeRunner.run({ prompt: "hi", cwd: process.cwd() }));
-      expect(err.hint).toBe("y".repeat(500) + " …");
+      expect(err.hint).toBe(`${"y".repeat(500)} …`);
     } finally {
       restore();
     }

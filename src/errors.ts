@@ -12,7 +12,7 @@ export class SaoError extends Error {
 export function truncateDetail(text: string, max = 500): string | undefined {
   const trimmed = text.trim();
   if (!trimmed) return undefined;
-  return trimmed.length <= max ? trimmed : trimmed.slice(0, max) + " …";
+  return trimmed.length <= max ? trimmed : `${trimmed.slice(0, max)} …`;
 }
 
 /** A human rejected a gate — the run halts as "rejected", not "failed". */

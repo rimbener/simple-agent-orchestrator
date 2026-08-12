@@ -84,12 +84,12 @@ export class ClaudeStreamCollector {
     try {
       parsed = JSON.parse(line);
     } catch /* Stryker disable next-line all: equivalent — with an empty catch, `parsed` stays undefined and the scalar guard below emits the same line */ {
-      this.onOutput?.(line + "\n");
+      this.onOutput?.(`${line}\n`);
       return;
     }
     if (parsed === null || typeof parsed !== "object") {
       // JSON scalars ("null", "123", quoted strings) are stray output, not events.
-      this.onOutput?.(line + "\n");
+      this.onOutput?.(`${line}\n`);
       return;
     }
     const event = parsed as StreamEvent;
@@ -98,7 +98,7 @@ export class ClaudeStreamCollector {
         ?.filter((block) => block.type === "text" && block.text)
         .map((block) => block.text)
         .join("");
-      if (text) this.onOutput?.(text + "\n");
+      if (text) this.onOutput?.(`${text}\n`);
     } else if (event.type === "result") {
       this.sawResult = true;
       this.isError = event.is_error === true;
@@ -174,7 +174,7 @@ export const claudeRunner: Runner = {
         collector.finish();
         if ((code !== 0 || collector.isError) && collector.output.trim()) {
           // Failure detail usually lives only on the result event — put it in the log.
-          req.onOutput?.(collector.output + "\n");
+          req.onOutput?.(`${collector.output}\n`);
         }
         if (code === 0 && !collector.sawResult) {
           reject(
