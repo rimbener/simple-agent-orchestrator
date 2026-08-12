@@ -153,7 +153,7 @@ YAML. Each script is runnable and testable on its own.
 | `review-ci.sh` | `full-review` / `post-mutation-review` step 1 | the slice gate at `test:orchestrator:ci` strength, plus `bun run build`, so reviewers judge a tree that still bundles for Node ≥ 20. Run **once per round** by the workflow, never by a reviewer |
 | `mutation-baseline.sh <feature>` | `mutation-baseline` | records HEAD to `tmp/<feature>/mut-start-sha` |
 | `run-mutation.sh <feature> [base]` | `mutation` step 1 | Stryker scoped to the changed `src/` files; writes `tmp/<feature>/stryker.log`, echoes only the tail. Header documents why `--force` and the hand-re-applied `!src/cli.ts` exclusion are load-bearing |
-| `mutation-touched-source.sh <feature>` | `post-mutation-review` `when_bash` | exit 0 only if killing mutants changed `src/`. Non-zero **skips** the node — that is sao's `when_bash` contract, not a failure |
+| `mutation-touched-source.sh <feature>` | `post-mutation-review` `when_bash` | exit 0 if killing mutants changed `src/`, **or** if the script can't tell (missing baseline, failed `git diff`) — errors run the review rather than risk skipping one a real change needed. Non-zero **skips** the node — that is sao's `when_bash` contract, not a failure |
 | `finalize.sh <feature>` | `finalize` | fails on any 0-byte review artifact, then commits the phase-3/4 docs (skipping the commit when nothing is staged) |
 | `_lib.sh` | sourced by the rest | `die()` and `require_feature()` — the feature name becomes a path segment, so it is pattern-validated before any `join`, the same discipline `RUN_ID_PATTERN` applies to run ids in [`src/state.ts`](../../src/state.ts) |
 
