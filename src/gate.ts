@@ -122,6 +122,11 @@ export const promptOnTerminal: PromptUser = (message) => {
  * runs, so a test that EOFs stdin would otherwise poison every later run.
  */
 export function resetPromptState(): void {
+  if (waiting !== undefined) {
+    const turn = waiting;
+    waiting = undefined;
+    turn.reject(new SaoError("prompt state reset while a reply was pending", "resetPromptState() torn down mid-prompt"));
+  }
   if (rl !== undefined) {
     rl.removeAllListeners("line");
     rl.removeAllListeners("close");
@@ -131,6 +136,5 @@ export function resetPromptState(): void {
   queue = Promise.resolve();
   stdinClosed = false;
   buffered.length = 0;
-  waiting = undefined;
 }
 // Stryker restore all
