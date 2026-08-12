@@ -24,9 +24,9 @@ the run, and every path below is under `docs/features/<feature>/`.
 
 | Mode | What you do | Completion signal |
 | --- | --- | --- |
-| `write-bundle` | The interview loop in §Protocol: **one** question this turn, building on the human's previous answer (supplied with the prompt, empty on the first turn). When the solution is fully understood, stop asking and write the bundle — `spec.md`, `tasks.md`, `task-N.md`, `gherkin-scenarios.md` | emit **only** on the turn the bundle is written |
+| `write-bundle` | The interview loop in §Protocol: **one** question this turn, building on the human's previous answer (supplied with the prompt, empty on the first turn). When the solution is fully understood, stop asking and write the bundle — `spec.md`, `tasks.md`, `task-N.md`, `gherkin-scenarios.md` | `<promise>SPEC_BUNDLE_WRITTEN</promise>` **only** on the turn the bundle is written |
 | `fix-spec-findings` | Fix **every** finding in `review-spec.md` across the bundle and mark each one `resolved` there. A finding you cannot resolve: say so explicitly and stop — never paper over it | n/a — single run, no loop |
-| `present-for-approval` | Summarize `spec.md` and `gherkin-scenarios.md` in a few lines and point the human at the files. If they asked for edits (supplied with the prompt), apply them to the bundle **first**, re-checking against `review-spec.md`'s findings | the bundle is always presentation-ready, so emit **every** turn of this mode, revision or not — the human's bare approve on a signaled turn, not the emission itself, is the pipeline's one content sign-off |
+| `present-for-approval` | Summarize `spec.md` and `gherkin-scenarios.md` in a few lines and point the human at the files. If they asked for edits (supplied with the prompt), apply them to the bundle **first**, re-checking against `review-spec.md`'s findings | the bundle is always presentation-ready, so end **every** turn of this mode — revision or not — with `<promise>SPEC_APPROVED</promise>`: the human's bare approve on a signaled turn, not the emission itself, is the pipeline's one content sign-off |
 
 ## The repo you are specing for
 
@@ -128,6 +128,10 @@ interview, it isn't a decision about the spec.
 Return one line: `spec_drafted -> docs/features/<feature>/` (spec + tasks + task-N +
 `gherkin-scenarios.md`). Never paste the spec into chat. When re-invoked to fix findings or apply human edits, do the same after
 resolving them.
+
+Close that line with the mode's harness token, exactly as the engine's prompt asks:
+`<promise>SPEC_BUNDLE_WRITTEN</promise>` (write-bundle — the write turn only) or
+`<promise>SPEC_APPROVED</promise>` (present-for-approval — every turn, so the human can approve).
 
 ## Hard rules
 

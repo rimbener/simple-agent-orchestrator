@@ -126,6 +126,10 @@ yours. Splitting the story here only fragments the problem.
 Return one line: `user_story -> docs/features/<feature>/user-story.md`. Never paste
 the story into chat — the human just read it being written.
 
+On the turn that writes the file — and only that turn — end that one line with the
+harness's completion token `<promise>USER_STORY_WRITTEN</promise>`. A bare line
+without it leaves the loop open.
+
 ## Hard rules
 
 - ❌ No code, no tests, no spec, no Gherkin, no task breakdown — all downstream.

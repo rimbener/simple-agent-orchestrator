@@ -451,9 +451,8 @@ tests/               # bun test; engine tests use a mock Runner
 
 ## Non-goals (v1, explicitly)
 
-Web UI/dashboard · database · bundled/default workflows · skills system · natural-language
-workflow router · chat platform adapters (Slack/Telegram/Discord/GitHub) · telemetry ·
-acting as an MCP host (sao only forwards config to runners) ·
-dynamic plugin loading · nested/sub-workflows · expression-language conditionals
-(`if:` with comparisons/logic — `when_bash` shell predicates are the only branching) ·
-cron/scheduled runs.
+Web UI/dashboard · database · natural-language workflow router · chat platform
+adapters (Slack/Telegram/Discord/GitHub) · telemetry · acting as an MCP host (sao
+only forwards config to runners) · dynamic plugin loading · nested/sub-workflows ·
+expression-language conditionals (`if:` with comparisons/logic — `when_bash` shell
+predicates are the only branching) · cron/scheduled runs.
