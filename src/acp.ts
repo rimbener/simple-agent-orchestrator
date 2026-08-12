@@ -5,7 +5,6 @@ import {
   ClientSideConnection,
   ndJsonStream,
   PROTOCOL_VERSION,
-  type Agent,
   type AgentCapabilities,
   type Client,
   type ContentBlock,

@@ -376,6 +376,31 @@ unknown ID) fails the node like a bad `--model` on claude/codex rather than
 silently running the wrong model; `allowed_tools` is warned about and ignored
 (no ACP allowlist concept to map it onto); `permission_mode` is a silent no-op,
 superseded by the permission-request flow.
+List of opencode-go models:
+opencode-go/deepseek-v4-flash
+opencode-go/deepseek-v4-pro
+opencode-go/glm-5
+opencode-go/glm-5.1
+opencode-go/glm-5.2
+opencode-go/gpt-5.6-luna
+opencode-go/grok-4.5
+opencode-go/hy3
+opencode-go/kimi-k2.5
+opencode-go/kimi-k2.6
+opencode-go/kimi-k2.7-code
+opencode-go/kimi-k3
+opencode-go/mimo-v2-omni
+opencode-go/mimo-v2-pro
+opencode-go/mimo-v2.5
+opencode-go/mimo-v2.5-pro
+opencode-go/minimax-m2.5
+opencode-go/minimax-m2.7
+opencode-go/minimax-m3
+opencode-go/qwen3.5-plus
+opencode-go/qwen3.6-plus
+opencode-go/qwen3.7-max
+opencode-go/qwen3.7-plus
+opencode-go/qwen3.8-max
 
 Adding a runner = one new file in `src/runners/` implementing the interface, registered
 in a static map. No dynamic plugin loading in v1.
