@@ -115,4 +115,22 @@ export const promptOnTerminal: PromptUser = (message) => {
   );
   return turn;
 };
+
+/**
+ * Test hook: tear down the process-lifetime stdin machinery so a suite can run
+ * against fresh state. bun's --rerun-each reuses the module instance across
+ * runs, so a test that EOFs stdin would otherwise poison every later run.
+ */
+export function resetPromptState(): void {
+  if (rl !== undefined) {
+    rl.removeAllListeners("line");
+    rl.removeAllListeners("close");
+    rl.close();
+    rl = undefined;
+  }
+  queue = Promise.resolve();
+  stdinClosed = false;
+  buffered.length = 0;
+  waiting = undefined;
+}
 // Stryker restore all

@@ -1,17 +1,25 @@
 import { PassThrough } from "node:stream";
-import { afterAll, describe, expect, test } from "bun:test";
+import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 
 // The prompt machinery reads real process.stdin, so the suite replaces it with an
 // in-memory pipe: readline is driven by writes instead of a human terminal.
 const origStdin = process.stdin;
-const stdin = new PassThrough();
+let stdin = new PassThrough();
 process.stdin = stdin as unknown as typeof process.stdin;
 
-const { promptOnTerminal } = await import("../src/gate");
+const { promptOnTerminal, resetPromptState } = await import("../src/gate");
 
 const tick = async () => {
   for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 0));
 };
+
+// bun --rerun-each reuses the module instance, so an EOF'd stdin would linger
+// across runs. Swap in a fresh pipe and reset the readline machinery per test.
+beforeEach(() => {
+  stdin = new PassThrough();
+  process.stdin = stdin as unknown as typeof process.stdin;
+  resetPromptState();
+});
 
 afterAll(() => {
   process.stdin = origStdin;
@@ -53,6 +61,8 @@ describe("promptOnTerminal", () => {
   });
 
   test("a prompt issued after EOF rejects too", async () => {
+    stdin.end();
+    await tick();
     await expect(promptOnTerminal("")).rejects.toThrow("stdin closed while waiting for a reply");
   });
 });
