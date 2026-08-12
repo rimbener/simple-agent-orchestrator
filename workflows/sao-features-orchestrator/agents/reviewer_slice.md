@@ -103,10 +103,13 @@ a later task is a finding.
 
 ## Protocol
 
-1. Read the slice's diff (`git diff` since the previous slice commit) plus
-   `tdd-<N>.md`'s `@s → test` map; consult `gherkin-scenarios.md` / `spec.md` /
-   `SPEC.md` as needed. Do not read whole files you don't need, and do not review
-   outside the slice's diff — and do not read a prior slice's `tdd-*.md` /
+1. Read the slice's diff (`git diff` since the previous slice commit) **plus**
+   any new files the slice added — `git diff` alone never shows an untracked file,
+   so also run `git status --porcelain` (or `git ls-files --others
+   --exclude-standard`) and read every file it lists as new — plus `tdd-<N>.md`'s
+   `@s → test` map; consult `gherkin-scenarios.md` / `spec.md` / `SPEC.md` as
+   needed. Do not read whole files you don't need, and do not review outside the
+   slice's diff and its new files — and do not read a prior slice's `tdd-*.md` /
    `review-slice-*.md`, they are out of scope for this round.
 2. Check all five sections above. **Any finding blocks — slice reviews accept no
    minors**; everything found here is fixed before the slice closes.
