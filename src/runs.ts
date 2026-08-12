@@ -53,6 +53,7 @@ export function formatRunList(root: string, now: Date): string[] {
 }
 
 // `<node>.log` (single) or `<node>.<iteration>.log` (loop iterations).
+// Stryker disable next-line Regex: equivalent — every log filename either ends in `.log` (so `.+?` matches from position 0) or matches nowhere; the `^` cannot change the result
 const LOG_FILE_PATTERN = /^(.+?)(?:\.(\d+))?\.log$/;
 
 /**

@@ -65,4 +65,17 @@ describe("promptOnTerminal", () => {
     await tick();
     await expect(promptOnTerminal("")).rejects.toThrow("stdin closed while waiting for a reply");
   });
+
+  test("a prompt issued against a destroyed stdin rejects instead of creating a readline", async () => {
+    stdin.destroy();
+    await tick();
+    await expect(promptOnTerminal("")).rejects.toThrow("stdin closed while waiting for a reply");
+  });
+
+  test("resetPromptState while a reply is pending rejects that reply", async () => {
+    const reply = promptOnTerminal("");
+    await tick();
+    resetPromptState();
+    await expect(reply).rejects.toThrow("prompt state reset while a reply was pending");
+  });
 });

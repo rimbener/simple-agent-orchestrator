@@ -797,6 +797,7 @@ class Engine {
       } else if (
         // Stryker disable next-line ConditionalExpression,LogicalOperator: forcing this true is equivalent — a hint built from an untouched node carries iteration undefined / feedback "" / sessionId undefined, exactly the fresh-loop defaults executeLoop falls back to
         node.kind === "loop" &&
+        // Stryker disable next-line ConditionalExpression: forcing this true is equivalent — a hint built from an untouched node carries iteration undefined, exactly the fresh-loop defaults executeLoop falls back to
         prior.iterations !== undefined
       ) {
         this.loopResume.set(node.id, {

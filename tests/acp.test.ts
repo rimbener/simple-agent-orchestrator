@@ -62,6 +62,16 @@ var lastModelId = null;
 function handle(msg) {
   if (msg.method === "initialize") {
     if (config.hangInitialize) return;
+    if (config.initializeFails) {
+      send({ jsonrpc: "2.0", id: msg.id, error: { code: -32000, message: "handshake refused" } });
+      return;
+    }
+    if (config.emitSessionUpdateBeforeInit) {
+      send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: config.sessionId || "double-session", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "init chunk" } } } });
+    }
+    if (config.emitPermissionBeforeInit) {
+      send({ jsonrpc: "2.0", id: "perm-handshake", method: "session/request_permission", params: { sessionId: config.sessionId || "double-session", options: config.requestPermission && config.requestPermission.options || [{ optionId: "opt-yes", name: "Yes", kind: "allow_once" }], toolCall: { toolCallId: "tc-init", title: "init tool" } } });
+    }
     send({ jsonrpc: "2.0", id: msg.id, result: { protocolVersion: 1, agentCapabilities: config.agentCapabilities || {} } });
   } else if (msg.method === "session/new") {
     lastSessionEvent = "new:" + (config.sessionId || "double-session");
@@ -97,6 +107,7 @@ function handle(msg) {
       });
       return;
     }
+    if (config.stderrLine) process.stderr.write(config.stderrLine + "\\n");
     if (config.usageUpdate) {
       send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: config.sessionId || "double-session", update: { sessionUpdate: "usage_update", used: 16686, size: 200000, cost: { input: 1, output: 2 } } } });
     }
@@ -263,6 +274,19 @@ describe("runAcpTurn", () => {
     expect(result.output).toBe(`${realpathSync(dir)} run-77`);
   });
 
+  test("streams the agent's stderr through onOutput but keeps it out of turn output", async () => {
+    const double = withAcpDouble({ stderrLine: "warn: something went sideways", chunks: [{ text: "done" }] });
+    const chunks: string[] = [];
+    const result = await runAcpTurn(double.launch, {
+      prompt: "hi",
+      cwd: process.cwd(),
+      env: double.env,
+      onOutput: (c) => chunks.push(c),
+    });
+    expect(chunks.join("")).toBe("warn: something went sideways\ndone");
+    expect(result.output).toBe("done");
+  });
+
   test("@s-acp-usage-update-dropped: a usage_update notification (opencode telemetry) is dropped without tripping the library's schema", async () => {
     const double = withAcpDouble({ usageUpdate: true, chunks: [{ text: "done" }] });
     const errors: unknown[][] = [];
@@ -292,6 +316,42 @@ describe("runAcpTurn", () => {
 });
 
 describe("runAcpTurn — the timeout clock pauses for a permission prompt (D5)", () => {
+  test("@s-prompt-user-throw-fails-turn: a promptUser that throws fails the turn and kills the agent", async () => {
+    const double = withAcpDouble({
+      requestPermission: {
+        title: "risky",
+        options: [{ optionId: "opt-yes", name: "Yes", kind: "allow_once" }],
+      },
+    });
+    const promptUser: PromptUser = () => Promise.reject(new SaoError("terminal torn down"));
+    const original = console.error;
+    console.error = () => {};
+    let err: SaoError;
+    let dead = false;
+    try {
+      err = await rejectionOf(
+        runAcpTurn(double.launch, { prompt: "hi", cwd: process.cwd(), env: double.env, promptUser }),
+      );
+      // The library re-frames the thrown promptUser error as a client-side request
+      // error and logs it once the turn has already failed; the log lands on a
+      // continuation that can outlive the rejection, so keep it muted until the
+      // agent process is confirmed dead.
+      const pid = Number(readFileSync(double.pidFile, "utf8"));
+      for (let i = 0; i < 60; i++) {
+        if (!isAlive(pid)) {
+          dead = true;
+          break;
+        }
+        await wait(50);
+      }
+    } finally {
+      console.error = original;
+    }
+    expect(err).toBeInstanceOf(SaoError);
+    expect(err.message).toContain("terminal torn down");
+    expect(dead).toBe(true);
+  }, 15000);
+
   test("@s-timeout-paused-during-prompt: a human answering slower than timeoutSec does not time out the node", async () => {
     const double = withAcpDouble({
       requestPermission: { title: "risky", options: [{ optionId: "opt-yes", name: "Yes", kind: "allow_once" }] },
@@ -384,6 +444,29 @@ describe("runAcpHandshake", () => {
       await wait(50);
     }
     expect(dead).toBe(true);
+  });
+  test("a command that fails to spawn rejects with a SaoError", async () => {
+    const missing = join(tmpdir(), "sao-handshake-definitely-does-not-exist-acp-binary");
+    const err = await rejectionOf(runAcpHandshake({ command: missing, args: [] }, { cwd: process.cwd() }));
+    expect(err).toBeInstanceOf(SaoError);
+    expect(err.message).toContain("failed to spawn");
+  });
+
+  test("an initialize error response fails the handshake", async () => {
+    const double = withAcpDouble({ initializeFails: true });
+    const err = await rejectionOf(runAcpHandshake(double.launch, { cwd: process.cwd(), env: double.env }));
+    expect(err).toBeInstanceOf(SaoError);
+    expect(err.message).toContain("failed");
+  });
+
+  test("agent-initiated session updates and permission requests during the handshake are tolerated", async () => {
+    const double = withAcpDouble({
+      emitSessionUpdateBeforeInit: true,
+      emitPermissionBeforeInit: true,
+      agentCapabilities: { loadSession: true },
+    });
+    const capabilities = await runAcpHandshake(double.launch, { cwd: process.cwd(), env: double.env });
+    expect(capabilities).toEqual({ loadSession: true });
   });
 });
 

@@ -153,6 +153,24 @@ nodes:
     expect(err.hint).toContain("UPPER_SNAKE_CASE");
   });
 
+  test("mixed-case signal names are rejected even with a valid suffix or prefix", () => {
+    // Kills the anchor-removal mutants: /[A-Z][A-Z0-9_]*$/ accepts x_DONE's
+    // "DONE" suffix and /^[A-Z][A-Z0-9_]*/ accepts DONEx's "DONE" prefix, while
+    // the anchored SIGNAL_PATTERN requires the whole name to be UPPER_SNAKE_CASE.
+    for (const until of ["x_DONE", "DONE_s", "1DONE", "DONE_x"]) {
+      const err = failure(`
+name: mixed
+nodes:
+  - id: a
+    loop:
+      prompt: "go"
+      until: ${until}
+      max_iterations: 1
+`);
+      expect(err.hint).toContain("UPPER_SNAKE_CASE");
+    }
+  });
+
   test("a step with both prompt and bash is rejected", () => {
     expect(
       failure(`

@@ -65,8 +65,9 @@ describe("parsePermissionReply", () => {
     ["1", 1],
     ["2", 2],
     [" 3 ", 3],
-  ])("%p selects option index %d out of 3 offered", (reply, index) => {
-    expect(parsePermissionReply(reply, 3)).toEqual({ kind: "selected", index });
+    ["12", 12],
+  ])("%p selects option index %d out of matching offered options", (reply, index) => {
+    expect(parsePermissionReply(reply, index)).toEqual({ kind: "selected", index });
   });
 
   test.each([["0"], ["4"], ["-1"], ["a"], ["1.5"], [""], ["  "]])(

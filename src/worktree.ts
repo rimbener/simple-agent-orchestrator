@@ -319,9 +319,9 @@ export function createDraftPr(
   // Stryker restore all — placed after the brace: a restore that is the last line
   // inside a block attaches to nothing and silently disables the rest of the file.
   if (result.status !== 0) {
-    // Stryker disable next-line all: the ?? fallbacks fire only when gh is killed by a signal (null status/streams) — not stageable deterministically, and every substitute value still lands in the same thrown error
     throw gitFailure(
       "gh pr create failed",
+      // Stryker disable next-line all: the ?? fallbacks fire only when gh is killed by a signal (null status/streams) — not stageable deterministically, and every substitute value still lands in the same thrown error
       { code: result.status ?? 1, stdout: result.stdout ?? "", stderr: result.stderr ?? "" },
       "is gh authenticated (gh auth status), and does the repo have an 'origin' on GitHub?",
     );
