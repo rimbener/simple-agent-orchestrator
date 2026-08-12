@@ -39,11 +39,23 @@ names that slice's `tdd-<N>.md` / `review-slice-<N>.md`.
 | --- | --- | --- |
 | `build-slice` | Implement the **next unfinished** slice from `tasks.md` per §Protocol — strict TDD for every file in `src/`. Land the slice's `SPEC.md` (and `README.md`, where user-facing) update in the same slice. Flip the `task-N.md` status. Stop when the slice is green | none — the fix step closes the iteration |
 | `fix-slice-findings` | Fix **every** finding in `review-slice-<N>.md` via TDD, no minors skipped, mark each `resolved`, then **commit the slice** | emit once `tasks.md` shows every slice done |
-| `fix-review-findings` | Fix **every** open finding in `review.md` — blocker, major **and** minor — via TDD, and mark each `resolved` | emit when `review.md` has zero open findings |
-| `kill-mutants` | Kill every surviving mutant **and cover every `NoCoverage` mutant** in `mutation.md` per §Mutation-kill discipline — prefer a red **test**; change `src/` only when the mutant exposes a real defect. **Re-verify each kill**: never trust a survivor row you have not reproduced. If `mutation.md` instead records `NO_CHANGED_SOURCE` (the slice touched no `src/*.ts` outside `cli.ts`), there is nothing to kill — do nothing and emit | emit when `mutation.md` shows 100 % killed **and zero `NoCoverage`** on the changed files, **or** when `mutation.md` records `NO_CHANGED_SOURCE` |
-| `close-dod-gaps` | If `dod.md` reports gaps, close them via TDD and re-run the checks that failed | emit when `dod.md` is all-pass |
+| `fix-review-findings` | Fix **every** open finding in `review.md` — blocker, major **and** minor — via TDD, mark each `resolved`, then **commit** | emit when `review.md` has zero open findings |
+| `kill-mutants` | Kill every surviving mutant **and cover every `NoCoverage` mutant** in `mutation.md` per §Mutation-kill discipline — prefer a red **test**; change `src/` only when the mutant exposes a real defect. **Re-verify each kill**: never trust a survivor row you have not reproduced. If `mutation.md` instead records `NO_CHANGED_SOURCE` (the slice touched no `src/*.ts` outside `cli.ts`), there is nothing to kill — do nothing and emit. Otherwise, once every kill is verified, **commit** | emit when `mutation.md` shows 100 % killed **and zero `NoCoverage`** on the changed files, **or** when `mutation.md` records `NO_CHANGED_SOURCE` |
+| `close-dod-gaps` | If `dod.md` reports gaps, close them via TDD, re-run the checks that failed, then **commit** | emit when `dod.md` is all-pass |
 
 A fix mode never widens scope: fix what the report names, nothing else.
+
+**Commit before emitting, every fix mode, no exceptions.** `run-mutation.sh`,
+`mutation-touched-source.sh`, `reviewer_engineering`'s `delta-review`, and
+`dod_validator`'s dependency diff all scope themselves with `git diff
+<ref>...HEAD` or `<ref>..HEAD` — **committed history only**, never the working
+tree. An uncommitted fix is invisible to all of them: a mutation kill that never
+lands a commit doesn't just dodge `post-mutation-review`'s predicate, it drops
+that file out of the **next round's own `--mutate` scope**, so a survivor from
+this round can vanish from the report instead of being re-verified. `build-slice`
+is the one exception — its slice is committed at the end of the same iteration by
+`fix-slice-findings`, and `reviewer_slice` diffs the working tree against the
+previous commit, which already includes uncommitted changes.
 
 ## Preconditions
 
