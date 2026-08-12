@@ -1,5 +1,8 @@
 # AGENTS.md
 
+In all interactions and commit messages, be extremely concise and sacrifice grammar for the sake of concision.
+Use simple and plain language. Don't use fancy words or phrases. Avoid common-expressions and idioms.
+
 `sao` — a YAML workflow engine for AI coding agents. TypeScript, developed with Bun but **src must stay Node-compatible** (no Bun-only APIs; published to npm, `engines: node >= 20`). Entry: `src/cli.ts` → built to `dist/cli.js`.
 
 ## Commands
