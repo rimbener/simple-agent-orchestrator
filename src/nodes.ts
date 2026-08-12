@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { GateRejectedError, SaoError, truncateDetail } from "./errors";
+import type { PromptUser } from "./gate";
 import { killTree, track } from "./procs";
 import type { Runner } from "./runners/types";
 
@@ -18,6 +19,10 @@ export interface NodeExecContext {
   log: (chunk: string) => void;
   /** Extra environment (SAO_* run metadata) merged over process.env for subprocesses. */
   env?: Record<string, string>;
+  /** The owning node id — ACP runners name it in a `session/request_permission` prompt. */
+  nodeId?: string;
+  /** Terminal prompt for ACP permission requests; shares gate.ts's serialized queue. */
+  promptUser?: PromptUser;
 }
 
 export interface AiNodeResult {
@@ -50,6 +55,8 @@ export async function executeAiNode(prompt: string, config: AiExecConfig, ctx: N
     resumeSessionId: config.resumeSessionId,
     timeoutSec: config.timeoutSec,
     onOutput: ctx.log,
+    nodeId: ctx.nodeId,
+    promptUser: ctx.promptUser,
   });
   if (result.exitCode !== 0) {
     // No node-id prefix: the engine wraps every node error with the id already. The
@@ -91,6 +98,7 @@ export function runShell(
       if (settled) return;
       // Stryker disable next-line all: equivalent — same reasoning; the flag exists only to skip no-op double-settles
       settled = true;
+      // Stryker disable next-line all: equivalent — clearTimeout(undefined) is a no-op, and an uncleared timer only fires a harmless killTree on an already-dead child after settling
       if (timer) clearTimeout(timer);
       finish();
     };

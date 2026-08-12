@@ -14,7 +14,7 @@ against a repo.
 | Distribution     | Global CLI (`npm i -g sao` / `npx sao` / `bun i -g sao`), `engines: node >= 20`                                                                                                              |
 | Binary name      | `sao`                                                                                                                                                                                        |
 | Interface        | Pure CLI, live progress in terminal                                                                                                                                                          |
-| AI execution     | Pluggable `Runner` interface; **claude** (Claude Code headless) and **codex** (Codex CLI exec) adapters in v1                                                                                |
+| AI execution     | Pluggable `Runner` interface; **claude** (Claude Code headless), **codex** (Codex CLI exec), and **opencode** (Agent Client Protocol) adapters in v1                                        |
 | Workflow model   | Dependency graph via `depends_on`; independent nodes run concurrently                                                                                                                        |
 | Loops            | Repeat an AI prompt or a multi-step body (`steps:`) until a sentinel signal or a bash predicate passes; `max_iterations` guard; `fresh_context` per iteration                                                                |
 | Approval gates   | Block in the terminal (approve / reject / feedback)                                                                                                                                          |
@@ -48,7 +48,7 @@ mcp:                      # optional — MCP servers for AI nodes (see MCP secti
     args: ["-y", "mcp-remote", "https://mcp.atlassian.com/v1/sse"]
 
 defaults:                 # per-workflow defaults, overridable per node
-  runner: claude          # claude | codex
+  runner: claude          # claude | codex | opencode
   model: sonnet           # passed through to the runner, optional
   permission_mode: acceptEdits   # claude adapter only
   allowed_tools: [mcp__jira]     # tool allowlist forwarded to the runner
@@ -241,7 +241,27 @@ Terminal prompt: `[a]pprove / [r]eject / or type feedback`.
 - feedback → stored as `nodes.<id>.output` so downstream prompts can consume it,
 then continues (a gate that must re-do work should be modeled as an interactive loop).
 
+### Permission requests (ACP runners)
 
+**Invariant change:** gates are no longer the only thing that can pause a run — an
+ACP runner's `session/request_permission` pauses too, mid-AI-node. Rendering:
+the node id, what the agent wants to do (the tool call's title), and the agent's
+**own** options as a numbered menu (`1. Allow`, `2. Deny`, …). The chosen
+`optionId` is sent back verbatim — sao never interprets option meaning, and keeps
+**no** permission memory of its own ("allow for this session" is remembered
+agent-side, not by sao). An unparseable or out-of-range reply re-asks; nothing is
+sent to the agent until a valid choice is made. With no interactive terminal
+(stdin closed), the node fails the same way a gate does — never auto-approved.
+
+Permission prompts serialize on the **same terminal queue** gates and interactive
+loops already use (`src/gate.ts`'s `promptOnTerminal`) — there is no second stdin
+mechanism, so at most one prompt owns the terminal at a time, each naming the node
+it belongs to. A node's `timeout` (if any) excludes time spent waiting on — or
+queued behind — a permission prompt, exactly like a gate's wait is never
+time-boxed: the clock pauses the instant a prompt is handed to that queue and
+resumes once it is answered, so one human's slow reply to one node never times
+out an unrelated node. claude and codex have no permission-request concept and
+never gain this prompt.
 
 ### Templating
 
@@ -285,7 +305,9 @@ sao is **not an MCP host** — the runners already are. sao only forwards config
   user-level config) — MCP still works; it's just not pinned by the workflow.
 - v1: the **claude adapter** honors both keys (`--mcp-config`, `--allowedTools`);
   the **codex adapter** uses its own global config (`~/.codex/config.toml`) and
-  ignores them with a printed warning.
+  ignores them with a printed warning; **ACP runners** (opencode) honor `mcp:`
+  natively via `session/new`'s `mcpServers` and warn-and-ignore `allowed_tools`
+  — an ACP runner has no allowlist concept to map it onto.
 
 ## Runner interface
 
@@ -330,6 +352,56 @@ No session resume in v1 → `fresh_context: false` with
 runner `codex` is a validation error (checked against the effective runner, so a
 `--runner codex` override fails preflight the same way).
 
+**opencode adapter** — the first **Agent Client Protocol (ACP)** agent, via
+`src/acp.ts`: the one protocol client every ACP agent goes through (spawn over
+stdio, `initialize`, `session/new`, `session/prompt`, stream `session/update`).
+`src/runners/opencode.ts` is only its name and launch command (`opencode acp`,
+spec D7), delegating everything else to `src/acp.ts` — adding the next ACP agent
+is a sibling file of the same shape. `output` is the whole turn's assistant text,
+joined from `agent_message_chunk` updates only; thought chunks and tool-call
+updates are excluded, matching the claude adapter's text-only capture. ACP has no
+system-prompt slot, so `systemPrompt` is prepended to the prompt as a role
+preamble (the codex precedent). A `stopReason` of `refusal` fails the node even on
+a clean exit. Sessions map to `session/new` (fresh) and `session/load`
+(`fresh_context: false`, continuing); a `session/load` the agent no longer
+recognizes prints a warning that prior conversation history was lost and
+continues in a new session, rather than halting the run (user story Note 6) —
+a genuine process/transport failure during the load still fails the node.
+`mcp:` servers are forwarded natively via `session/new`/`session/load`'s
+`mcpServers`; `model` is set on the session via `session/set_model` before the
+prompt (the pinned `agent-client-protocol` ships a patched `setSessionModel`,
+whose upstream method mistakenly sends `session/set_mode`) — an agent that does
+not implement it warns and runs with its default, but a rejected model (e.g.
+unknown ID) fails the node like a bad `--model` on claude/codex rather than
+silently running the wrong model; `allowed_tools` is warned about and ignored
+(no ACP allowlist concept to map it onto); `permission_mode` is a silent no-op,
+superseded by the permission-request flow.
+List of opencode-go models:
+opencode-go/deepseek-v4-flash
+opencode-go/deepseek-v4-pro
+opencode-go/glm-5
+opencode-go/glm-5.1
+opencode-go/glm-5.2
+opencode-go/gpt-5.6-luna
+opencode-go/grok-4.5
+opencode-go/hy3
+opencode-go/kimi-k2.5
+opencode-go/kimi-k2.6
+opencode-go/kimi-k2.7-code
+opencode-go/kimi-k3
+opencode-go/mimo-v2-omni
+opencode-go/mimo-v2-pro
+opencode-go/mimo-v2.5
+opencode-go/mimo-v2.5-pro
+opencode-go/minimax-m2.5
+opencode-go/minimax-m2.7
+opencode-go/minimax-m3
+opencode-go/qwen3.5-plus
+opencode-go/qwen3.6-plus
+opencode-go/qwen3.7-max
+opencode-go/qwen3.7-plus
+opencode-go/qwen3.8-max
+
 Adding a runner = one new file in `src/runners/` implementing the interface, registered
 in a static map. No dynamic plugin loading in v1.
 
@@ -337,8 +409,14 @@ in a static map. No dynamic plugin loading in v1.
 
 1. `sao run workflow.yaml "add dark mode" --var issue=123`
 2. Parse + validate (zod schema, dependency cycle check, template references, runner
-  availability — registry lookup and binary-on-PATH, so a missing CLI fails before
-  any node's side effects).
+  availability — registry lookup and binary-on-PATH — so a missing CLI fails before
+  any node's side effects). For ACP runners, the binary check is followed by an
+  `initialize` handshake: the agent's advertised capabilities are checked against
+  what the workflow needs (e.g. session loading for `fresh_context: false`, or an
+  MCP transport an `mcp:` server declares that the agent's handshake doesn't
+  advertise) — an ACP runner's capability comes from this live handshake, never a static
+  declaration, so a capability gap or a binary that fails to speak ACP also fails
+  here, before any node's side effects. `sao validate` performs the same handshake.
 3. Create run: id `2026-08-03-1432-fix-issue-a1b2`, dir `.sao/runs/<id>/` in the
   **main repo** (`.sao/` auto-appended to `.git/info/exclude`, never the user's
   .gitignore; agents in `.agents/` are ordinary committed files). Invoked from
@@ -357,7 +435,9 @@ in a static map. No dynamic plugin loading in v1.
   `[node-id]`) → append to `.sao/runs/<id>/logs/<node-id>.log` (loops:
    `<node-id>.<iter>.log`) → persist state after every node/iteration transition.
 7. Failure (bash non-zero after retries, agent crash, loop cap — or a gate reject,
-  which marks the node and run `rejected` instead of `failed`): halt,
+  which marks the node and run `rejected` instead of `failed`; an ACP runner's
+  permission request can likewise pause and, with no terminal, fail the node —
+  see Permission requests): halt,
   mark node `failed`, print `sao resume <id>`, exit 1. Resume re-runs from the
    failed node/iteration with all prior state intact.
 8. Success: auto-commit any uncommitted worktree changes (`sao: finalize run <id>`).
@@ -442,12 +522,33 @@ src/
   state.ts           # run dir layout, state.json persistence, resume logic
   worktree.ts        # git worktree lifecycle, finalize commit, gh PR
   gate.ts            # terminal prompts (node:readline)
+  acp.ts             # Agent Client Protocol client — the one client every ACP agent goes through
   runners/
     types.ts         # Runner interface + registry
     claude.ts
     codex.ts
+    opencode.ts      # ACP registry entry: name + launch command, delegates to acp.ts
 tests/               # bun test; engine tests use a mock Runner
 ```
+
+Dependencies (kept minimal): `commander`, `yaml`, `zod`, `picocolors`, and
+`@zed-industries/agent-client-protocol` (the ACP client's transport — the package
+*is* the protocol definition, so drift is tracked upstream rather than by hand).
+Everything else is node builtins (`child_process`, `readline`, `crypto`, `fs`).
+Build: `bun build` targeting node (or tsup) → `dist/`, `bin: { "sao": "dist/cli.js" }`.
+
+## Milestones
+
+1. **M1 — linear engine**: schema, parser, template, AI+bash nodes, claude runner,
+  `run`/`validate`, in-place execution (no worktree), logs. A 3-node workflow works end to end.
+2. **M2 — control flow**: concurrent execution of independent branches, loop nodes
+  (sentinel + until_bash + interactive + multi-step `steps`), gate nodes, `when_bash`,
+  agent files (`.agents/agents/`), MCP/allowed-tools passthrough.
+3. **M3 — durability & isolation**: state persistence, `resume`, `list`, `logs`,
+  worktree-per-run with `--base`/`--branch`, `SAO_*` env vars, `clean`.
+4. **M4 — ship**: codex adapter, `--auto-open-pr` draft-PR finalization, `--dry-run`,
+  README, npm publish.
+
 
 ## Non-goals (v1, explicitly)
 

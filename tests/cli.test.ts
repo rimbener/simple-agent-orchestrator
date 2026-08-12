@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -28,6 +28,77 @@ function gitify(dir: string): void {
   git(dir, "config", "user.name", "T");
   git(dir, "add", "-A");
   git(dir, "commit", "-qm", "init");
+}
+
+/** Put a fake executable named `name` first on PATH; returns a restore function. */
+function withStubBin(name: string, script: string): () => void {
+  const dir = mkdtempSync(join(tmpdir(), `sao-cli-stub-${name}-`));
+  const bin = join(dir, name);
+  writeFileSync(bin, script);
+  chmodSync(bin, 0o755);
+  const oldPath = process.env.PATH;
+  process.env.PATH = `${dir}:${oldPath}`;
+  return () => {
+    process.env.PATH = oldPath;
+  };
+}
+
+/**
+ * A fake `opencode` ACP agent that always requests permission for one tool call
+ * before finishing its turn — installed as a real executable so a spawned `sao`
+ * process resolves it via PATH exactly like the real binary would. `delayMs`
+ * (before sending the request) makes ordering against a concurrent gate prompt
+ * deterministic in `@s-permission-serialized-with-gates`.
+ */
+function withStubOpencodePermission(delayMs = 0): () => void {
+  return withStubBin(
+    "opencode",
+    `#!/usr/bin/env node
+if (process.argv[2] !== "acp") process.exit(1);
+function send(obj) { process.stdout.write(JSON.stringify(obj) + "\\n"); }
+const sessionId = "sess-1";
+let permReqId = null;
+let promptMsgId = null;
+function requestPermission() {
+  permReqId = "perm-1";
+  send({
+    jsonrpc: "2.0",
+    id: permReqId,
+    method: "session/request_permission",
+    params: {
+      sessionId: sessionId,
+      options: [{ optionId: "opt-allow", name: "Allow", kind: "allow_once" }],
+      toolCall: { toolCallId: "tc-1", title: "risky action" },
+    },
+  });
+}
+function handle(msg) {
+  if (msg.method === "initialize") {
+    send({ jsonrpc: "2.0", id: msg.id, result: { protocolVersion: 1, agentCapabilities: {} } });
+  } else if (msg.method === "session/new") {
+    send({ jsonrpc: "2.0", id: msg.id, result: { sessionId: sessionId } });
+  } else if (msg.method === "session/prompt") {
+    promptMsgId = msg.id;
+    if (${delayMs} > 0) setTimeout(requestPermission, ${delayMs});
+    else requestPermission();
+  } else if (msg.method === undefined && msg.id === permReqId) {
+    send({ jsonrpc: "2.0", id: promptMsgId, result: { stopReason: "end_turn" } });
+  }
+}
+var buf = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", function (data) {
+  buf += data;
+  var lines = buf.split("\\n");
+  buf = lines.pop();
+  for (var i = 0; i < lines.length; i++) {
+    var line = lines[i];
+    if (!line.trim()) continue;
+    handle(JSON.parse(line));
+  }
+});
+`,
+  );
 }
 
 /** Fails on the first run, passes on resume (marker lands in the exec cwd). */
@@ -201,6 +272,105 @@ nodes:
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('rejected at node "ship"');
   });
+});
+
+describe("sao run permission prompts (ACP)", () => {
+  test(
+    "@s-permission-stdin-closed-fails: with no terminal, the node fails naming an interactive terminal, never auto-approving",
+    () => {
+      const restore = withStubOpencodePermission();
+      try {
+        const { dir, path } = tempWorkflow(`
+name: perm-eof
+nodes:
+  - id: ask
+    runner: opencode
+    prompt: "do the risky thing"
+`);
+        const result = spawnSync("bun", ["run", CLI, "run", path, "--no-worktree"], { cwd: dir, encoding: "utf8", input: "", timeout: 30000, env: process.env });
+        expect(result.status).toBe(1);
+        expect(result.stderr).toContain("stdin closed");
+        expect(result.stderr).toContain("interactive terminal");
+        expect(result.stderr).toContain("permission prompts"); // the hint names the caller that actually fired, not just gates/loops
+      } finally {
+        restore();
+      }
+    },
+    30000,
+  );
+
+  test(
+    "@s-permission-serialized-with-gates: only one prompt is shown at a time, and each names its own node",
+    () => {
+      const restore = withStubOpencodePermission(200);
+      try {
+        const { dir, path } = tempWorkflow(`
+name: perm-serialize
+nodes:
+  - id: approve
+    gate:
+      message: "Approve?"
+  - id: ask
+    runner: opencode
+    prompt: "do the risky thing"
+`);
+        const result = spawnSync("bun", ["run", CLI, "run", path, "--no-worktree"], { cwd: dir, encoding: "utf8", input: "a\n1\n", timeout: 30000, env: process.env });
+        expect(result.status).toBe(0);
+        expect(result.stdout).toContain("succeeded");
+        const gateAt = result.stdout.indexOf("Approve?");
+        const permAt = result.stdout.indexOf("permission requested");
+        expect(gateAt).toBeGreaterThanOrEqual(0);
+        expect(permAt).toBeGreaterThan(gateAt); // the second prompt is shown only after the first is answered
+        expect(result.stdout).toContain("[ask]"); // names the node it belongs to
+      } finally {
+        restore();
+      }
+    },
+    30000,
+  );
+});
+
+describe("sao run — no unexpected prompts for claude/codex", () => {
+  test(
+    "@s-no-new-prompts-for-claude-codex: a claude-and-codex-only run with no gates completes without ever prompting, even with stdin closed",
+    () => {
+      const restoreClaude = withStubBin(
+        "claude",
+        `#!/bin/sh
+cat > /dev/null
+echo '{"type":"result","result":"claude done","session_id":"c1","is_error":false}'
+`,
+      );
+      const restoreCodex = withStubBin(
+        "codex",
+        `#!/bin/sh
+cat > /dev/null
+echo '{"type":"item.completed","item":{"type":"agent_message","text":"codex done"}}'
+`,
+      );
+      try {
+        const { dir, path } = tempWorkflow(`
+name: no-prompts
+nodes:
+  - id: one
+    runner: claude
+    prompt: "hi"
+  - id: two
+    runner: codex
+    depends_on: [one]
+    prompt: "hi"
+`);
+        const result = spawnSync("bun", ["run", CLI, "run", path, "--no-worktree"], { cwd: dir, encoding: "utf8", input: "", timeout: 30000, env: process.env });
+        expect(result.status).toBe(0);
+        expect(result.stdout).toContain("succeeded");
+        expect(result.stdout).not.toContain("permission requested");
+      } finally {
+        restoreClaude();
+        restoreCodex();
+      }
+    },
+    30000,
+  );
 });
 
 describe("sao run", () => {

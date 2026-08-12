@@ -68,8 +68,9 @@ $ npm install -g simple-agent-orchestrator
 ```
 
 Requires Node 20+ (or Bun), git, and at least one agent CLI:
-[Claude Code](https://claude.com/claude-code) (`claude`) and/or
-[Codex CLI](https://github.com/openai/codex) (`codex`).
+[Claude Code](https://claude.com/claude-code) (`claude`),
+[Codex CLI](https://github.com/openai/codex) (`codex`), and/or
+[opencode](https://opencode.ai) (`opencode`, via the Agent Client Protocol).
 
 ## Commands
 
@@ -100,7 +101,10 @@ sao clean [--all]
   gates are re-asked. Refuses if the workflow/agents/mcp config changed or the
   run looks owned by a live process (`--force` overrides both).
 - **validate** — schema, dependency graph, template references, agent files,
-  runner availability. Exactly the checks `run` performs before executing.
+  runner availability, and — for ACP runners like opencode — an `initialize`
+  handshake checking the agent's advertised capabilities against what the
+  workflow needs (e.g. session loading for `fresh_context: false`). Exactly the
+  checks `run` performs before executing.
 - **logs** — dependency-ordered node logs; `--follow` tails a live run.
 - **clean** — remove succeeded runs' worktrees; branches are deleted only once
   merged elsewhere. Failed/rejected runs, dirty worktrees, and unmerged
@@ -120,7 +124,7 @@ inputs:                    # --var key=value, used as {{key}}
     default: world
 
 defaults:                  # per-node keys > agent frontmatter > defaults
-  runner: claude           # claude | codex
+  runner: claude           # claude | codex | opencode
   model: sonnet
   permission_mode: acceptEdits
   allowed_tools: [mcp__jira, WebSearch]
@@ -149,7 +153,7 @@ nodes:
       # until_bash: "bun test"      # …or a shell probe: exit 0 ends the loop
       # interactive: true           # …or a human approves each iteration
       max_iterations: 10
-      fresh_context: false          # keep one agent session across iterations (claude only)
+      fresh_context: false          # keep one agent session across iterations (claude, or an ACP agent whose handshake advertises it — codex never)
 
   - id: ship               # gate node — pauses for y/n in the terminal
     depends_on: [build, implement]
@@ -193,6 +197,42 @@ file.
   Uses its own global config (`~/.codex/config.toml`): `mcp`, `allowed_tools`,
   and `permission_mode` are ignored with a warning, and `fresh_context: false`
   is a validation error.
+- **opencode** — the first [Agent Client Protocol](https://agentclientprotocol.com)
+  agent (`opencode acp`). `systemPrompt` is delivered as a role preamble (ACP has
+  no system-prompt slot); `model` is applied per-session via `session/set_model`
+  (an agent that can't select models warns and uses its default; an unknown model
+  fails the node). A refused turn fails the node even on a clean exit.
+  `fresh_context: false` support depends on the agent's own `initialize`
+  handshake advertising session loading, checked at `validate`/`run` time —
+  not a static per-runner declaration like claude/codex. When the agent asks for
+  permission mid-turn (`session/request_permission`), sao pauses the run and
+  prints the node id, what the agent wants to do, and the agent's own options as
+  a numbered menu — reply with the number:
+
+  ```
+  [ask] permission requested: Write file src/x.ts
+    1. Allow
+    2. Deny
+  >
+  ```
+
+  The chosen option is sent back to the agent verbatim; sao keeps no permission
+  memory of its own ("allow for this session" is remembered agent-side). This
+  prompt shares the same terminal queue as gates and interactive loops, so only
+  one is ever shown at a time, and a node's `timeout` excludes time spent
+  waiting on (or queued behind) one — same as a gate's wait is never time-boxed.
+  With no interactive terminal, the node fails instead of auto-approving. claude
+  and codex have no permission-request concept and never show this prompt.
+  `fresh_context: false` continues one ACP session (`session/load`); a recorded
+  session the agent no longer knows warns that prior conversation history was
+  lost and continues with a fresh one, rather than halting. Honors `mcp` natively
+  (forwarded via `session/new`'s `mcpServers`, same `command`/`args`/`env` or
+  `url` shape as the other runners); `allowed_tools` is warned about and
+  ignored (no allowlist concept to map it onto); `permission_mode` is a silent
+  no-op, superseded by the permission-request flow above. An MCP transport a
+  workflow's `mcp:` block declares that the agent's handshake doesn't advertise
+  fails at `validate`/`run` time, the same way a missing session-loading
+  capability does.
 
 Prompts are always piped over stdin — never argv.
 

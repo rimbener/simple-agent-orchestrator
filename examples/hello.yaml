@@ -10,8 +10,8 @@ inputs:
     default: world
 
 defaults:
-  runner: claude
-  model: haiku            # cheap + fast; this workflow is a smoke test
+  runner: opencode
+  model: opencode-go/deepseek-v4-flash            # cheap + fast; this workflow is a smoke test
 
 nodes:
   - id: plan

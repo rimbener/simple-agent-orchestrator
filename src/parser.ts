@@ -72,11 +72,13 @@ export function loadWorkflow(path: string, opts: LoadWorkflowOptions = {}): Work
     } catch {
       throw new SaoError(`mcp: config file not found: ${mcpConfigPath}`, "the path is resolved relative to the workflow file");
     }
+    let parsedMcp: unknown;
     try {
-      JSON.parse(mcpRaw);
+      parsedMcp = JSON.parse(mcpRaw);
     } catch (err) {
       throw new SaoError(`mcp: config file is not valid JSON: ${mcpConfigPath}`, String(err));
     }
+    mcpServers = (parsedMcp as { mcpServers?: Record<string, unknown> }).mcpServers ?? {};
   } else if (
     // Stryker disable next-line ConditionalExpression: equivalent — with mcp undefined, the branch body stringifies undefined (a no-op) and re-assigns undefined
     top.mcp !== undefined

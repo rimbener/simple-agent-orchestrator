@@ -37,7 +37,7 @@ inputs:
 
 defaults:
   runner: claude
-  # Models come from each agent's frontmatter (opus/sonnet/haiku).
+# Models come from each agent's frontmatter (opus/sonnet/haiku).
   #
   # acceptEdits for every agent, no exceptions. `claude -p` is headless, so anything
   # Claude Code marks "requires approval" is auto-denied — no human is on the other

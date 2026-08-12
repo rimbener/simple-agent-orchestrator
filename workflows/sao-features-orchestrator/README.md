@@ -36,7 +36,7 @@ Every gate is **escalate, never fake**: a loop that hits `max_iterations` halts 
 run rather than declaring success. That halt is the escalation — fix whatever is
 stuck and continue with `sao resume <run-id>`.
 
-Two rules exist because a real run walked straight through them:
+Three rules exist because real runs walked straight through them:
 
 - **The mutation gate is 100 % killed *and* zero `NoCoverage`, on the overall
   score.** Stryker also prints a "based on covered code" score, and that one can read
@@ -46,12 +46,13 @@ Two rules exist because a real run walked straight through them:
   `patchedDependencies` entry or a file under `patches/` is unreviewed third-party
   code the repo now maintains; both reviewers must name it, and `dod_validator`
   fails a patch that `review.md` never mentions.
-
-There is no separate harness. The current HEAD (or `--base`) cuts the worktree and
-branch, `state.json` carries the phase, and the node graph is the sequencing. The
-workflow declares no `base:` on purpose: a run must be cut from the branch you are
-standing on, or the worktree will not contain `workflows/` and `bootstrap` dies with
-exit 127.
+- **A run cut from anything but the branch you are standing on cannot bootstrap.**
+  The workflow declares **no `base:`**, so each run is cut from the **current HEAD** —
+  whatever branch you are standing on, including this pipeline itself before it is
+  merged. There is no separate harness: sao cuts the worktree and branch,
+  `state.json` carries the phase, and the node graph is the sequencing. Cutting from
+  anything else would leave the worktree without `workflows/`, and `bootstrap` dies
+  with exit 127. Override for one run with `--base <ref>`.
 
 ## Agents
 
@@ -175,8 +176,12 @@ a deleted file, a bad glob or a wiped `tests/` must fail the gate, not pass it.
 flag, not suite growth, and `dod_validator` is told so before it records them.
 
 Bash nodes run with the **run worktree** as cwd, so these relative paths resolve
-inside the worktree — which means the scripts must exist on the run's base ref.
-Cutting a run from a `--base` older than this directory will fail at `bootstrap`.
+inside the worktree — which means the scripts must be **committed** on the run's
+base ref. A worktree contains tracked files only, so uncommitted or untracked
+scripts, or a `--base` older than this directory, fail at `bootstrap` with exit
+127 (`sh` cannot find the file). Cutting from HEAD makes that the default-correct
+case; `sao validate` and `--dry-run` cannot catch it, because they resolve against
+your main checkout, where the files are always present.
 
 ## The graph is fully serial
 

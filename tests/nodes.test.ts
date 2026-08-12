@@ -331,6 +331,15 @@ describe("executeAiNode", () => {
     expect(req.timeoutSec).toBe(42);
   });
 
+  test("forwards the owning node id and the terminal prompt function from context to the runner", async () => {
+    const calls: RunnerRequest[] = [];
+    const promptUser = async (message: string) => message;
+    await executeAiNode("p", config(fakeRunner({}, calls)), { cwd: cwd(), log: () => {}, nodeId: "fix", promptUser });
+    const req = calls[0]!;
+    expect(req.nodeId).toBe("fix");
+    expect(req.promptUser).toBe(promptUser);
+  });
+
   test("leaves optional fields undefined when the config has none", async () => {
     const calls: RunnerRequest[] = [];
     await executeAiNode("p", config(fakeRunner({}, calls)), { cwd: cwd(), log: () => {} });
