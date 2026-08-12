@@ -6,5 +6,6 @@ dist/
 reports/
 
 .vscode/settings.json
+.vscode/autosave-editor.txt
 examples/jira-orchestrator.yaml
 examples/ticket-orchestrator.yaml
