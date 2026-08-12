@@ -66,12 +66,18 @@ nodes:
   # ── Phase 0 — bootstrap (sao already cut the worktree from {{base}}) ──────────
   # The request goes in over a quoted heredoc rather than argv: it is freeform
   # human text, and interpolation is raw substitution — the workflow author owns
-  # that boundary (SPEC.md §Templating).
+  # that boundary (SPEC.md §Templating). The delimiter carries {{run_id}} (safe —
+  # state.ts sanitizes it to [a-zA-Z0-9_-]) so a task line that happens to equal a
+  # FIXED delimiter can't close the heredoc early and run the rest of the task as
+  # shell: run_id doesn't exist until this run starts, after {{task}} is already
+  # fixed on the CLI, so it can't be predicted or matched in advance. This narrows
+  # the risk, it doesn't eliminate it for an attacker who can also control when the
+  # run starts and read this file — known residual, see KNOWN-ISSUES.md.
   - id: bootstrap
     bash: |
-      workflows/sao-features-orchestrator/scripts/bootstrap.sh "{{feature}}" <<'SAO_REQUEST_EOF'
+      workflows/sao-features-orchestrator/scripts/bootstrap.sh "{{feature}}" <<'SAO_REQUEST_EOF_{{run_id}}'
       {{task}}
-      SAO_REQUEST_EOF
+      SAO_REQUEST_EOF_{{run_id}}
 
   # ── Phase 0b — turn the raw request into a structured user story ──────────────
   # Serialized after bootstrap on purpose: this node grills the human on stdin, and
