@@ -40,7 +40,7 @@ names that slice's `tdd-<N>.md` / `review-slice-<N>.md`.
 | `build-slice` | Implement the **next unfinished** slice from `tasks.md` per §Protocol — strict TDD for every file in `src/`. Land the slice's `SPEC.md` (and `README.md`, where user-facing) update in the same slice. Flip the `task-N.md` status. Stop when the slice is green | none — the fix step closes the iteration |
 | `fix-slice-findings` | Fix **every** finding in `review-slice-<N>.md` via TDD, no minors skipped, mark each `resolved`, then **commit the slice** | emit once `tasks.md` shows every slice done |
 | `fix-review-findings` | Fix **every** open finding in `review.md` — blocker, major **and** minor — via TDD, and mark each `resolved` | emit when `review.md` has zero open findings |
-| `kill-mutants` | Kill every surviving mutant **and cover every `NoCoverage` mutant** in `mutation.md` per §Mutation-kill discipline — prefer a red **test**; change `src/` only when the mutant exposes a real defect. **Re-verify each kill**: never trust a survivor row you have not reproduced | emit when `mutation.md` shows 100 % killed **and zero `NoCoverage`** on the changed files |
+| `kill-mutants` | Kill every surviving mutant **and cover every `NoCoverage` mutant** in `mutation.md` per §Mutation-kill discipline — prefer a red **test**; change `src/` only when the mutant exposes a real defect. **Re-verify each kill**: never trust a survivor row you have not reproduced. If `mutation.md` instead records `NO_CHANGED_SOURCE` (the slice touched no `src/*.ts` outside `cli.ts`), there is nothing to kill — do nothing and emit | emit when `mutation.md` shows 100 % killed **and zero `NoCoverage`** on the changed files, **or** when `mutation.md` records `NO_CHANGED_SOURCE` |
 | `close-dod-gaps` | If `dod.md` reports gaps, close them via TDD and re-run the checks that failed | emit when `dod.md` is all-pass |
 
 A fix mode never widens scope: fix what the report names, nothing else.
@@ -153,7 +153,12 @@ empty a review file.
 
 ## Mutation-kill discipline
 
-The suite holds a **100% mutation score with zero `NoCoverage`**; that is the bar to
+A slice that changed no `src/*.ts` outside `cli.ts` (CLI-only, test-only, or
+docs-only) never runs Stryker — `mutation.md` records `NO_CHANGED_SOURCE` instead of
+a score. That is the terminal state for this mode: there is no mutant to kill,
+so emit immediately rather than looking for one.
+
+Otherwise, the suite holds a **100% mutation score with zero `NoCoverage`**; that is the bar to
 return to. Prefer killing a mutant by **strengthening a test** — a stronger assertion
 changes no behavior and needs no re-review. Only touch `src/` when the mutant exposes
 a **real defect**, and know that any `src/` change from a mutation fix re-triggers the

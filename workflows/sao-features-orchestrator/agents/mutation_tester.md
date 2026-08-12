@@ -44,7 +44,9 @@ the run: read `tmp/<feature>/stryker.log` and write
 ## Protocol
 
 1. Read `tmp/<feature>/stryker.log`. If it says `NO_CHANGED_SOURCE`, record exactly
-   that in `mutation.md` — **not** a PASS — and return.
+   that in `mutation.md` — **not** a PASS, and Stryker never ran so there is no
+   score, no survivor, and nothing for `implementer` to kill — and return per
+   §Verdict below.
 2. Write `docs/features/<feature>/mutation.md`:
    - **both** score lines Stryker prints — the overall mutation score **and** the
      "based on covered code" score — plus the killed / survived / **no-coverage** /
@@ -78,6 +80,13 @@ the run: read `tmp/<feature>/stryker.log` and write
 
 ## Verdict — escalate-only
 
+- `tmp/<feature>/stryker.log` says `NO_CHANGED_SOURCE` (the slice touched no
+  `src/*.ts` outside `cli.ts` — CLI-only, test-only, or docs-only) → Stryker never
+  ran, so there is nothing to kill this round. Return
+  `NO_CHANGED_SOURCE -> docs/features/<feature>/mutation.md`. This is **not** a
+  `PASS` and never claims a score, but it also is not `SURVIVORS` — routing it to
+  `implementer`'s `kill-mutants` mode ends that mode immediately (see
+  `agents/implementer.md` §Modes): there is no mutant to strengthen a test against.
 - Threshold met (100 % killed, **zero `NoCoverage`**), no unexplained errors →
   return `PASS -> docs/features/<feature>/mutation.md`.
 - Survivors **or `NoCoverage` mutants** → return

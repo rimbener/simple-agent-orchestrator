@@ -37,7 +37,10 @@ exactly what failed and where, and expect to be re-run.
      shipped examples still validate.
    - Confirm the mutation threshold in `mutation.md` is genuinely met — **100 %
      killed and zero `NoCoverage`**, read off the **overall** score, not the "based
-     on covered code" one — and that `review.md` has **no open blocker or major**. Any remaining item must be a
+     on covered code" one — **or**, if the feature touched no `src/*.ts` outside
+     `cli.ts`, that `mutation.md` records `NO_CHANGED_SOURCE` (Stryker never ran;
+     that is a pass-through here, not a fail) — and that `review.md` has **no open
+     blocker or major**. Any remaining item must be a
      **minor** marked `ACCEPTED` (human risk-accepted and recorded in `spec.md`
      under Open decisions) — list those under "Accepted minors" in `dod.md`.
 2. Walk every dimension below and mark `[x]` / `[ ]` with one line of evidence each:
@@ -50,7 +53,7 @@ exactly what failed and where, and expect to be re-run.
    | **CLI & workflow surface** | New flags/keys documented and validated; terminal output readable in a non-TTY / under `NO_COLOR`; `sao validate` catches at parse time what it can; behavior stated for **both** runners (claude and codex) |
    | **Security** | No secret in `state.json`, a node log, or a committed file; nothing user-controlled reaching a path, an argv slot, or a git refspec unvalidated; prompts over stdin, not argv; children detached **and** tracked in `procs.ts` |
    | **Node-target compatibility** | No Bun-only API in `src/`; node builtins imported as `node:*`; `bun run build` green; `engines.node >= 20` still honest |
-   | **Testing rigor** | Strict TDD evidence across the `tdd-N.md` files (`@s → test` map, one line per cycle); engine tests use the **mock Runner**, never a real agent CLI; mutation threshold met — 100 % killed **and zero `NoCoverage`**, on the overall score |
+   | **Testing rigor** | Strict TDD evidence across the `tdd-N.md` files (`@s → test` map, one line per cycle); engine tests use the **mock Runner**, never a real agent CLI; mutation threshold met — 100 % killed **and zero `NoCoverage`**, on the overall score — **or**, if the feature touched no `src/*.ts` outside `cli.ts`, `mutation.md` records `NO_CHANGED_SOURCE` |
    | **Observability & docs** | Node logs land under `.sao/runs/<id>/logs/`; state persisted after every transition so a resume loses at most the interrupted step; **`SPEC.md` updated** for the behavior change and **`README.md`** for anything user-facing, both consistent with the code |
 
 3. **Reject an empty review history.** `review.md` and each present
@@ -79,14 +82,17 @@ exactly what failed and where, and expect to be re-run.
 
 - All items pass → verdict `PASS`. Return `PASS -> docs/features/<feature>/dod.md`.
   A PASS **may** carry documented, human-accepted minors — but **never** an open
-  blocker or major, and never an unmet mutation threshold.
+  blocker or major, and never an unmet mutation threshold. `mutation.md` recording
+  `NO_CHANGED_SOURCE` is not an unmet threshold — it means the feature had nothing
+  for Stryker to mutate, so treat that item as passed.
 - Any open blocker/major, an unmet mutation threshold (survivors **or**
-  `NoCoverage`), an unreviewed added/upgraded/patched dependency, a wiped review
+  `NoCoverage` — but not a genuine `NO_CHANGED_SOURCE`), an unreviewed
+  added/upgraded/patched dependency, a wiped review
   file, or a leftover minor that is **not** human-accepted → verdict `DOD_FAILED`. Return
   `DOD_FAILED -> docs/features/<feature>/dod.md`; say exactly what failed and where,
   so `implementer` can close the gap, then re-validate.
 
-Opening and merging the PR is a **manual human step** after `pr_ready`.
+Opening and merging the PR is a **manual human step** after `finalize`.
 
 ## Hard rules
 
