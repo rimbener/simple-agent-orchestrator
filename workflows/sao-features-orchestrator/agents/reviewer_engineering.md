@@ -62,7 +62,8 @@ Both modes update the same `review.md` durable trail.
   imports**; the engine never reaches into a runner's internals, only through the
   `Runner` interface.
 - A new runner is one file in `src/runners/` implementing `Runner` and registered in
-  the **static** map. Dynamic plugin loading is a locked non-goal → **blocker**.
+  the **static** map. Dynamic plugin loading is a decision `SPEC.md` currently
+  locks → **blocker**.
 - **Minimalism is the product.** Any new runtime dependency, abstraction layer,
   indirection, or config surface that `SPEC.md` does not call for is a **major**
   unless `spec.md` records an explicit human decision for it. Sao's competitors are

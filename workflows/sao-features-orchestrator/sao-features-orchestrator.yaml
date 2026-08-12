@@ -2,7 +2,7 @@
 # sao itself, in four phases:
 #
 #   0  bootstrap + user story    seed the docs, grill the request into a story
-#   1  spec                      grill → bundle → automated review → ONE human approval
+#   1  spec                      grill → bundle → automated review → the one spec sign-off
 #   2  build                     one vertical slice per iteration, reviewed each time
 #   3  quality                   full review (≤ 2 rounds) → mutation (≤ 2 rounds)
 #   4  DoD                       validate → close gaps → PR prep
@@ -22,7 +22,7 @@
 #   is a plain `git diff -- src` question; mutation is StrykerJS via stryker.conf.mjs.
 
 name: sao-features-orchestrator
-description: One feature request to a validated, PR-ready sao feature with a single human approval
+description: One feature request to a validated, PR-ready sao feature with one human sign-off on the spec
 
 # No `base:` on purpose — the run is cut from the current HEAD, so the worktree
 # always contains the branch you are standing on, including this pipeline itself

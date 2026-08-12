@@ -1,8 +1,8 @@
 # sao-features-orchestrator
 
 A sao workflow that takes one feature request for **this** repo — sao itself —
-from a rough sentence to a validated, PR-ready branch, with **exactly one human
-approval**.
+from a rough sentence to a validated, PR-ready branch, with **one human sign-off
+on the spec** (`approve-spec`) as the pipeline's only content-approval gate.
 
 ```
 sao-features-orchestrator.yaml   the pipeline
@@ -27,7 +27,7 @@ bootstrap. `sao validate <file>` checks the workflow without running anything, a
 | Phase | Nodes | What happens |
 | --- | --- | --- |
 | **0 — bootstrap** | `bootstrap`, `grill-user-story` | seed `docs/features/<feature>/`, record the raw request, then grill the human into a structured `user-story.md` |
-| **1 — spec** | `grill-and-spec`, `spec-review`, `spec-fixes`, `approve-spec`, `commit-spec` | grill the solution, write the spec bundle + Gherkin contract, review it once automatically, fix every finding, then **the one human approval** |
+| **1 — spec** | `grill-and-spec`, `spec-review`, `spec-fixes`, `approve-spec`, `commit-spec` | grill the solution, write the spec bundle + Gherkin contract, review it once automatically, fix every finding, then **the one content sign-off** |
 | **2 — build** | `build-slices` | one vertical slice per iteration: implement (TDD) → gate → review → fix → commit |
 | **3 — quality** | `full-review`, `mutation-baseline`, `mutation`, `post-mutation-review` | full review (≤ 2 rounds), then mutation (≤ 2 rounds); if killing mutants changed `src/`, re-review that delta |
 | **4 — DoD** | `dod`, `finalize` | validate the Definition of Done, close gaps, guard the review trail, commit |
