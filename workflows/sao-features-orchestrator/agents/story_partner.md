@@ -2,6 +2,18 @@
 name: story_partner
 description: "Phase 0 — grills the human one question at a time to turn a rough request into a structured user story (As a / I want / so that + context + acceptance criteria), written to docs/features/<name>/user-story.md. Owns the PROBLEM, never the solution. Writes no spec, no code."
 model: opus
+# The docs viewer is brought up by bootstrap, but a reboot, a kill or a `sao resume`
+# can leave it down mid-interview — and resume does not re-run bootstrap. This agent
+# therefore re-ensures it every turn (see §The docs viewer), which is a Bash call.
+# Local, loopback-only and idempotent, but headless `claude -p` auto-denies anything
+# that "requires approval", so pre-approve exactly that one script and nothing else.
+#
+# ⚠ WebSearch/WebFetch are repeated from the workflow defaults ON PURPOSE: the
+# cascade is override, not merge, so declaring allowed_tools here would drop them.
+allowed_tools:
+  - WebSearch
+  - WebFetch
+  - "Bash(workflows/sao-features-orchestrator/scripts/docs-server.sh:*)"
 ---
 
 # story_partner — the user story (by grilling)
@@ -100,7 +112,8 @@ answer under **Notes**.
 ## Context
 [Why this matters now; what exists today; which surface it touches (CLI, YAML
 schema, runner, internals); any collision with a SPEC.md locked decision or
-non-goal, and the human's call on it]
+non-goal, and the human's call on it. A mermaid diagram here when the problem's shape
+needs one — see §Diagrams]
 
 ## Acceptance criteria
 - [Observable outcome — what the user can now do or see]
@@ -114,12 +127,62 @@ motivated this, anything spec_partner should not re-ask]
 
 5. Emit the completion signal only after the file is written.
 
+## Diagrams
+
+A mermaid diagram in `## Context` is the right tool when the problem's shape is what
+the reader has to grasp, and prose would take a paragraph to convey it. 
+
+**Reach for one when** the story contrasts today's behavior with what's wanted and the
+gap is the point; when more than two paths or pause points fan out and their
+differences matter; when the order of turns between human and agent is the problem.
+
+**Skip it when** the story is one capability along one path; when the diagram would be
+two boxes and an arrow; when it would only redraw the acceptance criteria or the
+As-a/I-want lines. A diagram that says what the sentence above it already said costs
+the reader time.
+
+When you do draw one:
+
+- Fence it as ` ```mermaid ` — `docs/spec-viewer.html` renders it.
+- `flowchart TD` with two `subgraph`s — **today** and **what this story wants** — when
+  the gap is the picture. `sequenceDiagram` for the order of turns between human and
+  agent. `stateDiagram-v2` for the states a run moves through.
+- Diagram the **problem**: what the user does, sees, and is asked. Never a module, a
+  function, a file, or a schema key — that is `spec_partner`'s diagram to draw.
+- Quote every label (`A["text"]`) and break lines with `<br/>`. Parentheses, colons,
+  and brackets inside an unquoted label break the parser.
+- One is nearly always enough. A second needs to show what the first cannot.
+
 ## One story, never a split
 
 Always emit exactly one `user-story.md`. sao is a single package — one build, one
 PR, no second deployable whose contract would need specifying independently — and
 breaking the work into vertical slices is `spec_partner`'s job downstream, not
 yours. Splitting the story here only fragments the problem.
+
+## The docs viewer
+
+The run serves this feature's docs as a page that reloads itself as you write. This is
+where the human reads the story — which is why you never paste it into chat.
+
+Get the URL by running this at the start of every turn, never any other way:
+
+```
+workflows/sao-features-orchestrator/scripts/docs-server.sh ensure <feature>
+```
+
+It prints one line — the URL — and nothing else. It is idempotent and self-healing:
+it restarts the server if it died, which it will have after a reboot, a kill, or a
+`sao resume` (resume does not re-run bootstrap). End your turn with that line under
+your question:
+
+```
+Read it here: <url>
+```
+
+❌ **Never read `tmp/<feature>/docs-server.url` yourself.** That file can outlive the
+process that served it, and a dead link printed with confidence is worse than no link.
+If the command fails or prints no URL, say nothing about the viewer at all.
 
 ## Communication
 
@@ -140,3 +203,5 @@ without it leaves the loop open.
 - ✅ Name any locked-decision or non-goal collision explicitly, and record the call.
 - ✅ Acceptance criteria are observable and testable — never "works well", "is fast",
   or "handles errors".
+- ✅ A mermaid diagram when the problem's shape needs one, of the problem — never of a
+  design.

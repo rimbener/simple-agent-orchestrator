@@ -1,0 +1,1359 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>sao — spec viewer</title>
+<style>
+:root{
+  --bg:#f7f8fa; --bg2:#eef0f4; --panel:#ffffff; --border:#dfe3ea; --border2:#c9d0da;
+  --text:#1a1d23; --muted:#646c7a; --faint:#8b93a1;
+  --accent:#2f6feb; --accent-bg:#e8f0ff;
+  --green:#1a7f47; --green-bg:#e4f5ea;
+  --amber:#8a5a00; --amber-bg:#fdf1d8;
+  --red:#b3261e; --red-bg:#fce9e7;
+  --purple:#6b3fb5; --purple-bg:#f0e9fd;
+  --code-bg:#f2f4f8; --mark:#fff2a8;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;
+}
+/* Dark palette lives in one place; applied both by the toggle and by the OS default. */
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#11141a; --bg2:#171b22; --panel:#1a1f27; --border:#2a313c; --border2:#3a434f;
+    --text:#dfe4ec; --muted:#98a2b3; --faint:#6f7987;
+    --accent:#6fa1ff; --accent-bg:#1b2740;
+    --green:#5ed49a; --green-bg:#12291f;
+    --amber:#e5b25d; --amber-bg:#2b2314;
+    --red:#f08379; --red-bg:#2e1a19;
+    --purple:#b79bf5; --purple-bg:#241d38;
+    --code-bg:#141920; --mark:#4a4318;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#11141a; --bg2:#171b22; --panel:#1a1f27; --border:#2a313c; --border2:#3a434f;
+  --text:#dfe4ec; --muted:#98a2b3; --faint:#6f7987;
+  --accent:#6fa1ff; --accent-bg:#1b2740;
+  --green:#5ed49a; --green-bg:#12291f;
+  --amber:#e5b25d; --amber-bg:#2b2314;
+  --red:#f08379; --red-bg:#2e1a19;
+  --purple:#b79bf5; --purple-bg:#241d38;
+  --code-bg:#141920; --mark:#4a4318;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);font-size:1.25rem;line-height:1.7;-webkit-font-smoothing:antialiased}
+a{color:var(--accent);text-decoration:none}
+a:hover{text-decoration:underline}
+button{font:inherit;color:inherit}
+
+/* ---------- shell ---------- */
+#app{display:grid;grid-template-rows:auto 1fr;height:100vh}
+header{display:flex;align-items:center;gap:10px;padding:8px 14px;background:var(--panel);border-bottom:1px solid var(--border);flex-wrap:wrap}
+.brand{font-weight:700;letter-spacing:-.2px;display:flex;align-items:center;gap:7px;white-space:nowrap}
+.brand .dot{width:9px;height:9px;border-radius:50%;background:var(--accent)}
+.brand small{font-weight:500;color:var(--faint)}
+.spacer{flex:1}
+.btn{background:var(--bg2);border:1px solid var(--border);border-radius:7px;padding:6px 12px;cursor:pointer;font-size:0.875rem;white-space:nowrap}
+.btn:hover{border-color:var(--border2);background:var(--panel)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.primary:hover{filter:brightness(1.08)}
+.btn.icon{padding:5px 9px}
+select.sel{background:var(--bg2);border:1px solid var(--border);border-radius:7px;padding:6px 9px;font-size:0.875rem;max-width:280px}
+#search{background:var(--bg2);border:1px solid var(--border);border-radius:7px;padding:6px 11px;font-size:0.875rem;width:230px;color:inherit}
+#search:focus{outline:none;border-color:var(--accent);background:var(--panel)}
+.tabs{display:flex;gap:2px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:2px}
+.tabs button{background:none;border:0;border-radius:6px;padding:5px 13px;cursor:pointer;font-size:0.875rem;color:var(--muted)}
+.tabs button[aria-selected="true"]{background:var(--panel);color:var(--text);box-shadow:0 1px 2px rgba(0,0,0,.08);font-weight:600}
+
+main{display:grid;grid-template-columns:250px minmax(0,1fr) 250px;overflow:hidden}
+@media (max-width:1280px){main{grid-template-columns:242px minmax(0,1fr)} #outline{display:none}}
+@media (max-width:760px){main{grid-template-columns:minmax(0,1fr)} #sidebar{display:none}}
+#sidebar{border-right:1px solid var(--border);overflow-y:auto;background:var(--panel);padding:10px 0}
+#content{overflow-y:auto;padding:34px 40px 110px}
+.page{max-width:920px;margin:0 auto}
+#outline{border-left:1px solid var(--border);overflow-y:auto;padding:20px 12px;background:var(--panel)}
+
+/* ---------- sidebar ---------- */
+.sec{font-size:0.75rem;text-transform:uppercase;letter-spacing:.7px;color:var(--faint);padding:12px 14px 5px;font-weight:700}
+.navitem{display:flex;align-items:center;gap:8px;padding:6px 15px;cursor:pointer;font-size:0.875rem;border-left:2px solid transparent;color:var(--muted)}
+.navitem:hover{background:var(--bg2);color:var(--text)}
+.navitem.active{background:var(--accent-bg);border-left-color:var(--accent);color:var(--text);font-weight:600}
+.navitem .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.navitem .step{font-family:var(--mono);font-size:0.6875rem;color:var(--faint);width:16px;text-align:right}
+.pill{font-size:0.6875rem;padding:1px 6px;border-radius:20px;font-weight:700;white-space:nowrap;font-family:var(--mono);letter-spacing:.2px}
+.pill.ok{background:var(--green-bg);color:var(--green)}
+.pill.warn{background:var(--amber-bg);color:var(--amber)}
+.pill.bad{background:var(--red-bg);color:var(--red)}
+.pill.info{background:var(--accent-bg);color:var(--accent)}
+.pill.mut{background:var(--purple-bg);color:var(--purple)}
+.pill.gray{background:var(--bg2);color:var(--muted)}
+
+/* ---------- outline ---------- */
+.olink{display:block;padding:4px 8px;font-size:0.8125rem;color:var(--muted);border-left:2px solid transparent;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.olink:hover{color:var(--text);border-left-color:var(--border2)}
+.olink.h3{padding-left:20px;font-size:0.78125rem}
+.olink.h4{padding-left:32px;font-size:0.78125rem;color:var(--faint)}
+
+/* ---------- markdown ---------- */
+.md{max-width:none}
+.md h1,.md h2,.md h3,.md h4{line-height:1.3;margin:1.7em 0 .6em;scroll-margin-top:16px}
+.md h1{font-size:2.25rem;margin-top:0;letter-spacing:-.5px}
+.md h2{font-size:1.875rem;border-bottom:1px solid var(--border);padding-bottom:7px}
+.md h3{font-size:1.5rem}
+.md h4{font-size:1.25rem;color:var(--muted)}
+.md p{margin:.75em 0;font-size:1.25rem}
+.md li{font-size:1.25rem}
+.md ul,.md ol{margin:.6em 0;padding-left:1.5em}
+.md li{margin:.28em 0}
+.md li>ul,.md li>ol{margin:.25em 0}
+.md code{font-family:var(--mono);font-size:.88em;background:var(--code-bg);padding:1.5px 5px;border-radius:4px;border:1px solid var(--border)}
+.md pre{background:var(--code-bg);border:1px solid var(--border);border-radius:8px;padding:12px 14px;overflow-x:auto;margin:1em 0}
+.md pre code{background:none;border:0;padding:0;font-size:1rem;line-height:1.6}
+.md blockquote{margin:1em 0;padding:2px 16px;border-left:3px solid var(--border2);color:var(--muted)}
+.md table{border-collapse:collapse;margin:1em 0;display:block;overflow-x:auto;max-width:100%;font-size:1.0625rem}
+.md th,.md td{border:1px solid var(--border);padding:7px 11px;text-align:left;vertical-align:top}
+.md th{background:var(--bg2);font-weight:700;white-space:nowrap}
+.md tr:nth-child(even) td{background:var(--bg2)}
+.md hr{border:0;border-top:1px solid var(--border);margin:1.8em 0}
+.md img{max-width:100%}
+.md .task{list-style:none;margin-left:-1.2em}
+.md .task input{margin-right:7px}
+mark{background:var(--mark);color:inherit;border-radius:2px}
+.blocked{color:var(--red);text-decoration:line-through dotted;cursor:not-allowed}
+
+.fm{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 18px;padding:10px 12px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;font-size:0.875rem}
+.fm .k{font-family:var(--mono);color:var(--faint)}
+.fm .v{font-family:var(--mono);margin-right:10px}
+
+.mermaid-block{margin:1.2em 0;padding:14px;background:var(--panel);border:1px solid var(--border);border-radius:8px;overflow-x:auto;text-align:center}
+/* Render at natural size and scroll if wide. Scaling the SVG down to fit would
+   shrink its text below the 1rem it is drawn at. */
+.mermaid-block svg{max-width:none;width:auto;height:auto}
+/* Mermaid draws labels as real HTML in a foreignObject, so page typography leaks in
+   and desyncs the text from the box sizes mermaid measured at 1rem. Clamp it back:
+   the foreignObject clips, so an oversized label is cut off, not just crowded. */
+.md .mermaid-block p,.md .mermaid-block li,.md .mermaid-block span{font-size:1rem;margin:0}
+.md .mermaid-block code{font-size:1em;background:none;border:0;padding:0}
+/* a diagram at 1rem can be wider than the column — make that scrollable, visibly */
+.mermaid-block{scrollbar-width:thin;scrollbar-color:var(--border2) transparent}
+.mermaid-block::-webkit-scrollbar{height:9px}
+.mermaid-block::-webkit-scrollbar-track{background:transparent}
+.mermaid-block::-webkit-scrollbar-thumb{background:var(--border2);border-radius:5px}
+.warn{font-size:0.8125rem;color:var(--amber);margin-top:6px;font-family:var(--mono)}
+
+/* ---------- gherkin ---------- */
+.gk{border:1px solid var(--border);border-radius:9px;margin:14px 0;background:var(--panel);overflow:hidden}
+.gk-head{display:flex;align-items:center;gap:9px;padding:9px 13px;background:var(--bg2);border-bottom:1px solid var(--border);flex-wrap:wrap}
+.gk-kw{font-family:var(--mono);font-size:0.75rem;font-weight:700;color:var(--purple);background:var(--purple-bg);padding:2px 7px;border-radius:4px;letter-spacing:.4px}
+.gk-title{font-weight:650;font-size:1.25rem;flex:1;min-width:200px}
+.gk-tag{font-family:var(--mono);font-size:0.8125rem;color:var(--accent);background:var(--accent-bg);padding:2px 7px;border-radius:4px;cursor:pointer}
+.gk-body{padding:9px 13px}
+.gk-step{display:flex;gap:12px;padding:4px 0;font-size:1.1875rem;align-items:baseline}
+.gk-k{font-family:var(--mono);font-size:0.875rem;font-weight:700;min-width:56px;text-align:right;flex-shrink:0}
+.gk-k.given{color:var(--accent)} .gk-k.when{color:var(--amber)} .gk-k.then{color:var(--green)}
+.gk-k.and,.gk-k.but{color:var(--faint)}
+.gk-step .ph{background:var(--amber-bg);color:var(--amber);font-family:var(--mono);font-size:.9em;padding:0 4px;border-radius:3px}
+.gk-ex{margin:10px 0 2px}
+.gk-ex .lbl{font-family:var(--mono);font-size:0.75rem;color:var(--faint);margin-bottom:4px}
+.gk-ex table{border-collapse:collapse;font-size:0.9375rem;font-family:var(--mono)}
+.gk-ex th,.gk-ex td{border:1px solid var(--border);padding:4px 9px;text-align:left}
+.gk-ex th{background:var(--bg2)}
+
+/* ---------- overview ---------- */
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin:16px 0}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:14px 16px}
+.card h4{margin:0 0 8px;font-size:0.75rem;text-transform:uppercase;letter-spacing:.7px;color:var(--faint)}
+.stat{font-size:2.25rem;font-weight:700;letter-spacing:-1px;line-height:1.1}
+.stat small{font-size:1rem;font-weight:400;color:var(--muted);letter-spacing:0}
+.story{background:var(--panel);border:1px solid var(--border);border-left:3px solid var(--accent);border-radius:9px;padding:16px 18px;margin:16px 0}
+.story .row{display:flex;gap:10px;margin:5px 0;align-items:baseline}
+.story .lab{font-family:var(--mono);font-size:0.8125rem;font-weight:700;color:var(--accent);min-width:74px;text-transform:uppercase;flex-shrink:0}
+.pipe{display:flex;gap:5px;flex-wrap:wrap;margin:14px 0}
+.pipe .st{display:flex;align-items:center;gap:6px;font-size:0.9375rem;padding:6px 13px;border-radius:20px;border:1px solid var(--border);background:var(--panel);color:var(--faint);cursor:default}
+.pipe .st.on{border-color:var(--green);background:var(--green-bg);color:var(--green);font-weight:600;cursor:pointer}
+.pipe .st .n{font-family:var(--mono);font-size:0.6875rem;opacity:.7}
+.ac{list-style:none;padding:0;margin:8px 0}
+.ac li{display:flex;gap:12px;padding:9px 0;border-bottom:1px solid var(--border);font-size:1.1875rem}
+.ac li:last-child{border:0}
+.ac .idx{font-family:var(--mono);font-size:0.8125rem;color:var(--faint);min-width:26px}
+h2.vh{font-size:1.875rem;margin:26px 0 8px;letter-spacing:-.3px}
+h2.vh:first-child{margin-top:0}
+.sub{color:var(--muted);font-size:1rem;margin:0 0 8px}
+
+/* ---------- tables / filters ---------- */
+.tbl{width:100%;border-collapse:collapse;font-size:1rem;margin:10px 0}
+.tbl th,.tbl td{border-bottom:1px solid var(--border);padding:9px 12px;text-align:left;vertical-align:top}
+.tbl td.nw{white-space:nowrap}
+.tbl th{font-size:0.75rem;text-transform:uppercase;letter-spacing:.6px;color:var(--faint);border-bottom:1px solid var(--border2)}
+.tbl tr:hover td{background:var(--bg2)}
+.tbl .mono{font-family:var(--mono);font-size:0.9375rem}
+.filters{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0 4px;align-items:center}
+.chip{font-family:var(--mono);font-size:0.8125rem;padding:3px 9px;border-radius:20px;border:1px solid var(--border);background:var(--panel);cursor:pointer;color:var(--muted)}
+.chip:hover{border-color:var(--border2)}
+.chip.on{background:var(--accent);border-color:var(--accent);color:#fff}
+
+/* ---------- empty state ---------- */
+.empty{max-width:660px;margin:6vh auto;text-align:center}
+.empty h1{font-size:1.875rem;margin:0 0 6px;letter-spacing:-.5px}
+.empty p{color:var(--muted);margin:0 0 20px}
+.drop{border:2px dashed var(--border2);border-radius:14px;padding:34px 24px;background:var(--panel);transition:.15s}
+.drop.over{border-color:var(--accent);background:var(--accent-bg)}
+.ways{text-align:left;font-size:1rem;color:var(--muted);margin-top:22px;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:14px 18px}
+.ways b{color:var(--text)}
+.ways code{font-family:var(--mono);font-size:0.8125rem;background:var(--code-bg);padding:1px 5px;border-radius:4px;border:1px solid var(--border)}
+.ways ol{margin:8px 0 0;padding-left:20px}
+.ways li{margin:5px 0}
+#paste{width:100%;height:130px;margin-top:12px;font-family:var(--mono);font-size:0.8125rem;background:var(--code-bg);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:10px;resize:vertical}
+.hide{display:none!important}
+#toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--text);color:var(--bg);padding:9px 18px;border-radius:8px;font-size:0.875rem;opacity:0;pointer-events:none;transition:opacity .2s;z-index:50;max-width:70vw}
+#toast.on{opacity:1}
+.srch-hit{background:var(--panel);border:1px solid var(--border);border-radius:9px;padding:11px 14px;margin:9px 0;cursor:pointer}
+.srch-hit:hover{border-color:var(--accent)}
+.srch-hit .hd{font-size:0.8125rem;font-family:var(--mono);color:var(--accent);margin-bottom:4px}
+.srch-hit .ln{font-size:0.9375rem;color:var(--muted);margin:2px 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+@media print{
+  header,#sidebar,#outline{display:none!important}
+  main{display:block;overflow:visible}
+  #content{overflow:visible;padding:0}
+  body{background:#fff}
+  .md{max-width:none}
+}
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <div class="brand"><span class="dot"></span>sao <small>spec viewer</small></div>
+    <select class="sel hide" id="featSel" title="Feature"></select>
+    <div class="tabs hide" id="tabs">
+      <button data-view="overview" aria-selected="true">Overview</button>
+      <button data-view="doc" aria-selected="false">Document</button>
+      <button data-view="scenarios" aria-selected="false">Scenarios</button>
+      <button data-view="trace" aria-selected="false">Traceability</button>
+    </div>
+    <div class="spacer"></div>
+    <input id="search" type="search" placeholder="Search  /" class="hide">
+    <button class="btn hide" id="refreshBtn" title="Re-read files from disk">Refresh</button>
+    <button class="btn" id="openBtn">Open folder…</button>
+    <button class="btn icon" id="themeBtn" title="Toggle theme">◐</button>
+  </header>
+  <main>
+    <nav id="sidebar"></nav>
+    <section id="content"></section>
+    <aside id="outline"></aside>
+  </main>
+</div>
+<input type="file" id="fileInput" webkitdirectory directory multiple class="hide">
+<div id="toast"></div>
+
+<script type="module">
+/* =====================================================================
+   sao spec viewer — one self-contained file.
+   Reads the markdown bundle that story_partner / spec_partner write into
+   docs/features/<feature>/ and renders it as something readable:
+   overview, gherkin cards, and scenario->task traceability.
+   ===================================================================== */
+
+const REF = "__reference__";
+const $ = (s, r = document) => r.querySelector(s);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+
+const state = {
+  docs: new Map(),      // path -> {path, dir, name, feature, text, mtime}
+  features: [],         // [{id, label, docs:[...]}]
+  feature: null,
+  view: "overview",
+  doc: null,
+  query: "",
+  tagFilter: null,
+  handle: null,         // FileSystemDirectoryHandle when available
+  files: null,          // File[] from the folder input
+  http: false,          // loaded by fetching the server's directory index
+  timer: null,
+};
+
+// Length alone misses a same-size rewrite — retitling a mermaid node, swapping a
+// word — and http loads carry no usable mtime, so hash the text. FNV-1a over the
+// whole doc set is well under a millisecond at these sizes.
+function hashText(s) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(36);
+}
+const docFingerprint = () =>
+  [...state.docs.values()].map((d) => `${d.path}:${d.text.length}:${hashText(d.text)}`).sort().join("|");
+
+/* ------------------------- pipeline / doc order ------------------------- */
+// Mirrors the node order in workflows/sao-features-orchestrator.
+// Matched by pattern, not by name: the build loop writes one tdd-<N>.md and one
+// review-slice-<N>.md per slice ({{loop.iteration}}), while features written before
+// that convention carry the bare tdd.md / review-slice.md. Both count.
+const PIPELINE = [
+  { label: "Story",        re: /^(user-)?story\.md$/ },
+  { label: "Spec",         re: /^spec\.md$/ },
+  { label: "Spec review",  re: /^review-spec\.md$/ },
+  { label: "Gherkin",      re: /^gherkin-scenarios\.md$/ },
+  { label: "Tasks",        re: /^tasks\.md$/ },
+  { label: "TDD log",      re: /^tdd(-\d+)?\.md$/ },
+  { label: "Slice review", re: /^review-slice(-\d+)?\.md$/ },
+  { label: "Full review",  re: /^review\.md$/ },
+  { label: "Mutation",     re: /^mutation\.md$/ },
+  { label: "DoD",          re: /^dod\.md$/ },
+];
+const ORDER = ["user-story.md","story.md","spec.md","review-spec.md","gherkin-scenarios.md","tasks.md"];
+const FEATURE_MARKERS = new Set(["user-story.md","story.md","spec.md","gherkin-scenarios.md","tasks.md"]);
+const TDD_RE = /^tdd(-(\d+))?\.md$/;
+const SLICE_REVIEW_RE = /^review-slice(-(\d+))?\.md$/;
+
+// [bucket, order-within-bucket, name] — per-slice files sort numerically inside
+// their own group instead of falling through to the unknown bucket at the end.
+function docRank(name) {
+  const i = ORDER.indexOf(name);
+  if (i >= 0) return [0, i, name];
+  const t = name.match(/^task-(\d+)\.md$/);
+  if (t) return [1, Number(t[1]), name];
+  const late = [TDD_RE, SLICE_REVIEW_RE, /^review\.md$/, /^mutation\.md$/, /^dod\.md$/];
+  for (let j = 0; j < late.length; j++) {
+    const m = name.match(late[j]);
+    if (m) return [2, j * 1000 + Number(m[2] ?? 0), name];
+  }
+  return [3, 0, name];
+}
+const byRank = (a, b) => {
+  const A = docRank(a.name), B = docRank(b.name);
+  return A[0] - B[0] || A[1] - B[1] || String(A[2]).localeCompare(String(B[2]));
+};
+
+/* ============================ markdown ============================ */
+
+// Code spans and links are lifted out to placeholders first, so a link whose text
+// contains `code` (all over these docs) still becomes a link.
+function inline(src) {
+  const codes = [], links = [];
+  const PC = (i) => "\u0001C" + i + "\u0001";
+  const PL = (i) => "\u0001L" + i + "\u0001";
+  let s = String(src).replace(/`([^`]+)`/g, (_, c) => PC(codes.push(c) - 1));
+  s = s.replace(/(!?)\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g,
+    (_, bang, txt, href) => PL(links.push({ img: !!bang, txt, href }) - 1));
+  s = fmt(s);
+  const code = (str) => str.replace(/\u0001C(\d+)\u0001/g, (_, i) => `<code>${esc(codes[i])}</code>`);
+  s = s.replace(/\u0001L(\d+)\u0001/g, (_, i) => {
+    const l = links[i];
+    if (l.img) {
+      const src = safeUrl(l.href, true);
+      if (src === null) return `<span class="blocked">${esc(l.txt)}</span>`;
+      return `<img src="${esc(src)}" alt="${esc(l.txt.replace(/`/g, ""))}">`;
+    }
+    return mkLink(l.href, code(fmt(l.txt)));
+  });
+  return code(s);
+}
+
+function fmt(t) {
+  t = esc(t);
+  t = t.replace(/\*\*\*(\S(?:.*?\S)?)\*\*\*/g, "<strong><em>$1</em></strong>");
+  t = t.replace(/\*\*(\S(?:.*?\S)?)\*\*/g, "<strong>$1</strong>");
+  t = t.replace(/__(\S(?:.*?\S)?)__/g, "<strong>$1</strong>");
+  // single * emphasis only; single _ is left alone (snake_case is everywhere here)
+  t = t.replace(/(^|[^*\w])\*(\S(?:[^*]*?\S)?)\*(?!\*)/g, "$1<em>$2</em>");
+  t = t.replace(/~~(\S(?:.*?\S)?)~~/g, "<del>$1</del>");
+  t = t.replace(/&lt;(https?:\/\/[^\s>]+)&gt;/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
+  return t;
+}
+
+/* Scheme allowlist for anything that becomes an href or src.
+   Documents here are written by agents, and this page's origin can read the whole
+   worktree, so `javascript:` or `data:text/html` behind a friendly label is a real
+   hazard. Control characters are stripped first: browsers ignore them when parsing
+   a URL, so `java\nscript:x` would otherwise slip past a naive scheme test. */
+function safeUrl(href, allowDataImage) {
+  const clean = String(href).replace(/[\u0000-\u0020\u007f]/g, "");
+  if (/^(https?:|mailto:)/i.test(clean)) return clean;
+  if (allowDataImage && /^data:image\/(png|jpe?g|gif|svg\+xml|webp);/i.test(clean)) return clean;
+  if (/^[a-z][a-z0-9+.\-]*:/i.test(clean)) return null; // any other scheme
+  return clean; // relative path or #anchor
+}
+
+// Relative .md links navigate inside the viewer; everything else opens out.
+function mkLink(href, txt) {
+  const safe = safeUrl(href);
+  if (safe === null) return `<span class="blocked" title="blocked link: ${esc(href)}">${txt}</span>`;
+  const rel = safe.replace(/^\.\//, "");
+  if (/^[^:#?]+\.md(#.*)?$/i.test(rel) && !/^https?:/i.test(rel)) {
+    const file = rel.split("#")[0].split("/").pop();
+    return `<a href="#" data-doclink="${esc(file)}">${txt}</a>`;
+  }
+  if (safe.startsWith("#")) return `<a href="${esc(safe)}">${txt}</a>`;
+  return `<a href="${esc(safe)}" target="_blank" rel="noopener noreferrer">${txt}</a>`;
+}
+
+const slug = (s) => s.toLowerCase().replace(/[^\w\s-]/g, "").trim().replace(/\s+/g, "-").slice(0, 60);
+
+function stripFrontmatter(md) {
+  const m = md.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
+  return m ? { fm: parseFm(m[1]), body: md.slice(m[0].length) } : { fm: null, body: md };
+}
+
+// Tiny YAML subset: scalars, and `key:` followed by `- item` lines.
+function parseFm(txt) {
+  const out = {};
+  let key = null;
+  for (const raw of txt.split(/\r?\n/)) {
+    if (!raw.trim() || raw.trim().startsWith("#")) continue;
+    const item = raw.match(/^\s+-\s+(.*)$/);
+    if (item && key) { (out[key] = out[key] || []).push(unq(item[1])); continue; }
+    const kv = raw.match(/^([A-Za-z0-9_.-]+):\s*(.*)$/);
+    if (kv) { key = kv[1]; out[key] = kv[2] === "" ? [] : unq(kv[2]); }
+  }
+  return out;
+}
+const unq = (s) => s.trim().replace(/^["'](.*)["']$/, "$1");
+
+/** Body of the first `## ` section whose title matches `re`, or null. */
+function section(md, re) {
+  const parts = md.replace(/\r\n/g, "\n").split(/^##[ \t]+/m);
+  for (const p of parts.slice(1)) {
+    const nl = p.indexOf("\n");
+    const title = (nl < 0 ? p : p.slice(0, nl)).trim();
+    if (re.test(title)) return nl < 0 ? "" : p.slice(nl + 1);
+  }
+  return null;
+}
+
+const GK_START = /^\s{0,8}(@[\w][\w.-]*(\s+@[\w][\w.-]*)*|Scenario(?: Outline| Template)?:|Feature:|Background:|Rule:)/;
+const GK_CONT = /^\s{0,10}(Given|When|Then|And|But|\*|Examples:|\||@[\w])/;
+
+/** Render a markdown string to HTML. Collects headings for the outline. */
+function renderMarkdown(md, heads) {
+  const lines = md.replace(/\r\n/g, "\n").split("\n");
+  let out = "", i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    if (!line.trim()) { i++; continue; }
+
+    // fenced code / mermaid
+    const fence = line.match(/^\s*(```+|~~~+)\s*([\w-]*)/);
+    if (fence) {
+      const close = fence[1][0];
+      const buf = [];
+      i++;
+      while (i < lines.length && !new RegExp("^\\s*" + close + "{3,}\\s*$").test(lines[i])) buf.push(lines[i++]);
+      i++;
+      const code = buf.join("\n");
+      out += fence[2] === "mermaid"
+        ? `<div class="mermaid-block" data-src="${esc(code)}">rendering diagram…</div>`
+        : `<pre><code>${esc(code)}</code></pre>`;
+      continue;
+    }
+
+    // heading
+    const h = line.match(/^(#{1,6})\s+(.*)$/);
+    if (h) {
+      const lvl = h[1].length, txt = h[2].replace(/\s*#+\s*$/, "");
+      const id = slug(txt);
+      if (heads && lvl >= 2 && lvl <= 4) heads.push({ lvl, txt: txt.replace(/[*`]/g, ""), id });
+      out += `<h${lvl} id="${id}">${inline(txt)}</h${lvl}>`;
+      i++; continue;
+    }
+
+    // hr
+    if (/^\s{0,3}([-*_])\s*(\1\s*){2,}$/.test(line)) { out += "<hr>"; i++; continue; }
+
+    // table
+    if (line.includes("|") && i + 1 < lines.length && /^\s*\|?[\s:|-]*-[\s:|-]*\|?\s*$/.test(lines[i + 1]) && lines[i + 1].includes("-")) {
+      const rows = [];
+      while (i < lines.length && lines[i].includes("|") && lines[i].trim()) rows.push(lines[i++]);
+      out += table(rows);
+      continue;
+    }
+
+    // blockquote
+    if (/^\s{0,3}>/.test(line)) {
+      const buf = [];
+      while (i < lines.length && (/^\s{0,3}>/.test(lines[i]) || (lines[i].trim() && buf.length))) {
+        buf.push(lines[i].replace(/^\s{0,3}>\s?/, "")); i++;
+      }
+      out += `<blockquote>${renderMarkdown(buf.join("\n"), null)}</blockquote>`;
+      continue;
+    }
+
+    // gherkin block (a scenario, its steps and any Examples table)
+    if (GK_START.test(line) && looksGherkin(lines, i)) {
+      const buf = [];
+      while (i < lines.length) {
+        const L = lines[i];
+        if (!L.trim()) {
+          // stop unless more of the same block follows
+          let j = i + 1;
+          while (j < lines.length && !lines[j].trim()) j++;
+          if (j >= lines.length || !GK_CONT.test(lines[j]) || GK_START.test(lines[j])) break;
+          buf.push(""); i = j; continue;
+        }
+        if (buf.length && GK_START.test(L) && /^\s{0,8}(@|Scenario|Feature:|Background:|Rule:)/.test(L)) break;
+        if (!GK_CONT.test(L) && !GK_START.test(L)) break;
+        buf.push(L); i++;
+      }
+      if (buf.length) { out += renderGherkin(buf.join("\n")); continue; }
+    }
+
+    // list
+    if (/^\s*([-*+]|\d+[.)])\s+/.test(line)) {
+      const buf = [];
+      while (i < lines.length && (lines[i].trim() || (lines[i + 1] && /^\s*([-*+]|\d+[.)])\s+|^\s{2,}\S/.test(lines[i + 1] || "")))) {
+        if (!lines[i].trim() && !(lines[i + 1] && /^(\s*([-*+]|\d+[.)])\s+|\s{2,}\S)/.test(lines[i + 1]))) break;
+        if (/^(#{1,6})\s|^\s*(```|~~~)/.test(lines[i])) break;
+        buf.push(lines[i++]);
+      }
+      out += list(buf);
+      continue;
+    }
+
+    // paragraph
+    const p = [];
+    while (i < lines.length && lines[i].trim() && !/^(#{1,6})\s|^\s*(```|~~~)|^\s{0,3}>/.test(lines[i])
+           && !/^\s*([-*+]|\d+[.)])\s+/.test(lines[i]) && !/^\s{0,3}([-*_])\s*(\1\s*){2,}$/.test(lines[i])) {
+      if (GK_START.test(lines[i]) && looksGherkin(lines, i) && p.length) break;
+      p.push(lines[i++]);
+    }
+    if (p.length) out += `<p>${inline(p.join("\n"))}</p>`;
+    else i++;
+  }
+  return out;
+}
+
+// A tag line only starts a gherkin block if a Scenario/Feature line follows soon.
+function looksGherkin(lines, i) {
+  if (/^\s{0,8}(Scenario(?: Outline| Template)?:|Feature:|Background:|Rule:)/.test(lines[i])) return true;
+  for (let j = i + 1; j < Math.min(i + 4, lines.length); j++) {
+    if (!lines[j].trim()) continue;
+    if (/^\s{0,8}(Scenario(?: Outline| Template)?:|Background:)/.test(lines[j])) return true;
+    if (!/^\s{0,8}@/.test(lines[j])) return false;
+  }
+  return false;
+}
+
+function table(rows) {
+  const cells = (r) => r.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
+  const head = cells(rows[0]);
+  const body = rows.slice(2).map(cells);
+  let h = "<table><thead><tr>" + head.map((c) => `<th>${inline(c)}</th>`).join("") + "</tr></thead><tbody>";
+  for (const r of body) h += "<tr>" + head.map((_, k) => `<td>${inline(r[k] ?? "")}</td>`).join("") + "</tr>";
+  return h + "</tbody></table>";
+}
+
+function list(buf) {
+  const items = [];
+  for (const raw of buf) {
+    const m = raw.match(/^(\s*)([-*+]|\d+[.)])\s+(.*)$/);
+    if (m) items.push({ indent: m[1].replace(/\t/g, "  ").length, ord: /\d/.test(m[2]), text: m[3], sub: [] });
+    else if (items.length) items[items.length - 1].sub.push(raw.replace(/^\s{0,4}/, ""));
+  }
+  const build = (idx, indent) => {
+    let html = "", ord = items[idx] && items[idx].ord;
+    html += ord ? "<ol>" : "<ul>";
+    let i = idx;
+    while (i < items.length && items[i].indent >= indent) {
+      if (items[i].indent > indent) {
+        const start = i;
+        while (i < items.length && items[i].indent > indent) i++;
+        const inner = build(start, items[start].indent);
+        html = html.replace(/<\/li>$/, inner + "</li>");
+        continue;
+      }
+      const it = items[i];
+      const task = it.text.match(/^\[([ xX])\]\s+(.*)$/);
+      const cls = task ? ' class="task"' : "";
+      const inner = task
+        ? `<input type="checkbox" disabled ${task[1].toLowerCase() === "x" ? "checked" : ""}>${inline(task[2])}`
+        : inline(it.text);
+      const extra = it.sub.filter((s) => s.trim()).length ? renderMarkdown(it.sub.join("\n"), null) : "";
+      html += `<li${cls}>${inner}${extra}</li>`;
+      i++;
+    }
+    return html + (ord ? "</ol>" : "</ul>");
+  };
+  return items.length ? build(0, items[0].indent) : "";
+}
+
+/* ============================ gherkin ============================ */
+
+function parseScenarios(text) {
+  const lines = text.replace(/\r\n/g, "\n").split("\n");
+  const out = [];
+  let section = "", tags = [], cur = null, fence = false;
+
+  const flush = () => { if (cur) out.push(cur); cur = null; };
+
+  for (const raw of lines) {
+    if (/^\s*(```|~~~)/.test(raw)) { fence = !fence; continue; }
+    if (fence) continue;
+    const line = raw.replace(/\s+$/, "");
+
+    const head = line.match(/^#{1,6}\s+(?:Feature:\s*)?(.*)$/);
+    if (head) { flush(); section = head[1].replace(/[*`]/g, "").trim(); tags = []; continue; }
+
+    const tag = line.match(/^\s*((?:@[\w][\w.-]*\s*)+)$/);
+    if (tag) { flush(); tags = tag[1].trim().split(/\s+/); continue; }
+
+    const sc = line.match(/^\s*(Scenario Outline|Scenario Template|Scenario|Background|Rule):\s*(.*)$/);
+    if (sc) {
+      flush();
+      cur = { keyword: sc[1], title: sc[2].trim(), tags, section, steps: [], examples: [] };
+      tags = [];
+      continue;
+    }
+    if (!cur) continue;
+
+    const step = line.match(/^\s+(Given|When|Then|And|But|\*)\s+(.*)$/);
+    if (step) { cur.steps.push({ kw: step[1], text: step[2] }); continue; }
+    if (/^\s*Examples:/.test(line)) { cur.inEx = true; continue; }
+    if (/^\s*\|/.test(line)) {
+      const cells = line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
+      if (!cells.every((c) => /^:?-+:?$/.test(c) || c === "")) cur.examples.push(cells);
+      continue;
+    }
+    if (line.trim()) { if (cur.steps.length) flush(); }
+  }
+  flush();
+  return out.filter((s) => s.steps.length || s.examples.length);
+}
+
+function renderGherkin(block) {
+  return parseScenarios(block).map(scenarioCard).join("") || `<pre><code>${esc(block)}</code></pre>`;
+}
+
+function scenarioCard(s) {
+  const tags = s.tags.map((t) => `<span class="gk-tag" data-tag="${esc(t)}">${esc(t)}</span>`).join("");
+  const steps = s.steps.map((st) => {
+    const k = st.kw.toLowerCase();
+    const txt = esc(st.text)
+      .replace(/&lt;([\w -]+)&gt;/g, '<span class="ph">&lt;$1&gt;</span>')
+      .replace(/`([^`]+)`/g, "<code>$1</code>");
+    return `<div class="gk-step"><span class="gk-k ${k}">${esc(st.kw)}</span><span>${txt}</span></div>`;
+  }).join("");
+  let ex = "";
+  if (s.examples.length) {
+    const [head, ...rows] = s.examples;
+    ex = `<div class="gk-ex"><div class="lbl">Examples</div><table><thead><tr>` +
+      head.map((c) => `<th>${esc(c)}</th>`).join("") + "</tr></thead><tbody>" +
+      rows.map((r) => "<tr>" + head.map((_, k) => `<td>${esc(r[k] ?? "")}</td>`).join("") + "</tr>").join("") +
+      "</tbody></table></div>";
+  }
+  return `<div class="gk" id="${esc((s.tags[0] || "").replace(/^@/, "") || slug(s.title))}">
+    <div class="gk-head"><span class="gk-kw">${esc(s.keyword)}</span><span class="gk-title">${esc(s.title)}</span>${tags}</div>
+    <div class="gk-body">${steps}${ex}</div></div>`;
+}
+
+/* ============================ feature model ============================ */
+
+function buildFeatures() {
+  const dirs = new Map();
+  for (const d of state.docs.values()) {
+    if (!dirs.has(d.dir)) dirs.set(d.dir, []);
+    dirs.get(d.dir).push(d);
+  }
+  const feats = [], ref = [];
+  for (const [dir, docs] of dirs) {
+    const isFeature = docs.some((d) => FEATURE_MARKERS.has(d.name));
+    if (isFeature) {
+      docs.sort(byRank);
+      feats.push({
+        id: dir, label: dir.split("/").filter(Boolean).pop() || dir, docs,
+        mtime: Math.max(...docs.map((d) => d.mtime || 0)),
+      });
+    } else ref.push(...docs);
+  }
+  feats.sort((a, b) => (b.mtime - a.mtime) || a.label.localeCompare(b.label));
+  if (ref.length) {
+    ref.sort((a, b) => a.path.localeCompare(b.path));
+    feats.push({ id: REF, label: "Reference docs", docs: ref, mtime: 0 });
+  }
+  state.features = feats;
+  if (!feats.find((f) => f.id === state.feature?.id)) state.feature = feats[0] || null;
+  else state.feature = feats.find((f) => f.id === state.feature.id);
+}
+
+const findDoc = (name) => state.feature?.docs.find((d) => d.name === name) || null;
+const findAny = (names) => { for (const n of names) { const d = findDoc(n); if (d) return d; } return null; };
+
+function featureModel() {
+  const f = state.feature;
+  if (!f) return null;
+  const story = findAny(["user-story.md", "story.md"]);
+  const spec = findDoc("spec.md");
+  const gher = findDoc("gherkin-scenarios.md");
+  const dod = findDoc("dod.md");
+  const mut = findDoc("mutation.md");
+
+  const scenarios = [];
+  for (const d of f.docs) {
+    if (!/^(gherkin|.*scenarios)/i.test(d.name) && !/^\s*Scenario:/m.test(d.text)) continue;
+    for (const s of parseScenarios(stripFrontmatter(d.text).body)) scenarios.push({ ...s, doc: d.name });
+  }
+
+  const tasks = f.docs
+    .filter((d) => /^task-\d+\.md$/.test(d.name))
+    .map((d) => {
+      const { fm } = stripFrontmatter(d.text);
+      const arr = (v) => (Array.isArray(v) ? v : v ? [v] : []);
+      return {
+        doc: d.name,
+        id: fm?.id ?? d.name.match(/\d+/)[0],
+        title: fm?.title || d.name,
+        slice: fm?.slice || "",
+        status: (fm?.status || "").toLowerCase(),
+        scenarios: arr(fm?.scenarios).map((s) => s.trim()),
+        paths: arr(fm?.paths),
+      };
+    })
+    .sort((a, b) => Number(a.id) - Number(b.id));
+
+  // One log per slice — concatenate them all, or the @s coverage column lies.
+  const tddText = f.docs.filter((d) => TDD_RE.test(d.name)).map((d) => d.text).join("\n");
+
+  // acceptance criteria = the bullets under "## Acceptance criteria" in the story
+  let criteria = [];
+  if (story) {
+    const sec = section(story.text, /^acceptance criteria/i);
+    if (sec) {
+      criteria = sec.split(/\n(?=[ \t]{0,3}-[ \t])/)
+        .map((s) => s.replace(/^[ \t]*-[ \t]+/, "").trim().replace(/\s*\n\s*/g, " "))
+        .filter((s) => s.length > 3);
+    }
+  }
+
+  // the As a / I want / so that triple
+  let asa = null;
+  if (story) {
+    const t = story.text;
+    const g = (re) => (t.match(re) || [])[1]?.replace(/\s*\n\s*/g, " ").trim() || "";
+    asa = {
+      title: (t.match(/^#\s+(.*)$/m) || [])[1] || f.label,
+      as: g(/\*\*As an?\*\*\s+([\s\S]*?)(?=\s*\*\*I want\*\*)/i),
+      want: g(/\*\*I want\*\*\s+([\s\S]*?)(?=\s*\*\*so that\*\*)/i),
+      so: g(/\*\*so that\*\*\s+([\s\S]*?)(?=\n\s*\n|\n##)/i),
+    };
+    if (!asa.as && !asa.want) asa = { title: asa.title, as: "", want: "", so: "" };
+  }
+
+  // spec decisions: "1. **D1 — ...**" or "### D1 ..."
+  const decisions = [];
+  if (spec) {
+    const re = /^\s*(?:\d+\.\s*)?\*{0,2}(D\d+)\s*[—–-]\s*([^*\n]+)/gm;
+    let m2; while ((m2 = re.exec(spec.text))) decisions.push({ id: m2[1], text: m2[2].replace(/\*+$/, "").trim() });
+  }
+  let open = [];
+  if (spec) {
+    const sec = section(spec.text, /^open\b/i);
+    if (sec) { const re = /\*{0,2}(O\d+)\*{0,2}\s*[—–-]?\s*([^\n]*)/g; let x; while ((x = re.exec(sec))) open.push({ id: x[1], text: x[2].trim() }); }
+  }
+
+  const verdict = dod ? (dod.text.match(/\*\*(PASS|FAIL|BLOCKED|CHANGES_REQUESTED)\*\*/i) || [])[1] : null;
+  const mutScore = mut ? (mut.text.match(/(\d{1,3}\.\d{1,2})\s*%/) || [])[1] : null;
+
+  return { f, story, spec, gher, dod, scenarios, tasks, tddText, criteria, asa, decisions, open, verdict, mutScore };
+}
+
+/* ============================ views ============================ */
+
+function render() {
+  buildNav();
+  const c = $("#content");
+  const heads = [];
+  // every view lives in one centered column; the wide data table gets more room
+  const put = (html) => { c.innerHTML = `<div class="page">${html}</div>`; };
+
+  if (!state.docs.size) { put(emptyState()); wireEmpty(); $("#outline").innerHTML = ""; return; }
+  if (state.query) { put(searchView()); $("#outline").innerHTML = ""; wireContent(); return; }
+
+  if (state.view === "overview") put(overviewView());
+  else if (state.view === "scenarios") put(scenariosView());
+  else if (state.view === "trace") put(traceView());
+  else put(docView(heads));
+
+  buildOutline(heads);
+  wireContent();
+  c.scrollTop = 0;
+  renderMermaid(c);
+}
+
+function emptyState() {
+  const canPick = !!window.showDirectoryPicker;
+  return `<div class="empty">
+    <div class="drop" id="drop">
+      <h1>Open a feature docs folder</h1>
+      <p>Drag <code>docs/</code> here, or pick it below. Nothing leaves your machine.</p>
+      <button class="btn primary" id="openBtn2">Choose folder…</button>
+      ${canPick ? '<button class="btn" id="liveBtn" style="margin-left:8px">Open with live reload</button>' : ""}
+    </div>
+    <div class="ways">
+      <b>What it reads</b>
+      <ol>
+        <li>Any folder holding <code>user-story.md</code>, <code>spec.md</code>, <code>gherkin-scenarios.md</code>,
+            <code>tasks.md</code>, <code>task-N.md</code>, <code>tdd.md</code>, <code>dod.md</code> becomes a <b>feature</b>.</li>
+        <li>Every other <code>.md</code> (SPEC.md, README.md, <code>docs/c4/*</code>) lands under <b>Reference docs</b>.</li>
+        <li>Mermaid blocks render. Gherkin becomes scenario cards. <code>@s-*</code> tags get traced to tasks.</li>
+      </ol>
+      <b style="display:block;margin-top:12px">Live reload while an agent is writing</b>
+      Serve the repo and open this file over http — then the folder picker can re-read on its own:
+      <div style="margin-top:6px"><code>python3 -m http.server 8000</code> → <code>localhost:8000/docs/spec-viewer.html</code></div>
+      ${canPick ? "" : '<div style="margin-top:6px;color:var(--amber)">Opened from <code>file://</code> — live reload is unavailable here; use <b>Refresh</b> after re-picking.</div>'}
+    </div>
+    <textarea id="paste" placeholder="…or paste markdown here (an agent proposal, a draft spec) and press ⌘/Ctrl+Enter"></textarea>
+  </div>`;
+}
+
+function overviewView() {
+  const m = featureModel();
+  if (!m) return "<p class=sub>Nothing loaded.</p>";
+  if (m.f.id === REF) return `<h2 class="vh">Reference docs</h2><p class="sub">${m.f.docs.length} files. Pick one from the left.</p>` +
+    `<ul>${m.f.docs.map((d) => `<li><a href="#" data-doclink="${esc(d.name)}">${esc(d.path)}</a></li>`).join("")}</ul>`;
+
+  const done = m.tasks.filter((t) => t.status === "done").length;
+  const covered = m.scenarios.filter((s) => s.tags.some((t) => m.tasks.some((k) => k.scenarios.includes(t)))).length;
+
+  const pipe = PIPELINE.map((p, i) => {
+    const d = m.f.docs.find((x) => p.re.test(x.name));
+    return `<div class="st ${d ? "on" : ""}" ${d ? `data-doclink="${esc(d.name)}"` : ""}><span class="n">${i + 1}</span>${p.label}</div>`;
+  }).join("");
+
+  const story = m.asa && (m.asa.as || m.asa.want) ? `<div class="story">
+      <div style="font-weight:700;font-size:16px;margin-bottom:8px">${esc(m.asa.title)}</div>
+      ${m.asa.as ? `<div class="row"><span class="lab">As a</span><span>${inline(m.asa.as)}</span></div>` : ""}
+      ${m.asa.want ? `<div class="row"><span class="lab">I want</span><span>${inline(m.asa.want)}</span></div>` : ""}
+      ${m.asa.so ? `<div class="row"><span class="lab">so that</span><span>${inline(m.asa.so)}</span></div>` : ""}
+    </div>` : "";
+
+  const cards = `<div class="grid">
+    <div class="card"><h4>Scenarios</h4><div class="stat">${m.scenarios.length}<small> · ${covered} owned by a task</small></div></div>
+    <div class="card"><h4>Tasks</h4><div class="stat">${m.tasks.length}<small> · ${done} done</small></div></div>
+    <div class="card"><h4>Acceptance criteria</h4><div class="stat">${m.criteria.length}</div></div>
+    <div class="card"><h4>Status</h4><div class="stat" style="font-size:20px">
+      ${m.verdict ? `<span class="pill ${/pass/i.test(m.verdict) ? "ok" : "bad"}">${esc(m.verdict)}</span>` : '<span class="pill gray">in progress</span>'}
+      ${m.mutScore ? ` <span class="pill mut">mutation ${esc(m.mutScore)}%</span>` : ""}
+    </div></div>
+  </div>`;
+
+  const crit = m.criteria.length ? `<h2 class="vh">Acceptance criteria</h2>
+    <p class="sub">From <a href="#" data-doclink="${esc(m.story.name)}">${esc(m.story.name)}</a> — these are what "done" means.</p>
+    <ul class="ac">${m.criteria.map((c, i) => `<li><span class="idx">${i + 1}</span><span>${inline(c)}</span></li>`).join("")}</ul>` : "";
+
+  const dec = m.decisions.length ? `<h2 class="vh">Resolved decisions</h2>
+    <table class="tbl"><tbody>${m.decisions.map((d) => `<tr><td class="mono" style="width:44px">${esc(d.id)}</td><td>${inline(d.text)}</td></tr>`).join("")}</tbody></table>` : "";
+
+  const opn = m.open.length ? `<h2 class="vh">Open for the human</h2>
+    <table class="tbl"><tbody>${m.open.map((d) => `<tr><td class="mono" style="width:44px">${esc(d.id)}</td><td>${inline(d.text)}</td></tr>`).join("")}</tbody></table>` : "";
+
+  const tsk = m.tasks.length ? `<h2 class="vh">Slices &amp; tasks</h2>
+    <table class="tbl"><thead><tr><th>#</th><th>Slice</th><th>Task</th><th>Scenarios</th><th>Status</th></tr></thead><tbody>
+    ${m.tasks.map((t) => `<tr>
+      <td class="mono">${esc(String(t.id))}</td>
+      <td>${esc(t.slice)}</td>
+      <td><a href="#" data-doclink="${esc(t.doc)}">${esc(t.title)}</a></td>
+      <td class="mono">${t.scenarios.length}</td>
+      <td>${t.status ? `<span class="pill ${t.status === "done" ? "ok" : "warn"}">${esc(t.status)}</span>` : ""}</td>
+    </tr>`).join("")}</tbody></table>` : "";
+
+  return `<h2 class="vh">${esc(m.f.label)}</h2>
+    <p class="sub">${m.f.docs.length} documents · ${esc(m.f.id)}</p>
+    <div class="pipe">${pipe}</div>${story}${cards}${crit}${dec}${opn}${tsk}`;
+}
+
+function scenariosView() {
+  const m = featureModel();
+  if (!m || !m.scenarios.length) return '<h2 class="vh">Scenarios</h2><p class="sub">No Gherkin found in this feature yet.</p>';
+
+  const tags = [...new Set(m.scenarios.flatMap((s) => s.tags))].sort();
+  const filter = state.tagFilter;
+  const shown = filter ? m.scenarios.filter((s) => s.tags.includes(filter)) : m.scenarios;
+
+  const chips = `<div class="filters">
+    <span class="chip ${filter ? "" : "on"}" data-tagf="">all ${m.scenarios.length}</span>
+    ${tags.map((t) => `<span class="chip ${filter === t ? "on" : ""}" data-tagf="${esc(t)}">${esc(t)}</span>`).join("")}
+  </div>`;
+
+  let html = `<h2 class="vh">Scenarios</h2><p class="sub">The acceptance contract, as cards. Click a tag to filter.</p>${chips}`;
+  let section = null;
+  for (const s of shown) {
+    if (s.section !== section) { section = s.section; if (section) html += `<h3 style="margin-top:26px">${esc(section)}</h3>`; }
+    html += scenarioCard(s);
+  }
+  return html;
+}
+
+// "S1 — ACP transport & opencode runner" -> "S1"; anything else passes through.
+const sliceId = (s) => (s ? (s.match(/^\s*([A-Za-z]?\d+[A-Za-z]?)\s*[—–-]/) || [null, s])[1] : "");
+
+function traceView() {
+  const m = featureModel();
+  if (!m) return "";
+  if (!m.scenarios.length && !m.tasks.length) return '<h2 class="vh">Traceability</h2><p class="sub">Needs gherkin-scenarios.md and task-N.md files.</p>';
+
+  const rows = m.scenarios.map((s) => {
+    const tag = s.tags[0] || "";
+    const owners = m.tasks.filter((t) => t.scenarios.includes(tag));
+    const inTdd = tag && m.tddText.includes(tag);
+    return { tag, title: s.title, section: s.section, owners, inTdd };
+  });
+
+  const orphanTags = m.tasks.flatMap((t) => t.scenarios)
+    .filter((t) => !m.scenarios.some((s) => s.tags.includes(t)));
+  const untagged = rows.filter((r) => !r.tag).length;
+  const unowned = rows.filter((r) => r.tag && !r.owners.length).length;
+  const noTdd = rows.filter((r) => r.tag && !r.inTdd).length;
+
+  const warn = [];
+  if (unowned) warn.push(`${unowned} scenario${unowned > 1 ? "s" : ""} owned by no task`);
+  if (untagged) warn.push(`${untagged} scenario${untagged > 1 ? "s" : ""} with no @tag`);
+  if (noTdd) warn.push(`${noTdd} not mentioned in tdd.md`);
+  if (orphanTags.length) warn.push(`${orphanTags.length} task tag${orphanTags.length > 1 ? "s" : ""} with no scenario: ${orphanTags.map(esc).join(", ")}`);
+
+  return `<h2 class="vh">Traceability</h2>
+    <p class="sub">Every <code>@s</code> tag should be owned by exactly one task and land in the TDD log.</p>
+    ${warn.length ? `<div class="card" style="border-color:var(--amber);background:var(--amber-bg);color:var(--amber)">${warn.map(esc).join(" · ")}</div>`
+                  : '<div class="card" style="border-color:var(--green);background:var(--green-bg);color:var(--green)">Every scenario is tagged, owned and logged.</div>'}
+    <table class="tbl"><thead><tr><th>Tag</th><th>Scenario</th><th>Task</th><th>Slice</th><th>Status</th><th>TDD</th></tr></thead><tbody>
+    ${rows.map((r) => `<tr>
+      <td class="mono">${r.tag ? esc(r.tag) : '<span class="pill bad">untagged</span>'}</td>
+      <td>${esc(r.title)}</td>
+      <td class="nw">${r.owners.length ? r.owners.map((o) => `<a href="#" data-doclink="${esc(o.doc)}">task-${esc(String(o.id))}</a>`).join(", ")
+                            : '<span class="pill bad">none</span>'}</td>
+      <td class="nw" title="${esc(r.owners[0]?.slice || "")}">${esc(sliceId(r.owners[0]?.slice))}</td>
+      <td>${r.owners[0]?.status ? `<span class="pill ${r.owners[0].status === "done" ? "ok" : "warn"}">${esc(r.owners[0].status)}</span>` : ""}</td>
+      <td>${r.inTdd ? '<span class="pill ok">✓</span>' : '<span class="pill gray">–</span>'}</td>
+    </tr>`).join("")}</tbody></table>`;
+}
+
+function docView(heads) {
+  const d = state.doc || state.feature?.docs[0];
+  if (!d) return "<p class=sub>No document.</p>";
+  state.doc = d;
+  const { fm, body } = stripFrontmatter(d.text);
+  const meta = fm ? `<div class="fm">${Object.entries(fm).map(([k, v]) =>
+    `<span><span class="k">${esc(k)}:</span> <span class="v">${esc(Array.isArray(v) ? v.join(", ") : v)}</span></span>`).join("")}</div>` : "";
+  return `<div class="md">${meta}${renderMarkdown(body, heads)}</div>`;
+}
+
+function searchView() {
+  const q = state.query.toLowerCase();
+  const hits = [];
+  for (const f of state.features) {
+    for (const d of f.docs) {
+      const lines = d.text.split("\n");
+      const ms = [];
+      lines.forEach((l, i) => { if (l.toLowerCase().includes(q) && ms.length < 4) ms.push({ i: i + 1, l: l.trim().slice(0, 200) }); });
+      if (ms.length) hits.push({ f, d, ms, n: (d.text.toLowerCase().split(q).length - 1) });
+    }
+  }
+  hits.sort((a, b) => b.n - a.n);
+  const hl = (s) => esc(s).replace(new RegExp(esc(state.query).replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi"), (m) => `<mark>${m}</mark>`);
+  return `<h2 class="vh">“${esc(state.query)}”</h2><p class="sub">${hits.length} file${hits.length === 1 ? "" : "s"} matched.</p>` +
+    (hits.map((h) => `<div class="srch-hit" data-goto="${esc(h.f.id)}||${esc(h.d.name)}">
+      <div class="hd">${esc(h.f.label)} / ${esc(h.d.name)} <span style="color:var(--faint)">· ${h.n} hit${h.n === 1 ? "" : "s"}</span></div>
+      ${h.ms.map((m) => `<div class="ln"><span style="color:var(--faint);font-family:var(--mono)">${m.i}</span> ${hl(m.l)}</div>`).join("")}
+    </div>`).join("") || '<p class="sub">Nothing found.</p>');
+}
+
+/* ============================ chrome ============================ */
+
+function buildNav() {
+  const nav = $("#sidebar");
+  if (!state.docs.size) { nav.innerHTML = ""; return; }
+  const f = state.feature;
+  let html = "";
+  if (f) {
+    html += `<div class="sec">${esc(f.label)}</div>`;
+    for (const d of f.docs) {
+      const step = PIPELINE.findIndex((p) => p.re.test(d.name));
+      const t = d.name.match(/^task-(\d+)\.md$/);
+      const st = t ? (stripFrontmatter(d.text).fm?.status || "") : "";
+      html += `<div class="navitem ${state.view === "doc" && state.doc?.path === d.path ? "active" : ""}" data-doc="${esc(d.path)}">
+        <span class="step">${step >= 0 ? step + 1 : t ? "·" : ""}</span>
+        <span class="nm" title="${esc(d.path)}">${esc(d.name)}</span>
+        ${st ? `<span class="pill ${st === "done" ? "ok" : "warn"}">${esc(st[0])}</span>` : ""}
+      </div>`;
+    }
+  }
+  const others = state.features.filter((x) => x !== f);
+  if (others.length) {
+    html += `<div class="sec">Other</div>`;
+    for (const o of others) html += `<div class="navitem" data-feat="${esc(o.id)}"><span class="step"></span><span class="nm">${esc(o.label)}</span><span class="pill gray">${o.docs.length}</span></div>`;
+  }
+  nav.innerHTML = html;
+
+  const sel = $("#featSel");
+  sel.innerHTML = state.features.map((x) => `<option value="${esc(x.id)}" ${x === f ? "selected" : ""}>${esc(x.label)}</option>`).join("");
+  for (const el of [sel, $("#tabs"), $("#search"), $("#refreshBtn")]) el.classList.toggle("hide", !state.docs.size);
+  for (const b of document.querySelectorAll("#tabs button")) b.setAttribute("aria-selected", String(b.dataset.view === state.view));
+}
+
+function buildOutline(heads) {
+  const o = $("#outline");
+  if (!heads || heads.length < 2) { o.innerHTML = ""; return; }
+  o.innerHTML = `<div class="sec" style="padding-left:8px">On this page</div>` +
+    heads.map((h) => `<span class="olink h${h.lvl}" data-anchor="${esc(h.id)}">${esc(h.txt)}</span>`).join("");
+  o.querySelectorAll("[data-anchor]").forEach((el) => el.addEventListener("click", () => {
+    const t = document.getElementById(el.dataset.anchor);
+    if (t) t.scrollIntoView({ behavior: "smooth", block: "start" });
+  }));
+}
+
+function wireContent() {
+  const c = $("#content");
+  c.querySelectorAll("[data-doclink]").forEach((el) => el.addEventListener("click", (e) => {
+    e.preventDefault();
+    const d = findDoc(el.dataset.doclink) || state.features.flatMap((f) => f.docs).find((x) => x.name === el.dataset.doclink);
+    if (d) openDoc(d); else toast("Not loaded: " + el.dataset.doclink);
+  }));
+  c.querySelectorAll("[data-tag]").forEach((el) => el.addEventListener("click", () => {
+    state.tagFilter = el.dataset.tag; state.view = "scenarios"; render();
+  }));
+  c.querySelectorAll("[data-tagf]").forEach((el) => el.addEventListener("click", () => {
+    state.tagFilter = el.dataset.tagf || null; render();
+  }));
+  c.querySelectorAll("[data-goto]").forEach((el) => el.addEventListener("click", () => {
+    const [fid, name] = el.dataset.goto.split("||");
+    state.feature = state.features.find((x) => x.id === fid) || state.feature;
+    const d = state.feature.docs.find((x) => x.name === name);
+    $("#search").value = ""; state.query = "";
+    if (d) openDoc(d);
+  }));
+}
+
+function openDoc(d) {
+  state.feature = state.features.find((f) => f.docs.includes(d)) || state.feature;
+  state.doc = d; state.view = "doc"; state.query = ""; $("#search").value = "";
+  render();
+}
+
+/* ---------------------------- mermaid ---------------------------- */
+let mermaidMod = null, mermaidTried = false, mid = 0;
+
+// Diagram text is 1rem. Mermaid needs an absolute size, so resolve the rem here —
+// that keeps diagrams in step with the browser's own font-size setting.
+const remPx = () => parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+const mermaidConfig = (t) => ({
+  startOnLoad: false,
+  theme: t === "dark" ? "dark" : "default",
+  // Diagram source comes from user-story.md / spec.md, which agents write. "loose"
+  // would let a label carry a script tag or a javascript: click straight into the
+  // innerHTML below, running in the origin that can read the whole worktree.
+  // "strict" still renders the <br/> the agents are told to use for line breaks.
+  securityLevel: "strict",
+  // Both keys, same value: mermaid sizes node boxes from `fontSize` but paints the
+  // text from `themeVariables.fontSize`. Set one only and the labels overflow.
+  // No fontFamily override either — it measures in a detached node, where a CSS
+  // variable would not resolve and every box would come out the wrong width.
+  fontSize: remPx(),
+  themeVariables: { fontSize: remPx() + "px" },
+});
+
+async function getMermaid() {
+  if (mermaidMod || mermaidTried) return mermaidMod;
+  mermaidTried = true;
+  try {
+    const m = (await import("https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs")).default;
+    m.initialize(mermaidConfig(theme()));
+    mermaidMod = m;
+  } catch { mermaidMod = null; }
+  return mermaidMod;
+}
+async function renderMermaid(root) {
+  const nodes = [...root.querySelectorAll(".mermaid-block:not([data-done])")];
+  if (!nodes.length) return;
+  const m = await getMermaid();
+  for (const n of nodes) {
+    n.dataset.done = "1";
+    if (!m) { n.innerHTML = `<pre><code>${esc(n.dataset.src)}</code></pre><div class="warn">mermaid unavailable offline</div>`; continue; }
+    try {
+      n.innerHTML = (await m.render("mmd" + ++mid, n.dataset.src)).svg;
+      pinNaturalSize(n.querySelector("svg"));
+    }
+    catch (e) { n.innerHTML = `<pre><code>${esc(n.dataset.src)}</code></pre><div class="warn">${esc(e.message || "diagram failed")}</div>`; }
+  }
+}
+
+/* Mermaid emits width="100%" + a max-width style, so the browser scales the whole
+   drawing to the container — which would shrink its 1rem text along with it. An SVG
+   carrying only a viewBox has no intrinsic width, so CSS `width:auto` cannot fix
+   this; pin the width from the viewBox and let the block scroll instead. */
+function pinNaturalSize(svg) {
+  if (!svg) return;
+  const vb = (svg.getAttribute("viewBox") || "").split(/[\s,]+/).map(Number);
+  if (vb.length !== 4 || !(vb[2] > 0)) return;
+  svg.style.width = vb[2] + "px";
+  svg.style.maxWidth = "none";
+  svg.style.height = "auto";
+  svg.removeAttribute("height");
+}
+
+/* ---------------------------- loading ---------------------------- */
+
+function addDoc(path, text, mtime) {
+  const p = path.replace(/\\/g, "/");
+  const parts = p.split("/");
+  state.docs.set(p, { path: p, dir: parts.slice(0, -1).join("/") || ".", name: parts[parts.length - 1], text, mtime: mtime || 0 });
+}
+
+async function loadFiles(files) {
+  const md = [...files].filter((f) => /\.mde?$|\.md$|\.markdown$/i.test(f.name));
+  if (!md.length) return toast("No .md files in that folder");
+  state.docs.clear(); state.files = md;
+  for (const f of md) {
+    try { addDoc(f.webkitRelativePath || f.name, await f.text(), f.lastModified); } catch { /* skip unreadable */ }
+  }
+  state.handle = null;
+  finishLoad(`${state.docs.size} documents`);
+}
+
+async function loadHandle(dir, quiet) {
+  const found = [];
+  const walk = async (h, prefix, depth) => {
+    if (depth > 6) return;
+    for await (const [name, entry] of h.entries()) {
+      if (name.startsWith(".") || name === "node_modules" || name === "dist") continue;
+      const p = prefix ? prefix + "/" + name : name;
+      if (entry.kind === "file") { if (/\.(md|markdown)$/i.test(name)) found.push([p, entry]); }
+      else await walk(entry, p, depth + 1);
+    }
+  };
+  await walk(dir, dir.name, 0);
+  if (!found.length) return toast("No .md files under that folder");
+  state.docs.clear();
+  for (const [p, entry] of found) {
+    const f = await entry.getFile();
+    addDoc(p, await f.text(), f.lastModified);
+  }
+  state.handle = dir; state.files = null; state.http = false;
+  if (!quiet) finishLoad(`${state.docs.size} documents · live`);
+}
+
+function finishLoad(msg) {
+  buildFeatures();
+  if (!state.doc || !state.feature?.docs.includes(state.doc)) state.doc = state.feature?.docs[0] || null;
+  render();
+  toast(msg);
+}
+
+/* Served over http: read the server's directory index so nothing has to be picked.
+   Works with `python3 -m http.server`, `npx serve`, and anything else that lists
+   directories. Silently gives up otherwise and falls back to the folder picker. */
+async function listDir(url) {
+  const r = await fetch(url + "?_=" + Date.now(), { cache: "no-store" });
+  if (!r.ok) throw new Error("no index");
+  const doc = new DOMParser().parseFromString(await r.text(), "text/html");
+  return [...doc.querySelectorAll("a[href]")]
+    .map((a) => a.getAttribute("href"))
+    .filter((h) => h && !h.startsWith("/") && !h.startsWith("?") && !h.startsWith("..") && !h.startsWith("#"))
+    .map((h) => decodeURIComponent(h))
+    .filter((h) => h.endsWith("/") || /\.(md|markdown)$/i.test(h));
+}
+
+async function autoDiscover(quiet) {
+  if (!/^https?:$/.test(location.protocol)) return false;
+  const base = location.href.split("#")[0].split("?")[0].replace(/[^/]*$/, "");
+  const jobs = [];
+
+  try {
+    for (const dir of (await listDir(base + "features/")).filter((h) => h.endsWith("/"))) {
+      for (const f of await listDir(base + "features/" + dir)) {
+        if (!f.endsWith("/")) jobs.push(["docs/features/" + dir + f, base + "features/" + dir + f]);
+      }
+    }
+  } catch { /* no features/ next to this file */ }
+
+  for (const sub of ["c4/"]) {
+    try {
+      for (const f of await listDir(base + sub)) if (!f.endsWith("/")) jobs.push(["docs/" + sub + f, base + sub + f]);
+    } catch { /* optional */ }
+  }
+  for (const p of ["SPEC.md", "README.md", "AGENTS.md"]) jobs.push([p, base + "../" + p]);
+
+  const loaded = [];
+  await Promise.all(jobs.map(async ([path, url]) => {
+    try {
+      const r = await fetch(url + "?_=" + Date.now(), { cache: "no-store" });
+      if (r.ok) loaded.push([path, await r.text()]);
+    } catch { /* skip */ }
+  }));
+  if (loaded.length < 1) return false;
+
+  state.docs.clear(); state.files = null; state.handle = null; state.http = true;
+  for (const [p, t] of loaded) addDoc(p, t, 0);
+  if (!quiet) finishLoad(`${loaded.length} documents · served`);
+  return true;
+}
+
+async function refresh() {
+  if (state.http) {
+    const before = docFingerprint();
+    if (await autoDiscover(true)) { finishLoad(before === docFingerprint() ? "no changes" : "updated"); return; }
+  }
+  if (state.handle) {
+    try { await loadHandle(state.handle); return; } catch { toast("Lost folder access — re-open it"); return; }
+  }
+  if (state.files) {
+    try {
+      const snapshot = new Map();
+      for (const f of state.files) snapshot.set(f.webkitRelativePath || f.name, await f.text());
+      state.docs.clear();
+      for (const [p, t] of snapshot) addDoc(p, t, Date.now());
+      finishLoad("refreshed");
+    } catch {
+      toast("Files changed on disk — re-open the folder");
+    }
+  }
+}
+
+// Quiet re-read — possible with a directory handle or over http. Not possible from
+// file://, where re-reading a File whose bytes changed throws.
+async function pollOnce() {
+  const before = docFingerprint();
+  try {
+    if (state.http) { if (!(await autoDiscover(true))) return; }
+    else if (state.handle) { await loadHandle(state.handle, true); }
+    else return;
+  } catch { clearInterval(state.timer); return; }
+  if (before === docFingerprint()) return;
+  // An agent writing every few seconds must not keep yanking the reader to the top.
+  const keep = $("#content").scrollTop;
+  finishLoad("updated");
+  $("#content").scrollTop = keep;
+}
+
+function startPolling() {
+  clearInterval(state.timer);
+  if (!state.handle && !state.http) return;
+  state.timer = setInterval(() => { if (!document.hidden) pollOnce(); }, 5000);
+}
+
+// Polling pauses on a hidden tab, so catch up the moment it comes back rather than
+// showing whatever was true when the reader looked away.
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && (state.http || state.handle)) pollOnce();
+});
+
+/* ---------------------------- events ---------------------------- */
+
+const theme = () => document.documentElement.dataset.theme
+  || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+
+function setTheme(t) {
+  document.documentElement.dataset.theme = t;
+  try { localStorage.setItem("sao-viewer-theme", t); } catch {}
+  if (mermaidMod) {
+    mermaidMod.initialize(mermaidConfig(t));
+    document.querySelectorAll(".mermaid-block[data-done]").forEach((n) => { n.removeAttribute("data-done"); n.innerHTML = "re-rendering…"; });
+    renderMermaid($("#content"));
+  }
+}
+try { const t = localStorage.getItem("sao-viewer-theme"); if (t) document.documentElement.dataset.theme = t; } catch {}
+
+let toastT;
+function toast(msg) {
+  const el = $("#toast");
+  el.textContent = msg; el.classList.add("on");
+  clearTimeout(toastT); toastT = setTimeout(() => el.classList.remove("on"), 1900);
+}
+
+$("#themeBtn").addEventListener("click", () => setTheme(theme() === "dark" ? "light" : "dark"));
+$("#openBtn").addEventListener("click", () => pick());
+$("#refreshBtn").addEventListener("click", refresh);
+$("#fileInput").addEventListener("change", (e) => loadFiles(e.target.files));
+$("#featSel").addEventListener("change", (e) => {
+  state.feature = state.features.find((f) => f.id === e.target.value);
+  state.doc = state.feature?.docs[0] || null; state.tagFilter = null; render();
+});
+$("#tabs").addEventListener("click", (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  state.view = b.dataset.view; state.query = ""; $("#search").value = ""; render();
+});
+$("#search").addEventListener("input", (e) => { state.query = e.target.value.trim(); render(); });
+$("#sidebar").addEventListener("click", (e) => {
+  const doc = e.target.closest("[data-doc]");
+  if (doc) { const d = state.docs.get(doc.dataset.doc); if (d) openDoc(d); return; }
+  const feat = e.target.closest("[data-feat]");
+  if (feat) {
+    state.feature = state.features.find((f) => f.id === feat.dataset.feat);
+    state.doc = state.feature?.docs[0] || null; state.view = "overview"; state.tagFilter = null; render();
+  }
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "/" && document.activeElement.tagName !== "INPUT" && document.activeElement.tagName !== "TEXTAREA") {
+    e.preventDefault(); $("#search").focus();
+  }
+  if (e.key === "Escape") { $("#search").value = ""; state.query = ""; render(); }
+});
+
+async function pick(live) {
+  if (live && window.showDirectoryPicker) {
+    try { const h = await window.showDirectoryPicker({ mode: "read" }); await loadHandle(h); startPolling(); }
+    catch (err) { if (err && err.name !== "AbortError") toast(err.message || "could not open folder"); }
+    return;
+  }
+  $("#fileInput").click();
+}
+
+function wireEmpty() {
+  const drop = $("#drop"); if (!drop) return;
+  $("#openBtn2").addEventListener("click", () => pick());
+  const live = $("#liveBtn"); if (live) live.addEventListener("click", () => pick(true));
+  const pasteEl = $("#paste");
+  pasteEl.addEventListener("keydown", (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && pasteEl.value.trim()) {
+      state.docs.clear();
+      addDoc("pasted/spec.md", pasteEl.value, Date.now());
+      finishLoad("pasted");
+      state.view = "doc"; render();
+    }
+  });
+  ["dragenter", "dragover"].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add("over"); }));
+  ["dragleave", "drop"].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove("over"); }));
+}
+
+// Drag-and-drop anywhere, including folders (webkitGetAsEntry works on file://).
+document.addEventListener("dragover", (e) => e.preventDefault());
+document.addEventListener("drop", async (e) => {
+  e.preventDefault();
+  const items = [...(e.dataTransfer?.items || [])];
+  const entries = items.map((i) => (i.webkitGetAsEntry ? i.webkitGetAsEntry() : null)).filter(Boolean);
+  if (!entries.length) return;
+  const found = [];
+  const readDir = (dirEntry, prefix) => new Promise((res) => {
+    const reader = dirEntry.createReader();
+    const all = [];
+    const step = () => reader.readEntries(async (batch) => {
+      if (!batch.length) { await Promise.all(all); return res(); }
+      for (const en of batch) all.push(walk(en, prefix));
+      step();
+    }, () => res());
+    step();
+  });
+  const walk = async (entry, prefix) => {
+    const p = prefix ? prefix + "/" + entry.name : entry.name;
+    if (entry.name.startsWith(".") || entry.name === "node_modules") return;
+    if (entry.isFile) {
+      if (!/\.(md|markdown)$/i.test(entry.name)) return;
+      const file = await new Promise((r) => entry.file(r, () => r(null)));
+      if (file) found.push([p, await file.text(), file.lastModified]);
+    } else if (entry.isDirectory) await readDir(entry, p);
+  };
+  await Promise.all(entries.map((en) => walk(en, "")));
+  if (!found.length) return toast("No .md files in what you dropped");
+  state.docs.clear(); state.files = null; state.handle = null;
+  for (const [p, t, m] of found) addDoc(p, t, m);
+  finishLoad(`${found.length} documents`);
+});
+
+render();
+autoDiscover().then((ok) => { if (ok) startPolling(); }).catch(() => {});
+</script>
+</body>
+</html>

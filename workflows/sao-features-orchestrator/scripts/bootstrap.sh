@@ -40,3 +40,7 @@ mkdir -p "docs/features/$feature" "tmp/$feature"
 # it lands only in sao's own finalize `git add -A` sweep.
 git add "docs/features/$feature/story.md"
 git commit -m "chore($feature): start — seed feature docs"
+
+# Bring up the docs viewer last, so its URL is the final thing on screen before
+# story_partner asks its first question. Never fails the node — see the script.
+"$(dirname "$0")/docs-server.sh" start "$feature"

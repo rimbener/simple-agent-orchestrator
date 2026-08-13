@@ -10,6 +10,14 @@ set -euo pipefail
 feature="${1:-}"
 require_feature "$feature"
 
+script_dir="$(cd "$(dirname "$0")" && pwd)"
+
+# Stop the docs viewer on EVERY exit, not just the happy path — the guards below
+# die(), and a halted run must not leave a loopback server rooted in a worktree
+# that `sao clean` will delete. Restart it any time with:
+#   workflows/sao-features-orchestrator/scripts/docs-server.sh start <feature>
+trap '"$script_dir/docs-server.sh" stop "$feature" >/dev/null 2>&1 || true' EXIT
+
 # The review trail is the retro's only evidence — a missing or 0-byte artifact
 # here means an agent skipped or emptied a file it was told to write and keep.
 # review-slice-*.md is one file per slice (never a single accumulating file), so

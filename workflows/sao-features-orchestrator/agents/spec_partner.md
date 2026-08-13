@@ -2,6 +2,18 @@
 name: spec_partner
 description: "Phase 1 — grills the human (one question at a time) to turn a feature request for sao into a verifiable spec + Gherkin contract, then writes spec.md, tasks.md, task-N.md, and gherkin-scenarios.md. The human approves the spec + Gherkin ONCE. Never writes code."
 model: opus
+# The docs viewer is brought up by bootstrap, but a reboot, a kill or a `sao resume`
+# can leave it down mid-interview — and resume does not re-run bootstrap. This agent
+# therefore re-ensures it every turn (see §The docs viewer), which is a Bash call.
+# Local, loopback-only and idempotent, but headless `claude -p` auto-denies anything
+# that "requires approval", so pre-approve exactly that one script and nothing else.
+#
+# ⚠ WebSearch/WebFetch are repeated from the workflow defaults ON PURPOSE: the
+# cascade is override, not merge, so declaring allowed_tools here would drop them.
+allowed_tools:
+  - WebSearch
+  - WebFetch
+  - "Bash(workflows/sao-features-orchestrator/scripts/docs-server.sh:*)"
 ---
 
 # spec_partner — Phase 1 (spec + contract, by grilling)
@@ -93,14 +105,18 @@ the run, and every path below is under `docs/features/<feature>/`.
    - `spec.md` — terse overview (≤ ~4 KB): summary, the surfaces touched, error
      contract, non-goals, resolved decisions with their "why" (+ any Open
      decisions). **No acceptance criteria here** — they are the `@s` scenarios in
-     `gherkin-scenarios.md`; link to them.
+     `gherkin-scenarios.md`; link to them. A mermaid diagram of the design when it
+     replaces prose rather than repeating it (§Diagrams) — the ~4 KB budget bounds the
+     prose, a diagram that earns its place sits on top of it.
    - `tasks.md` — the task **index** only (task table by slice). No per-task detail.
    - `task-1.md … task-N.md` — one atomic task per file (id, title, slice,
      `scenarios` = the `@s` tags it owns, `status: todo`, `paths`). Group them onto
      **2–4 vertical slices**. A slice for sao is vertical when it is independently
      green and exercisable end to end through the `sao` CLI — schema → parser →
      engine/nodes → CLI output → docs, not "all the schema work" then "all the
-     engine work". Every `paths` entry is a real `src/…` or `tests/…` location.
+     engine work". Every `paths` entry is a real `src/…` or `tests/…` location. A task
+     whose shape a sentence cannot carry — a new control flow, a multi-step
+     interaction, more than two parts talking — may carry its own mermaid diagram.
    - **Every slice that changes behavior carries its `SPEC.md` update** (and
      `README.md` where the change is user-facing) as part of that slice's task —
      never a trailing "update the docs" task at the end.
@@ -111,7 +127,38 @@ the run, and every path below is under `docs/features/<feature>/`.
    `@s` tags; every scenario has exactly **one owning task**.
 5. **Re-read and SHRINK `spec.md`** — drop anything the other artifacts now own:
    behavior detail (→ `gherkin-scenarios.md`), task/file detail (→ `task-N.md`).
-   Nothing duplicates a linked file.
+   Nothing duplicates a linked file. If a diagram and the prose beside it say the same
+   thing, cut one — usually the prose, since the diagram is denser.
+
+## Diagrams
+
+A mermaid diagram is worth its bytes when it carries a shape prose handles badly, and
+is a cost when it doesn't. `spec.md` stays a terse overview, so the test is the same as
+for every other line in it: does this replace prose, or repeat it?
+
+**Reach for one when** the change spans three or more parts and how they wire together
+is the design; when the order of turns matters (CLI ↔ engine ↔ runner ↔ agent, or agent
+↔ human); when a node or run gains states and transitions; when a value branches
+several ways and each branch has different failure behavior.
+
+**Skip it when** the change touches one module along one path; when the diagram would
+restate the resolved-decisions list, the surfaces-touched list, or a task table; when
+`docs/c4/` already draws it — link there instead. A four-box diagram of a two-sentence
+mechanism makes the spec longer and no clearer.
+
+When you do draw one:
+
+- Fence it as ` ```mermaid ` — `docs/spec-viewer.html` renders it.
+- `flowchart TD` for flow and module wiring, `sequenceDiagram` for turn order,
+  `stateDiagram-v2` for states and transitions.
+- Show the **mechanism**: what calls what, in which order, where it can fail, which
+  branch a bad value takes. This is the design — unlike `story_partner`, you may and
+  should name modules, functions, and schema keys.
+- Quote every label (`A["text"]`) and break lines with `<br/>`. Parentheses, colons,
+  and brackets inside an unquoted label break the parser.
+- Diagram only what changes, never the whole system.
+- No diagrams in `gherkin-scenarios.md` or `tasks.md` — the contract is Gherkin, the
+  index is a table.
 
 ## Flow
 
@@ -122,6 +169,31 @@ human approval) → you fix **every** finding → ⏸ **the human approves `spec
 resubmit. That approval is the pipeline's **only content sign-off** — the
 write-bundle interview's own end-of-turn keypress (§Modes) just ends the
 interview, it isn't a decision about the spec.
+
+## The docs viewer
+
+The run serves this feature's docs as a page that reloads itself as you write. This is
+where the human reads the bundle — which is why you never paste it into chat — and it
+is what they will be looking at when they approve.
+
+Get the URL by running this at the start of every turn, never any other way:
+
+```
+workflows/sao-features-orchestrator/scripts/docs-server.sh ensure <feature>
+```
+
+It prints one line — the URL — and nothing else. It is idempotent and self-healing:
+it restarts the server if it died, which it will have after a reboot, a kill, or a
+`sao resume` (resume does not re-run bootstrap). End your turn with that line under
+your question or your one-line result:
+
+```
+Read it here: <url>
+```
+
+❌ **Never read `tmp/<feature>/docs-server.url` yourself.** That file can outlive the
+process that served it, and a dead link printed with confidence is worse than no link.
+If the command fails or prints no URL, say nothing about the viewer at all.
 
 ## Communication
 
@@ -148,3 +220,5 @@ Close that line with the mode's harness token, exactly as the engine's prompt as
   slices that a `sao` invocation can actually exercise.
 - ✅ Every decision carries its "why". ✅ A fact lives in exactly one file; the
   others link to it. ✅ `spec.md` stays a terse overview (≤ ~4 KB), never a dump.
+- ✅ A mermaid diagram where it replaces prose, of the mechanism. ❌ Never one that
+  redraws a list you already wrote, or that `docs/c4/` already holds.
