@@ -1102,10 +1102,18 @@ class Engine {
 
   /** The runner whose declaration governs this iteration's withholding — the one carrying instructedOutput. */
   private instructedRunnerGranularity(node: LoopNode): Runner["finalOutputStreaming"] {
+    // Stryker disable next-line OptionalChaining: preflightAiConfigs always sets node.id's config for a
+    // prompt-form loop, so .get(node.id) is never undefined here.
     if (node.loop.prompt !== undefined) return this.aiConfigs.get(node.id)?.runner.finalOutputStreaming;
     const steps = node.loop.steps!;
+    // Stryker disable next-line UnaryOperator: equivalent — the -1 seed only survives the reduce for
+    // all-bash steps, where lastAiIndex is never compared (until: requires an AI step, enforced at parse)
     const lastAiIndex = steps.reduce((last, step, index) => (step.kind === "ai" ? index : last), -1);
+    // Stryker disable next-line ConditionalExpression: equivalent — until: requires an AI step (enforced
+    // at parse), so lastAiIndex is never -1 for a reachable call; forcing this branch off changes nothing.
     if (lastAiIndex === -1) return undefined;
+    // Stryker disable next-line OptionalChaining: lastAiIndex always names a real ai-kind step (see above),
+    // and preflightAiConfigs sets a config for every ai-kind step, so .get(...) is never undefined here.
     return this.aiConfigs.get(`${node.id}#${lastAiIndex}`)?.runner.finalOutputStreaming;
   }
 
@@ -1325,8 +1333,16 @@ class Engine {
 function dropLastOccurrence(held: string[], finalOutput: string): string[] {
   const trimEnd = (line: string) => line.replace(/[ \t]+$/, "");
   const target = finalOutput.split("\n").map(trimEnd);
+  // Stryker disable next-line ConditionalExpression,ArrowFunction,StringLiteral: equivalent — a blank
+  // line never prints (echoLine filters it), so whether this all-blank target's own shortcut fires or
+  // the full search below runs instead, dropLastOccurrence returns the same *observable* result: nothing
+  // visibly printed differs, since the only positions that could match an all-blank target are themselves
+  // blank. (target.some(...) is NOT equivalent — a mixed target with only one blank line must still search.)
   if (target.every((line) => line === "")) return held;
   const normalized = held.map(trimEnd);
+  // Stryker disable next-line ArithmeticOperator: equivalent — a larger starting `start` only adds
+  // out-of-range checks (normalized[start+offset] is undefined, never equal to a real target line)
+  // that the loop harmlessly falls through; it still reaches every in-range start on the way down.
   for (let start = normalized.length - target.length; start >= 0; start--) {
     if (target.every((line, offset) => normalized[start + offset] === line)) {
       return [...held.slice(0, start), ...held.slice(start + target.length)];

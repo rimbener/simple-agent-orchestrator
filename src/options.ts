@@ -32,9 +32,11 @@ export function parseAgentOptions(text: string): AgentOption[] | undefined {
     // Stryker disable next-line StringLiteral: equivalent — the single capturing group in OPTIONS_BLOCK
     // always participates in a match, so lastMatch[1] is never nullish; the fallback never runs.
     parsed = JSON.parse(lastMatch[1] ?? "");
-  } catch {
-    // Stryker disable next-line BlockStatement: equivalent — parsed stays undefined either way, and
-    // safeParse(undefined) fails the same schema check below, returning undefined regardless.
+  }
+  // Stryker disable next-line BlockStatement: equivalent — parsed stays undefined either way (the
+  // throw happens mid-assignment, before parsed is set), and safeParse(undefined) below fails the
+  // same schema check regardless, returning undefined either way.
+  catch {
     return undefined;
   }
 

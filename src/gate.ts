@@ -194,6 +194,12 @@ async function runListPrompt(req: {
   block?: string;
   blockTitle?: string;
 }): Promise<PromptAnswer> {
+  // Stryker disable next-line ObjectLiteral: equivalent — @clack/prompts' note() defaults its own
+  // `output` option to the live `process.stdout` (`s?.output ?? process.stdout`, read at call time),
+  // the exact same value this passes explicitly.
+  // Stryker disable next-line ObjectLiteral: equivalent — @clack/prompts' note() defaults its own
+  // `output` option to the live `process.stdout` (`s?.output ?? process.stdout`, read at call time),
+  // the exact same value this passes explicitly.
   if (req.block !== undefined) note(req.block, req.blockTitle, { output: process.stdout });
   const picked = await clackSelect<string>({
     message: req.message,

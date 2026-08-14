@@ -295,7 +295,9 @@ describe("promptChoice — interactive terminal", () => {
 
   test("@s-permission-prompt-unchanged: a caller that passes no block draws no box at all", async () => {
     const { written } = makeInteractive();
-    const reply = promptChoice({ message: "gate: ", choices: CHOICES });
+    // blockTitle is set with no block: if the box drew anyway, this exact title would
+    // appear — omitting block must skip note() entirely, not just make its args nullish.
+    const reply = promptChoice({ message: "gate: ", choices: CHOICES, blockTitle: "[work#1]" });
     await tick();
     stdin.write(ENTER);
     await reply;

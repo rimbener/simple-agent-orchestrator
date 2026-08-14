@@ -247,8 +247,10 @@ export const codexRunner: Runner = {
           // Stryker disable next-line ConditionalExpression: unreachable under bun — non-ENOENT spawn failures throw synchronously from spawn() instead of emitting an async error event
           if (err.code === "ENOENT") {
             reject(new SaoError("codex CLI not found on PATH", INSTALL_HINT));
-          } /* Stryker disable next-line all: unreachable under bun — non-ENOENT spawn failures (EACCES, ENOEXEC) throw synchronously from spawn() instead of emitting an async error event */ else {
-            // Stryker disable next-line all: unreachable under bun, as above
+          }
+          // Stryker disable next-line all: unreachable under bun, as above — non-ENOENT spawn failures
+          // (EACCES, ENOEXEC) throw synchronously from spawn() instead of emitting an async error event
+          else {
             reject(new SaoError(`failed to spawn codex: ${err.message}`));
           }
         });

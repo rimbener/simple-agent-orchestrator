@@ -27,6 +27,8 @@ export function strip(text: string): { text: string; signals: string[] } {
 const CODE_PLACEHOLDER = /\0(\d+)\0/g;
 
 function renderInline(text: string, colors: Colors): string {
+  // Stryker disable next-line ArrayDeclaration: equivalent — every placeholder index is read back via
+  // codeSpans.length - 1 at the same push, so a seeded extra entry is never referenced either way.
   const codeSpans: string[] = [];
   let out = text.replace(/`([^`]+)`/g, (_match, code: string) => {
     codeSpans.push(code);
