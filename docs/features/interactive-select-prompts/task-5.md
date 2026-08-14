@@ -3,7 +3,7 @@ id: 5
 title: Interactive loops present the agent's options
 slice: C — agent-declared options
 scenarios: [@s-loop-instruction-appended, @s-loop-options-listed, @s-loop-option-feeds-label, @s-loop-end-entry-only-when-signaled, @s-loop-feedback-entry, @s-loop-feedback-keeps-verdict-words, @s-loop-reject-entry, @s-loop-no-options-fallback, @s-loop-malformed-fallback, @s-old-renderings-gone]
-status: todo
+status: done
 paths: [src/engine.ts, src/options.ts, tests/engine-m2.test.ts, tests/cli.test.ts, SPEC.md, README.md]
 ---
 

@@ -4,8 +4,9 @@ import { join, relative, resolve } from "node:path";
 import { finished } from "node:stream/promises";
 import pc from "picocolors";
 import { GateRejectedError, SaoError } from "./errors";
-import { type PromptUser, parseGateReply, parseLoopReply, promptOnTerminal } from "./gate";
+import { type Choice, type PromptChoices, parseGateReply, parseLoopReply, promptChoice as defaultPromptChoice } from "./gate";
 import { evaluateWhenBash, executeAiNode, executeBashScript, withRetries } from "./nodes";
+import { AGENT_OPTIONS_INSTRUCTION, type AgentOption, parseAgentOptions } from "./options";
 import { orderNodes } from "./parser";
 import { onShutdown } from "./procs";
 import { getRunner, type Runner, type RunnerNeeds, type RunnerResolver } from "./runners/types";
@@ -66,8 +67,8 @@ export interface RunWorkflowOptions {
   autoOpenPr?: boolean;
   runnerOverride?: string;
   resolveRunner?: RunnerResolver;
-  /** Terminal prompt for gates and interactive loops (injectable for tests). */
-  promptUser?: PromptUser;
+  /** List-prompt seam gates, interactive loops and permission requests render onto (injectable for tests). */
+  promptChoice?: PromptChoices;
   print?: (line: string) => void;
   /** Cut a git worktree + branch for this run (SPEC step 4); omit to run in place at cwd. */
   worktree?: WorktreeRunOptions;
@@ -90,7 +91,7 @@ export function sentinelInstruction(signal: string): string {
 
 export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunState> {
   const print = opts.print ?? ((line: string) => console.log(line));
-  const promptUser = opts.promptUser ?? promptOnTerminal;
+  const promptChoice = opts.promptChoice ?? defaultPromptChoice;
   const resolveRunner = opts.resolveRunner ?? getRunner;
   const runRoot = opts.runRoot ?? opts.cwd;
   // Execution parameters persist in state.json and win on resume — the resume CLI
@@ -301,7 +302,18 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunState> {
     releaseRunLock();
   });
 
-  const engine = new Engine(state, paths, runId, aiConfigs, mcpConfigPath, promptUser, print, execCwd, env, ctx);
+  const engine = new Engine(
+    state,
+    paths,
+    runId,
+    aiConfigs,
+    mcpConfigPath,
+    promptChoice,
+    print,
+    execCwd,
+    env,
+    ctx,
+  );
   try {
     await engine.run(ordered, concurrency);
   } catch (err) {
@@ -770,7 +782,7 @@ class Engine {
     private readonly runId: string,
     private readonly aiConfigs: Map<string, ResolvedAiConfig>,
     private readonly mcpConfigPath: string | undefined,
-    private readonly promptUser: PromptUser,
+    private readonly promptChoice: PromptChoices,
     private readonly print: (line: string) => void,
     private readonly execCwd: string,
     private readonly env: Record<string, string>,
@@ -919,7 +931,7 @@ class Engine {
         return executeAiNode(
           interpolate(node.prompt, this.ctx),
           { ...config, mcpConfigPath: this.mcpConfigPath, timeoutSec: node.timeout },
-          { cwd: this.execCwd, env: this.env, log: nodeLog.log, nodeId: node.id, promptUser: this.promptUser },
+          { cwd: this.execCwd, env: this.env, log: nodeLog.log, nodeId: node.id, promptChoice: this.promptChoice },
         );
       }
       case "gate":
@@ -931,9 +943,26 @@ class Engine {
 
   private async executeGate(node: GateNode): Promise<NodeResult> {
     const message = interpolate(node.gate.message, this.ctx);
-    const question = `\n${message}\n[${node.id}] [a]pprove / [r]eject / or type feedback: `;
+    const question = `\n${message}\n[${node.id}] `;
+    const choices: Choice[] = [
+      { id: "sao:approve", label: "Approve" },
+      { id: "sao:reject", label: "Reject" },
+      { id: "sao:feedback", label: "Give feedback", collectsText: true },
+    ];
     for (;;) {
-      const reply = parseGateReply(await this.promptUser(question));
+      const answer = await this.promptChoice({ message: question, choices });
+      if (answer.kind === "choice") {
+        if (answer.id === "sao:approve") return { output: "approved" };
+        // Stryker disable next-line StringLiteral: the wrap in runOne names the node and drops this inner message by design
+        throw new GateRejectedError("rejected by the human at the gate");
+      }
+      if (answer.from === "sao:feedback") {
+        if (answer.text.trim() === "") continue; // empty answer re-asks the same gate
+        return { output: answer.text };
+      }
+      // piped path only (no `from`): the human never picked from a list, so the
+      // vocabulary the deleted letter menu answered stays in force here
+      const reply = parseGateReply(answer.text);
       if (reply.kind === "approve") return { output: "approved" };
       // Stryker disable next-line StringLiteral: the wrap in runOne names the node and drops this inner message by design
       if (reply.kind === "reject") throw new GateRejectedError("rejected by the human at the gate");
@@ -971,11 +1000,14 @@ class Engine {
       // sentinel instruction this iteration — never bash output, never a previous
       // iteration's text (a stale token must not satisfy a bare approve).
       let instructedOutput: string | undefined;
+      let agentOptions: AgentOption[] | undefined;
       try {
         if (body.prompt !== undefined) {
           const config = this.aiConfigs.get(node.id)!;
           const prompt =
-            interpolate(body.prompt, loopCtx) + (body.until !== undefined ? sentinelInstruction(body.until) : "");
+            interpolate(body.prompt, loopCtx) +
+            (body.until !== undefined ? sentinelInstruction(body.until) : "") +
+            (body.interactive ? AGENT_OPTIONS_INSTRUCTION : "");
           const result = await executeAiNode(
             prompt,
             {
@@ -984,7 +1016,7 @@ class Engine {
               resumeSessionId: body.fresh_context ? undefined : sessionId,
               timeoutSec: node.timeout,
             },
-            { cwd: this.execCwd, env: this.env, log: iterLog.log, nodeId: node.id, promptUser: this.promptUser },
+            { cwd: this.execCwd, env: this.env, log: iterLog.log, nodeId: node.id, promptChoice: this.promptChoice },
           );
           sessionId = result.sessionId ?? sessionId;
           if (sessionId !== undefined) nodeState.sessionId = sessionId; // resume fidelity (M3)
@@ -994,6 +1026,14 @@ class Engine {
           const stepsResult = await this.executeSteps(node, loopCtx, iterLog);
           output = stepsResult.output;
           instructedOutput = stepsResult.instructedOutput;
+        }
+        if (body.interactive) {
+          agentOptions = parseAgentOptions(instructedOutput ?? "");
+          // A block that fails to parse is still a declaration attempt — worth a warning.
+          // Absence of any <options> tag is the ordinary no-options case: silent.
+          if (agentOptions === undefined && (instructedOutput ?? "").includes("<options>")) {
+            iterLog.log(`⚠ ${node.id}: could not read the agent's declared options — showing the default choices\n`);
+          }
         }
         if (body.until_bash !== undefined) {
           untilBashPassed = await evaluateWhenBash(interpolate(body.until_bash, loopCtx), {
@@ -1013,7 +1053,7 @@ class Engine {
       const signaled = body.until !== undefined && (instructedOutput?.includes(sentinelToken(body.until)) ?? false);
       signaledOnFinalIteration = signaled;
       if (body.interactive) {
-        const verdict = await this.askLoopGate(node, iteration, signaled, body.until!);
+        const verdict = await this.askLoopGate(node, iteration, signaled, body.until!, agentOptions);
         if (verdict.kind === "approve") return { output, sessionId };
         feedback = verdict.text;
       } else if (signaled) {
@@ -1072,11 +1112,14 @@ class Engine {
       } else {
         const config = this.aiConfigs.get(`${node.id}#${index}`)!;
         const instructed = node.loop.until !== undefined && index === lastAiIndex;
-        const prompt = interpolate(step.prompt, loopCtx) + (instructed ? sentinelInstruction(node.loop.until!) : "");
+        const prompt =
+          interpolate(step.prompt, loopCtx) +
+          (instructed ? sentinelInstruction(node.loop.until!) : "") +
+          (instructed && node.loop.interactive ? AGENT_OPTIONS_INSTRUCTION : "");
         const result = await executeAiNode(
           prompt,
           { ...config, mcpConfigPath: this.mcpConfigPath, timeoutSec: node.timeout },
-          { cwd: this.execCwd, env: this.env, log: iterLog.log, nodeId: node.id, promptUser: this.promptUser },
+          { cwd: this.execCwd, env: this.env, log: iterLog.log, nodeId: node.id, promptChoice: this.promptChoice },
         );
         output = result.output;
         lastAiOutput = result.output;
@@ -1093,13 +1136,35 @@ class Engine {
     iteration: number,
     signaled: boolean,
     signal: string,
+    agentOptions: AgentOption[] | undefined,
   ): Promise<{ kind: "approve" } | { kind: "feedback"; text: string }> {
     const status = signaled ? `agent signaled ${signal}` : "no signal yet";
-    const question = `\n[${node.id}] iteration ${iteration} — ${status}\n[a]pprove / [r]eject / or type feedback: `;
+    const message = `\n[${node.id}] iteration ${iteration} — ${status}`;
+    const options = agentOptions ?? [];
+    const choices: Choice[] = [
+      ...options.map((option) => ({ id: option.id, label: option.label, description: option.description })),
+      // "End the loop" can only be honored on a signaled iteration — offering it
+      // otherwise would be blind vocabulary the human could only ever be refused.
+      ...(signaled ? [{ id: "sao:end-loop", label: "End the loop" }] : []),
+      { id: "sao:feedback", label: "Write feedback instead", collectsText: true },
+      { id: "sao:reject", label: "Reject and halt the run" },
+    ];
+    const labelById = new Map(options.map((option) => [option.id, option.label]));
     for (;;) {
-      // Loop replies use the strict parser: an interview agent's "should X be
-      // public?" answered with a natural "no" is feedback, not a run rejection.
-      const reply = parseLoopReply(await this.promptUser(question));
+      const answer = await this.promptChoice({ message, choices });
+      if (answer.kind === "choice") {
+        if (answer.id === "sao:end-loop") return { kind: "approve" };
+        // Stryker disable next-line StringLiteral: the wrap in runOne names the node and drops this inner message by design
+        if (answer.id === "sao:reject") throw new GateRejectedError("rejected by the human at the interactive loop");
+        return { kind: "feedback", text: labelById.get(answer.id)! };
+      }
+      if (answer.from === "sao:feedback") {
+        if (answer.text.trim() === "") continue; // empty answer re-asks the same iteration
+        return { kind: "feedback", text: answer.text };
+      }
+      // piped path only (no `from`): the human never picked from a list, so the
+      // vocabulary the deleted letter menu answered stays in force here
+      const reply = parseLoopReply(answer.text, options);
       if (reply.kind === "approve") {
         if (signaled) return { kind: "approve" };
         this.print(
@@ -1109,7 +1174,6 @@ class Engine {
       }
       // Stryker disable next-line StringLiteral: the wrap in runOne names the node and drops this inner message by design
       if (reply.kind === "reject") throw new GateRejectedError("rejected by the human at the interactive loop");
-      // Stryker disable next-line ObjectLiteral,StringLiteral: the caller only distinguishes kind === "approve"; any other kind value routes to the feedback branch identically
       if (reply.kind === "feedback") return { kind: "feedback", text: reply.text };
       // empty reply → ask again
     }

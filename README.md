@@ -67,7 +67,7 @@ data (`.json`):
 $ npm install -g simple-agent-orchestrator
 ```
 
-Requires Node 20+ (or Bun), git, and at least one agent CLI:
+Requires Node 20.12+ (or Bun), git, and at least one agent CLI:
 [Claude Code](https://claude.com/claude-code) (`claude`),
 [Codex CLI](https://github.com/openai/codex) (`codex`), and/or
 [opencode](https://opencode.ai) (`opencode`, via the Agent Client Protocol).
@@ -145,22 +145,40 @@ nodes:
     retries: 1
     timeout: 600           # seconds
 
-  - id: implement          # loop node
+  - id: implement          # loop node — the agent may end a reply with an <options> block (see below)
     depends_on: [analyze]
     loop:
       prompt: "Continue the work. Iteration {{loop.iteration}}. {{loop.feedback}}"
       until: ALL_TASKS_COMPLETE     # sentinel the agent self-reports
       # until_bash: "bun test"      # …or a shell probe: exit 0 ends the loop
-      # interactive: true           # …or a human approves each iteration
+      # interactive: true           # …or a human approves each iteration from a list, agent options first
       max_iterations: 10
       fresh_context: false          # keep one agent session across iterations (claude, or an ACP agent whose handshake advertises it — codex never)
 
-  - id: ship               # gate node — pauses for y/n in the terminal
+  - id: ship               # gate node — pauses for an approve/reject/feedback list in the terminal
     depends_on: [build, implement]
     when_bash: "git diff --quiet || true"   # any node may be conditional
     gate:
       message: "Build green. Merge?"
 ```
+
+An interactive loop's agent may end its response with a last line of the form
+`<options>[{"id": "sqlite", "label": "Use SQLite", "description": "no server to
+run"}]</options>` (ids unique and non-empty, not prefixed `sao:`; `description`
+optional). The pause then offers those options first, in the order declared,
+ahead of **End the loop** (only once the agent has signaled `until:`), **Write
+feedback instead**, and **Reject and halt the run**. Choosing a declared option
+feeds its `label` — not its `id` — to the next iteration's `{{loop.feedback}}`.
+This works the same for any runner, since the declaration travels in the agent's
+own output; a block that can't be read is ignored with a warning, and the pause
+still runs with the run's own entries.
+
+A piped reply (no interactive terminal) renders no list at all: one line picks a
+declared option by typing its exact `id`, which feeds that option's `label` to
+`{{loop.feedback}}` the same as picking it from the list would. A verdict word
+(`a`/`approve`/`approved`, `r`/`reject`/`rejected`) always wins over an identical
+option id — a declared option can never block the loop's exit path. Anything else
+is feedback verbatim.
 
 Templating: `{{task}}` (the freeform CLI text), `{{<input>}}`, and
 `{{nodes.<id>.output}}` everywhere; `{{loop.iteration}}` / `{{loop.feedback}}`
@@ -205,16 +223,11 @@ file.
   `fresh_context: false` support depends on the agent's own `initialize`
   handshake advertising session loading, checked at `validate`/`run` time —
   not a static per-runner declaration like claude/codex. When the agent asks for
-  permission mid-turn (`session/request_permission`), sao pauses the run and
-  prints the node id, what the agent wants to do, and the agent's own options as
-  a numbered menu — reply with the number:
-
-  ```
-  [ask] permission requested: Write file src/x.ts
-    1. Allow
-    2. Deny
-  >
-  ```
+  permission mid-turn (`session/request_permission`), sao pauses the run with the
+  same navigable list a gate uses — the node id, what the agent wants to do, then
+  one entry per option the agent sent, in the order sent, nothing else. A piped
+  reply may name an option by a 1-based index or by its own identifier, typed
+  exactly; anything else re-asks.
 
   The chosen option is sent back to the agent verbatim; sao keeps no permission
   memory of its own ("allow for this session" is remembered agent-side). This

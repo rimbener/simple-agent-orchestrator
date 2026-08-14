@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { GateRejectedError, SaoError, truncateDetail } from "./errors";
-import type { PromptUser } from "./gate";
+import type { PromptChoices } from "./gate";
 import { killTree, track } from "./procs";
 import type { Runner } from "./runners/types";
 
@@ -21,8 +21,8 @@ export interface NodeExecContext {
   env?: Record<string, string>;
   /** The owning node id — ACP runners name it in a `session/request_permission` prompt. */
   nodeId?: string;
-  /** Terminal prompt for ACP permission requests; shares gate.ts's serialized queue. */
-  promptUser?: PromptUser;
+  /** List-prompt seam for ACP permission requests; shares gate.ts's serialized queue. */
+  promptChoice?: PromptChoices;
 }
 
 export interface AiNodeResult {
@@ -56,7 +56,7 @@ export async function executeAiNode(prompt: string, config: AiExecConfig, ctx: N
     timeoutSec: config.timeoutSec,
     onOutput: ctx.log,
     nodeId: ctx.nodeId,
-    promptUser: ctx.promptUser,
+    promptChoice: ctx.promptChoice,
   });
   if (result.exitCode !== 0) {
     // No node-id prefix: the engine wraps every node error with the id already. The

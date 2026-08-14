@@ -11,7 +11,7 @@ against a repo.
 | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Language         | TypeScript                                                                                                                                                                                   |
 | Toolchain        | Bun for dev/test; code stays Node-compatible (no Bun-only APIs); published to npm                                                                                                            |
-| Distribution     | Global CLI (`npm i -g sao` / `npx sao` / `bun i -g sao`), `engines: node >= 20`                                                                                                              |
+| Distribution     | Global CLI (`npm i -g sao` / `npx sao` / `bun i -g sao`), `engines: node >= 20.12`. Installable on macOS, Linux and Windows — no `os` restriction. Manual smoke check (no CI job): install from a pack, answer a gate's list prompt in a Windows terminal. |
 | Binary name      | `sao`                                                                                                                                                                                        |
 | Interface        | Pure CLI, live progress in terminal                                                                                                                                                          |
 | AI execution     | Pluggable `Runner` interface; **claude** (Claude Code headless), **codex** (Codex CLI exec), and **opencode** (Agent Client Protocol) adapters in v1                                        |
@@ -199,15 +199,46 @@ Signal found → loop ends. `max_iterations` reached without signal → node **f
 `false` resumes the same session (claude adapter: `--resume <session_id>`).
 
 **Interactive loops** (`interactive: true`): the engine pauses for the human after
-**every** iteration. A typed reply feeds the next iteration as `{{loop.feedback}}`;
-a bare approve ends the loop, but only on an iteration where the agent emitted the
-signal (approving an unsignaled iteration just re-prompts). Combined with
+**every** iteration. At an interactive terminal the pause is a navigable list: the
+agent's own declared options first, in the order it sent them, then **End the
+loop** (offered only on an iteration where the agent emitted the signal —
+offering it otherwise would be an entry that can only ever be refused),
+**Write feedback instead** (collects a follow-up text entry, kept verbatim even if
+it reads like a verdict word such as "approve" or "reject" — picking a list entry
+already disambiguated the answer, so it is never reparsed), and **Reject and halt
+the run**. Choosing an agent option feeds its `label` — never its `id` — to the
+next iteration's `{{loop.feedback}}`.
+
+An agent invites this by ending its response with a last line of the form
+`<options>[{"id": "sqlite", "label": "Use SQLite", "description": "no server to
+run"}]</options>` — a JSON array of objects with unique, non-empty `id`s (not
+starting with the `sao:` prefix sao reserves for its own entries) and non-empty
+`label`s; `description` is optional and shown alongside the label. The instruction
+inviting this rides beside the sentinel instruction on every iteration's prompt, so
+it reaches every runner without any runner-specific wiring — it is just the
+agent's own output, the same channel the sentinel already travels. A declaration
+that can't be read (invalid JSON, wrong shape, missing closing tag) is silently
+dropped — a warning naming the node is recorded on the iteration's log and the
+pause still runs with only the run's own entries, exactly as if the agent had
+declared nothing.
+
+Piped replies are a separate channel with no menu at all. Combined with
 `fresh_context: false` this is a genuine multi-turn conversation — e.g. an agent
 interviewing the human one question per iteration until the spec is settled.
 Because these are conversations, only the explicit forms `a`/`approve`/`approved`
 and `r`/`reject`/`rejected` act as verdicts here — a natural-language "yes"/"no"
 (an answer to the agent's question) is treated as feedback. Plain gates keep the
-wider `y`/`yes`/`n`/`no` vocabulary.
+wider `y`/`yes`/`n`/`no` vocabulary. An approve on an iteration the agent has not
+signaled just re-prompts, exactly as at an interactive terminal.
+
+A line that is not a verdict is checked next against the agent's declared
+options (if any): an exact match on one's `id` becomes feedback naming that
+option's `label`, the piped path's stand-in for picking it from the list — the
+match is exact on `id`, never a 1-based index, since no menu is printed for a
+number to refer to. A verdict word always wins first, so an agent declaring an
+option whose `id` happens to be a verdict word (e.g. `a`) can never cost the
+human the loop's exit path. A line matching neither becomes feedback verbatim,
+exactly as when the agent declared nothing.
 
 **Multi-step loops** (`steps:` instead of `prompt`): each iteration runs the steps
 in order. A step is an AI step (`prompt`, with optional `agent`/`runner`/`model`) or
@@ -234,7 +265,17 @@ disk). This is how alternating-agent cycles are modeled:
 
 ### Gate semantics
 
-Terminal prompt: `[a]pprove / [r]eject / or type feedback`.
+At an interactive terminal the pause is a navigable list: **Approve**, **Reject**,
+**Give feedback** (the last collects a follow-up text entry, which becomes the
+node's output verbatim even if it reads like a verdict word such as "yes" or
+"approve" — picking a list entry already disambiguated the answer, so it is never
+reparsed). The old `[a]pprove / [r]eject / or type feedback` letter prompt is gone
+from this path.
+
+Piped replies are a separate input channel that renders no menu at all, and are
+where the deleted letter prompt's vocabulary now lives: `a`, `approve`, `y`, `yes`
+approve; `r`, `reject`, `n`, `no` reject; any other non-empty line is feedback; an
+empty line re-asks.
 
 - approve → continue.
 - reject → run halts as `rejected`; `sao resume` re-asks the gate.
@@ -244,24 +285,28 @@ then continues (a gate that must re-do work should be modeled as an interactive 
 ### Permission requests (ACP runners)
 
 **Invariant change:** gates are no longer the only thing that can pause a run — an
-ACP runner's `session/request_permission` pauses too, mid-AI-node. Rendering:
-the node id, what the agent wants to do (the tool call's title), and the agent's
-**own** options as a numbered menu (`1. Allow`, `2. Deny`, …). The chosen
-`optionId` is sent back verbatim — sao never interprets option meaning, and keeps
-**no** permission memory of its own ("allow for this session" is remembered
-agent-side, not by sao). An unparseable or out-of-range reply re-asks; nothing is
-sent to the agent until a valid choice is made. With no interactive terminal
-(stdin closed), the node fails the same way a gate does — never auto-approved.
+ACP runner's `session/request_permission` pauses too, mid-AI-node. At an
+interactive terminal the pause is the same navigable list a gate uses: the node id
+and what the agent wants to do (the tool call's title), then one entry per option
+the agent sent, in the order sent — nothing sao invents, and the old numbered menu
+(`1. Allow`, `2. Deny`, …) is gone. The chosen option's `optionId` is sent back
+verbatim — sao never interprets option meaning, and keeps **no** permission memory
+of its own ("allow for this session" is remembered agent-side, not by sao).
+
+Piped replies address an option by a bare 1-based index or by the option's own
+identifier, typed exactly; anything else re-asks and nothing is sent to the agent
+until a valid choice is made. With no interactive terminal (stdin closed), the
+node fails the same way a gate does — never auto-approved.
 
 Permission prompts serialize on the **same terminal queue** gates and interactive
-loops already use (`src/gate.ts`'s `promptOnTerminal`) — there is no second stdin
-mechanism, so at most one prompt owns the terminal at a time, each naming the node
-it belongs to. A node's `timeout` (if any) excludes time spent waiting on — or
-queued behind — a permission prompt, exactly like a gate's wait is never
-time-boxed: the clock pauses the instant a prompt is handed to that queue and
-resumes once it is answered, so one human's slow reply to one node never times
-out an unrelated node. claude and codex have no permission-request concept and
-never gain this prompt.
+loops already use (`src/gate.ts`'s shared prompt queue, behind `promptChoice`) —
+there is no second stdin mechanism, so at most one prompt owns the terminal at a
+time, each naming the node it belongs to. A node's `timeout` (if any) excludes
+time spent waiting on — or queued behind — a permission prompt, exactly like a
+gate's wait is never time-boxed: the clock pauses the instant a prompt is handed
+to that queue and resumes once it is answered, so one human's slow reply to one
+node never times out an unrelated node. claude and codex have no
+permission-request concept and never gain this prompt.
 
 ### Templating
 
@@ -517,6 +562,7 @@ src/
   parser.ts          # YAML load, validation, dependency-graph + template checks
   template.ts        # {{...}} interpolation
   agents.ts          # agent file resolution + frontmatter parsing
+  options.ts         # <options> declaration instruction + parser (zod-validated)
   engine.ts          # scheduler: dependency ordering, concurrency, node dispatch
   nodes.ts           # ai / bash executors + shell helpers (loop/gate executors live in engine.ts)
   state.ts           # run dir layout, state.json persistence, resume logic
@@ -531,7 +577,8 @@ src/
 tests/               # bun test; engine tests use a mock Runner
 ```
 
-Dependencies (kept minimal): `commander`, `yaml`, `zod`, `picocolors`, and
+Dependencies (kept minimal): `commander`, `yaml`, `zod`, `picocolors`,
+`@clack/prompts` (the list prompt every human-facing pause renders through), and
 `@zed-industries/agent-client-protocol` (the ACP client's transport — the package
 *is* the protocol definition, so drift is tracked upstream rather than by hand).
 Everything else is node builtins (`child_process`, `readline`, `crypto`, `fs`).

@@ -3,7 +3,7 @@ id: 3
 title: ACP permission requests present a list
 slice: B — permission prompts
 scenarios: [@s-perm-agent-options-listed, @s-perm-selection-sent-verbatim, @s-perm-nothing-sent-until-chosen, @s-perm-piped-index, @s-perm-piped-option-id, @s-perm-piped-invalid-reasks, @s-perm-no-terminal-fails]
-status: todo
+status: done
 paths: [src/acp.ts, src/gate.ts, tests/acp.test.ts, tests/gate-permission.test.ts, tests/engine-acp.test.ts, SPEC.md, README.md]
 ---
 

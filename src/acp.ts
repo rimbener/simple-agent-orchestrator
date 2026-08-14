@@ -14,7 +14,7 @@ import {
   type SessionNotification,
 } from "@zed-industries/agent-client-protocol";
 import { SaoError, truncateDetail } from "./errors";
-import { parsePermissionReply } from "./gate";
+import { type Choice, parsePermissionReply, type PromptAnswer } from "./gate";
 import { killTree, swallowStdinErrors, track } from "./procs";
 import type { RunnerRequest, RunnerResult } from "./runners/types";
 
@@ -220,20 +220,22 @@ export function runAcpTurn(launch: AcpLaunch, req: RunnerRequest): Promise<Runne
         req.onOutput?.(text);
       },
       async requestPermission(params: RequestPermissionRequest): Promise<RequestPermissionResponse> {
-        // No terminal wired (e.g. a caller that never sets promptUser) — never auto-approve.
-        if (!req.promptUser) return { outcome: { outcome: "cancelled" } };
+        // No terminal wired (e.g. a caller that never sets promptChoice) — never auto-approve.
+        if (!req.promptChoice) return { outcome: { outcome: "cancelled" } };
         const title = params.toolCall.title ?? params.toolCall.toolCallId;
-        const menu = params.options.map((opt, i) => `  ${i + 1}. ${opt.name}`).join("\n");
         const label = req.nodeId ? `[${req.nodeId}] ` : "";
+        // The agent's own options, one-to-one, in the order sent — nothing sao invents.
+        const choices: Choice[] = params.options.map((opt) => ({ id: opt.optionId, label: opt.name }));
+        const optionIds = params.options.map((opt) => opt.optionId);
         // The interactive prompt below is the only rendering of the request — never
         // mirrored through onOutput too, matching the gate node's own prompt text,
         // which likewise never touches the node log (engine.ts's executeGate).
         pauseTimer(); // the whole exchange below is human deliberation, queued time included
         try {
           for (;;) {
-            let reply: string;
+            let answer: PromptAnswer;
             try {
-              reply = await req.promptUser(`\n${label}permission requested: ${title}\n${menu}\n> `);
+              answer = await req.promptChoice({ message: `\n${label}permission requested: ${title}`, choices });
             } catch (err) {
               settle(() => {
                 killTree(child);
@@ -241,7 +243,9 @@ export function runAcpTurn(launch: AcpLaunch, req: RunnerRequest): Promise<Runne
               });
               throw err;
             }
-            const parsed = parsePermissionReply(reply, params.options.length);
+            // A list selection is sent back verbatim — no permission memory of sao's own.
+            if (answer.kind === "choice") return { outcome: { outcome: "selected", optionId: answer.id } };
+            const parsed = parsePermissionReply(answer.text, optionIds);
             if (parsed.kind === "invalid") continue; // re-ask; nothing is sent to the agent yet
             const option = params.options[parsed.index - 1]!;
             return { outcome: { outcome: "selected", optionId: option.optionId } };

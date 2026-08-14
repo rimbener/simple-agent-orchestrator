@@ -3,7 +3,7 @@ id: 6
 title: Piped replies address a declared option
 slice: C — agent-declared options
 scenarios: [@s-loop-piped-option-id, @s-loop-piped-verdict-precedence, @s-loop-piped-unsignaled-approve-reasks, @s-loop-piped-freeform-is-feedback]
-status: todo
+status: done
 paths: [src/gate.ts, src/engine.ts, tests/gate.test.ts, tests/engine-m2.test.ts, tests/cli.test.ts, SPEC.md, README.md]
 ---
 

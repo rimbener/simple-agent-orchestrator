@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type { AcpLaunch } from "../src/acp";
 import { composeAcpPrompt, ignoredAcpSettings, runAcpHandshake, runAcpTurn } from "../src/acp";
 import { SaoError } from "../src/errors";
-import type { PromptUser } from "../src/gate";
+import type { PromptAnswer, PromptChoices } from "../src/gate";
 
 /** Await a promise that must reject; returns the rejection error. */
 async function rejectionOf(promise: Promise<unknown>): Promise<SaoError> {
@@ -316,23 +316,26 @@ describe("runAcpTurn", () => {
 });
 
 describe("runAcpTurn — the timeout clock pauses for a permission prompt (D5)", () => {
-  test("@s-prompt-user-throw-fails-turn: a promptUser that throws fails the turn and kills the agent", async () => {
+  test("@s-perm-no-terminal-fails: stdin closing while a permission prompt waits fails the turn, kills the agent, and is never auto-approved", async () => {
     const double = withAcpDouble({
       requestPermission: {
         title: "risky",
         options: [{ optionId: "opt-yes", name: "Yes", kind: "allow_once" }],
       },
     });
-    const promptUser: PromptUser = () => Promise.reject(new SaoError("terminal torn down"));
+    const promptChoice: PromptChoices = () =>
+      Promise.reject(
+        new SaoError("stdin closed while waiting for a reply", "no interactive terminal and no reply line"),
+      );
     const original = console.error;
     console.error = () => {};
     let err: SaoError;
     let dead = false;
     try {
       err = await rejectionOf(
-        runAcpTurn(double.launch, { prompt: "hi", cwd: process.cwd(), env: double.env, promptUser }),
+        runAcpTurn(double.launch, { prompt: "hi", cwd: process.cwd(), env: double.env, promptChoice }),
       );
-      // The library re-frames the thrown promptUser error as a client-side request
+      // The library re-frames the thrown promptChoice error as a client-side request
       // error and logs it once the turn has already failed; the log lands on a
       // continuation that can outlive the rejection, so keep it muted until the
       // agent process is confirmed dead.
@@ -348,7 +351,7 @@ describe("runAcpTurn — the timeout clock pauses for a permission prompt (D5)",
       console.error = original;
     }
     expect(err).toBeInstanceOf(SaoError);
-    expect(err.message).toContain("terminal torn down");
+    expect(err.message).toContain("stdin closed while waiting for a reply");
     expect(dead).toBe(true);
   }, 15000);
 
@@ -356,14 +359,15 @@ describe("runAcpTurn — the timeout clock pauses for a permission prompt (D5)",
     const double = withAcpDouble({
       requestPermission: { title: "risky", options: [{ optionId: "opt-yes", name: "Yes", kind: "allow_once" }] },
     });
-    const promptUser: PromptUser = () => new Promise((resolve) => setTimeout(() => resolve("1"), 1500));
+    const promptChoice: PromptChoices = () =>
+      new Promise((resolve) => setTimeout(() => resolve({ kind: "text", text: "1" }), 1500));
     const result = await runAcpTurn(double.launch, {
       prompt: "hi",
       cwd: process.cwd(),
       env: double.env,
       timeoutSec: 1,
       nodeId: "n",
-      promptUser,
+      promptChoice,
     });
     expect(result.exitCode).toBe(0);
   }, 10000);
@@ -379,8 +383,10 @@ describe("runAcpTurn — the timeout clock pauses for a permission prompt (D5)",
     // second call's own 800ms wait only starts once the first settles, so by the
     // time it resolves, well over 1 second (b's timeoutSec) has elapsed overall.
     let queue: Promise<unknown> = Promise.resolve();
-    const promptUser: PromptUser = () => {
-      const turn = queue.then(() => new Promise<string>((resolve) => setTimeout(() => resolve("1"), 800)));
+    const promptChoice: PromptChoices = () => {
+      const turn = queue.then(
+        () => new Promise<PromptAnswer>((resolve) => setTimeout(() => resolve({ kind: "text", text: "1" }), 800)),
+      );
       queue = turn.then(
         () => undefined,
         () => undefined,
@@ -388,8 +394,8 @@ describe("runAcpTurn — the timeout clock pauses for a permission prompt (D5)",
       return turn;
     };
     const [ra, rb] = await Promise.all([
-      runAcpTurn(a.launch, { prompt: "hi", cwd: process.cwd(), env: a.env, timeoutSec: 1, nodeId: "a", promptUser }),
-      runAcpTurn(b.launch, { prompt: "hi", cwd: process.cwd(), env: b.env, timeoutSec: 1, nodeId: "b", promptUser }),
+      runAcpTurn(a.launch, { prompt: "hi", cwd: process.cwd(), env: a.env, timeoutSec: 1, nodeId: "a", promptChoice }),
+      runAcpTurn(b.launch, { prompt: "hi", cwd: process.cwd(), env: b.env, timeoutSec: 1, nodeId: "b", promptChoice }),
     ]);
     expect(ra.exitCode).toBe(0);
     expect(rb.exitCode).toBe(0);

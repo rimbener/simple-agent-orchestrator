@@ -112,6 +112,36 @@ nodes:
     bash: "test -f marker || { touch marker; exit 1; }"
 `;
 
+describe("package metadata", () => {
+  test("@s-windows-installable: no os restriction, and the node floor the list prompt needs", () => {
+    const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url).pathname, "utf8"));
+    expect(pkg.os).toBeUndefined();
+    expect(pkg.engines.node).toBe(">=20.12");
+  });
+
+  test("@s-windows-prompt-portable: the prompt path signals only SIGINT, which Node emulates on Windows; the manual check is documented", () => {
+    const gateSrc = readFileSync(new URL("../src/gate.ts", import.meta.url).pathname, "utf8");
+    const signals = new Set(gateSrc.match(/SIG[A-Z]+/g) ?? []);
+    expect(signals).toEqual(new Set(["SIGINT"]));
+    const spec = readFileSync(new URL("../SPEC.md", import.meta.url).pathname, "utf8");
+    expect(spec).toContain("Manual smoke check");
+    expect(spec).toContain("Windows terminal");
+  });
+});
+
+describe("source hygiene", () => {
+  test("@s-old-renderings-gone: the deleted letter and numbered menus survive nowhere in src/", () => {
+    const srcDir = new URL("../src/", import.meta.url).pathname;
+    const files = (readdirSync(srcDir, { recursive: true }) as string[]).filter((f) => f.endsWith(".ts"));
+    expect(files.length).toBeGreaterThan(0); // the scan itself must find files, or this proves nothing
+    for (const file of files) {
+      const contents = readFileSync(join(srcDir, file), "utf8");
+      expect(contents).not.toContain("[a]pprove");
+      expect(contents).not.toContain("1. Allow");
+    }
+  });
+});
+
 describe("sao validate", () => {
   test("accepts a valid workflow", () => {
     const result = runCli(["validate", join(FIXTURES, "valid.yaml")]);

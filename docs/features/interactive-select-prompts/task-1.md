@@ -3,7 +3,7 @@ id: 1
 title: List prompt seam, TTY detection, packaging
 slice: A — every pause is a list
 scenarios: [@s-list-at-terminal, @s-list-no-menu-when-piped, @s-list-stdin-closed-fails, @s-list-serialized-across-branches, @s-list-interrupt, @s-list-longer-than-terminal, @s-windows-installable, @s-windows-prompt-portable]
-status: todo
+status: done
 paths: [package.json, src/gate.ts, tests/gate.test.ts, tests/gate-stdin.test.ts, tests/cli.test.ts, SPEC.md]
 ---
 

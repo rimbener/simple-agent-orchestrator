@@ -3,7 +3,7 @@ id: 4
 title: Parse the agent's <options> declaration
 slice: C — agent-declared options
 scenarios: [@s-options-parsed, @s-options-last-block-wins, @s-options-malformed-ignored, @s-options-invalid-shape-ignored, @s-options-absent]
-status: todo
+status: done
 paths: [src/options.ts, tests/options.test.ts, SPEC.md]
 ---
 

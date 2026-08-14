@@ -3,7 +3,7 @@ id: 2
 title: Gate nodes present a list
 slice: A — every pause is a list
 scenarios: [@s-gate-approve, @s-gate-reject, @s-gate-feedback, @s-gate-feedback-keeps-verdict-words, @s-gate-piped-unchanged]
-status: todo
+status: done
 paths: [src/engine.ts, src/gate.ts, tests/engine-m2.test.ts, tests/cli.test.ts, SPEC.md, README.md]
 ---
 
