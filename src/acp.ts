@@ -14,7 +14,7 @@ import {
   type SessionNotification,
 } from "@zed-industries/agent-client-protocol";
 import { SaoError, truncateDetail } from "./errors";
-import { type Choice, parsePermissionReply, type PromptAnswer } from "./gate";
+import { type Choice, type PromptAnswer, parsePermissionReply } from "./gate";
 import { killTree, swallowStdinErrors, track } from "./procs";
 import type { RunnerRequest, RunnerResult } from "./runners/types";
 

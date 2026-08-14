@@ -678,7 +678,10 @@ nodes:
 
     // The rejected iteration (unsignaled) re-runs in full on resume and pauses for
     // the same decision again before the loop can proceed to a second, signaled one.
-    const resumeAnswers = [{ kind: "text", text: "keep going" }, { kind: "choice", id: "sao:end-loop" }] as const;
+    const resumeAnswers = [
+      { kind: "text", text: "keep going" },
+      { kind: "choice", id: "sao:end-loop" },
+    ] as const;
     let resumeCall = 0;
     const resumeCalls: RunnerRequest[] = [];
     const state = await run(path, dir, {

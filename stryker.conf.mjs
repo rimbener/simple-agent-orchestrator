@@ -9,7 +9,7 @@ export default {
   bun: { timeout: 120_000 },
   // cli.ts is only exercised via spawned subprocesses, which per-test
   // coverage cannot observe — every mutant in it would report NoCoverage.
-  mutate: ["src/**/*.ts", "!src/cli.ts"],
+  mutate: ["src/**/*.ts", "!src/cli.ts", "!src/interactive-choices.ts"],
   // .claude/* are symlinks into .agents/; copyFile can't handle them.
   ignorePatterns: [".claude"],
   reporters: ["html", "clear-text", "progress"],

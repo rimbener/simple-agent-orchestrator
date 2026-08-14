@@ -4,7 +4,13 @@ import { join, relative, resolve } from "node:path";
 import { finished } from "node:stream/promises";
 import pc from "picocolors";
 import { GateRejectedError, SaoError } from "./errors";
-import { type Choice, type PromptChoices, parseGateReply, parseLoopReply, promptChoice as defaultPromptChoice } from "./gate";
+import {
+  type Choice,
+  promptChoice as defaultPromptChoice,
+  type PromptChoices,
+  parseGateReply,
+  parseLoopReply,
+} from "./gate";
 import { evaluateWhenBash, executeAiNode, executeBashScript, withRetries } from "./nodes";
 import { AGENT_OPTIONS_INSTRUCTION, type AgentOption, parseAgentOptions } from "./options";
 import { orderNodes } from "./parser";
@@ -302,18 +308,7 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunState> {
     releaseRunLock();
   });
 
-  const engine = new Engine(
-    state,
-    paths,
-    runId,
-    aiConfigs,
-    mcpConfigPath,
-    promptChoice,
-    print,
-    execCwd,
-    env,
-    ctx,
-  );
+  const engine = new Engine(state, paths, runId, aiConfigs, mcpConfigPath, promptChoice, print, execCwd, env, ctx);
   try {
     await engine.run(ordered, concurrency);
   } catch (err) {

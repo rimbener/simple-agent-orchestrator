@@ -7,11 +7,11 @@ It's hard to see the question and options, they're displayed like this:
   [grill-user-story#2] - **Shape + workflow-level header** — graph plus the workflow's `name`, `description`, `inputs`, `defaults`, `mcp` — the things you must supply to run it.
   [grill-user-story#2] **My recommendation: shape + detail on demand, plus the workflow-level header.** A newcomer's real questions are "what does this do" and "what do I have to pass it to run it" — a bare boxes-and-arrows picture answers neither, and they'd be back in the YAML within a minute. The header matters because `inputs` with `required: true` is the thing that stops a first run cold.
   [grill-user-story#2] Read it here: http://127.0.0.1:53405/docs/spec-viewer.html
-```
-
-I'd like them to respect the formatting comming from the LLM, or at least using some formatting so the questions are easier to see
-
-Don't show the raw options, example:
-```
   [grill-user-story#2] <options>[{"id":"shape","label":"Shape only","description":"Nodes, edges, node kind, concurrency — the graph and nothing else"},{"id":"shape-detail","label":"Shape + node detail on demand + workflow header (recommended)","description":"Graph, plus per-node prompt/agent/runner/loop/gate detail, plus name/description/inputs/defaults"},{"id":"shape-header","label":"Shape + workflow header only","description":"Graph plus name/description/inputs/defaults, no per-node prompt text"}]</options>
 ```
+
+I'd like to:
+- Maintain the repeated `[node#iter]` prefix on each line
+- Visual grouping of the questions and options
+- The agent's question should be visually set apart from the progress stream around it
+- Hide the raw <options></options>

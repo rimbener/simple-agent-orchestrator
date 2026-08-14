@@ -524,7 +524,11 @@ nodes:
     const state = await run(path, dir, {
       resolveRunner: () => runner,
       promptChoice: scriptedChoices(
-        [{ kind: "text", text: "" }, { kind: "text", text: "   " }, { kind: "text", text: "a" }],
+        [
+          { kind: "text", text: "" },
+          { kind: "text", text: "   " },
+          { kind: "text", text: "a" },
+        ],
         requests,
       ),
     });
@@ -583,7 +587,10 @@ nodes:
     const calls: RunnerRequest[] = [];
     const runner = scriptedRunner(["whatever"], calls);
     try {
-      await run(path, dir, { resolveRunner: () => runner, promptChoice: scriptedChoices([{ kind: "text", text: "r" }]) });
+      await run(path, dir, {
+        resolveRunner: () => runner,
+        promptChoice: scriptedChoices([{ kind: "text", text: "r" }]),
+      });
       throw new Error("should have thrown");
     } catch (err) {
       expect(err).toBeInstanceOf(SaoError);
@@ -1219,9 +1226,9 @@ nodes:
     gate:
       message: "Ship it?"
 `);
-      await expect(
-        run(path, dir, { promptChoice: scriptedChoices([{ kind: "text", text: reply }]) }),
-      ).rejects.toThrow('rejected at node "ship"');
+      await expect(run(path, dir, { promptChoice: scriptedChoices([{ kind: "text", text: reply }]) })).rejects.toThrow(
+        'rejected at node "ship"',
+      );
     }
     const { dir, path } = setup(`
 name: gatepipedfeedback

@@ -154,7 +154,6 @@ describe("promptChoice — piped (not an interactive terminal)", () => {
     await expect(reply).rejects.toThrow("prompt state reset while a reply was pending");
     await expect(reply).rejects.toMatchObject({ hint: "resetPromptState() torn down mid-prompt" });
   });
-
 });
 
 describe("promptChoice — interactive terminal", () => {
