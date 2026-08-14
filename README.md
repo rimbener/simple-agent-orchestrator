@@ -162,6 +162,11 @@ nodes:
       message: "Build green. Merge?"
 ```
 
+At an interactive terminal, a gate's message is rendered in the same titled box as
+an interactive loop's — markdown rendered, `<options>`/`<promise>` markers
+stripped — above the approve/reject/feedback list. A piped reply sees no box: the
+message and any raw markers stay exactly as they are today.
+
 An interactive loop's agent may end its response with a last line of the form
 `<options>[{"id": "sqlite", "label": "Use SQLite", "description": "no server to
 run"}]</options>` (ids unique and non-empty, not prefixed `sao:`; `description`

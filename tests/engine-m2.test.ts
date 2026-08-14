@@ -1859,6 +1859,57 @@ nodes:
   });
 });
 
+describe("gate pause block", () => {
+  test("@s-gate-message-in-block: a gate's message renders in the same titled box, list offered below", async () => {
+    const { dir, path } = setup(`
+name: gateblock
+nodes:
+  - id: ship
+    gate:
+      message: "**please decide** whether to ship"
+`);
+    const requests: LoopGateRequest[] = [];
+    await withInteractiveTerminal(() =>
+      run(path, dir, {
+        promptChoice: scriptedChoices([{ kind: "choice", id: "sao:approve" }], requests),
+      }),
+    );
+    const req = requests[0]!;
+    expect(req.block).toContain("please decide");
+    expect(req.block).not.toContain("**");
+    expect(req.blockTitle).toBe("[ship]");
+    expect(req.choices.map((c) => c.id)).toEqual(["sao:approve", "sao:reject", "sao:feedback"]);
+    expect(req.message).not.toContain("please decide");
+  });
+
+  test("@s-gate-strips-markers: a gate message carrying an interpolated promise token is cleaned", async () => {
+    const { dir, path } = setup(`
+name: gatestrip
+nodes:
+  - id: grill
+    loop:
+      prompt: "ask"
+      until: SETTLED
+      max_iterations: 1
+  - id: ship
+    depends_on: [grill]
+    gate:
+      message: "Ship? {{nodes.grill.output}}"
+`);
+    const requests: LoopGateRequest[] = [];
+    await withInteractiveTerminal(() =>
+      run(path, dir, {
+        resolveRunner: () => scriptedRunner([`done ${sentinelToken("SETTLED")}`]),
+        promptChoice: scriptedChoices([{ kind: "choice", id: "sao:approve" }], requests),
+      }),
+    );
+    const req = requests[0]!;
+    expect(req.block).toContain("done");
+    expect(req.block).not.toContain("<promise>");
+    expect(req.message).not.toContain("<promise>");
+  });
+});
+
 describe("when_bash nodes", () => {
   test("a failing predicate skips the node; dependents run and see empty output", async () => {
     const { dir, path } = setup(`

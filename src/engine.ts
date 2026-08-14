@@ -942,14 +942,29 @@ class Engine {
 
   private async executeGate(node: GateNode): Promise<NodeResult> {
     const message = interpolate(node.gate.message, this.ctx);
-    const question = `\n${message}\n[${node.id}] `;
     const choices: Choice[] = [
       { id: "sao:approve", label: "Approve" },
       { id: "sao:reject", label: "Reject" },
       { id: "sao:feedback", label: "Give feedback", collectsText: true },
     ];
+    // Piped runs must stay byte-for-byte unchanged (SPEC: pause block) — the block,
+    // and the split of the raw message out of `question`, are interactive-terminal-
+    // only, so a piped gate keeps the raw message embedded in `question` and never
+    // computes a block.
+    let question = `\n${message}\n[${node.id}] `;
+    let block: string | undefined;
+    let blockTitle: string | undefined;
+    if (isInteractive()) {
+      // A gate has no expected signal name (unlike a loop's `until`), so a stripped
+      // token is simply removed — no unexpected-name warning applies here.
+      block = renderBlock(message).block;
+      blockTitle = `[${node.id}]`;
+      // The rendered/stripped text lives only in `block` — echoing the raw message
+      // again in `question` would double-render it and leak unstripped markers.
+      question = `\n[${node.id}] `;
+    }
     for (;;) {
-      const answer = await this.promptChoice({ message: question, choices });
+      const answer = await this.promptChoice({ message: question, choices, block, blockTitle });
       if (answer.kind === "choice") {
         if (answer.id === "sao:approve") return { output: "approved" };
         // Stryker disable next-line StringLiteral: the wrap in runOne names the node and drops this inner message by design

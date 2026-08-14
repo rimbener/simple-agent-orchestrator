@@ -6,7 +6,7 @@ scenarios:
   - "@s-gate-message-in-block"
   - "@s-gate-strips-markers"
   - "@s-gate-piped-unchanged"
-status: todo
+status: done
 paths:
   - src/engine.ts
   - tests/engine-m2.test.ts

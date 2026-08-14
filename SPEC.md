@@ -295,6 +295,14 @@ node's output verbatim even if it reads like a verdict word such as "yes" or
 reparsed). The old `[a]pprove / [r]eject / or type feedback` letter prompt is gone
 from this path.
 
+At an interactive terminal only, that pause also draws the gate's own interpolated
+message as a titled box above the list — same stripping and rendering as an
+interactive loop's pause (`src/render.ts`), since a gate's message can interpolate
+a loop node's output and so carry the same `<promise>` marker. A gate has no
+`until:` signal of its own, so a stripped token is simply removed — no unexpected-
+name warning applies here. A piped reply sees no box: the message and any raw
+markers stay exactly as they are today.
+
 Piped replies are a separate input channel that renders no menu at all, and are
 where the deleted letter prompt's vocabulary now lives: `a`, `approve`, `y`, `yes`
 approve; `r`, `reject`, `n`, `no` reject; any other non-empty line is feedback; an
