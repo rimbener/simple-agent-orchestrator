@@ -3,8 +3,6 @@ import { select as clackSelect, text as clackText, isCancel } from "@clack/promp
 import { SaoError } from "./errors";
 import type { AgentOption } from "./options";
 
-export type PromptUser = (message: string) => Promise<string>;
-
 /** One entry in a navigable list prompt. `collectsText` runs a follow-up text prompt in the same turn. */
 export type Choice = { id: string; label: string; description?: string; collectsText?: true };
 
@@ -141,16 +139,6 @@ async function readReplyLine(message: string): Promise<string> {
   });
 }
 
-/** Ask on the terminal; resolves with the raw reply line. */
-export const promptOnTerminal: PromptUser = (message) => {
-  const turn = queue.then(() => readReplyLine(message));
-  queue = turn.then(
-    () => undefined,
-    () => undefined,
-  );
-  return turn;
-};
-
 function isInteractive(): boolean {
   return Boolean(process.stdin.isTTY) && Boolean(process.stdout.isTTY);
 }
@@ -193,9 +181,9 @@ async function runListPrompt(req: { message: string; choices: Choice[] }): Promi
 
 /**
  * The list-prompt seam: interactive terminals get a navigable `@clack/prompts`
- * list; anything else falls back to the same buffered-line reader `promptOnTerminal`
- * uses, resolving `{ kind: "text" }` with no `from` and writing no menu — the
- * choices exist only for a caller to interpret that line against, never rendered.
+ * list; anything else falls back to `readReplyLine`, resolving `{ kind: "text" }`
+ * with no `from` and writing no menu — the choices exist only for a caller to
+ * interpret that line against, never rendered.
  */
 export const promptChoice: PromptChoices = (req) => {
   const turn = queue.then(async () => {

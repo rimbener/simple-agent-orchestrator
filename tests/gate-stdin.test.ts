@@ -11,7 +11,7 @@ let stdout = new PassThrough();
 process.stdin = stdin as unknown as typeof process.stdin;
 process.stdout = stdout as unknown as typeof process.stdout;
 
-const { promptOnTerminal, promptChoice, resetPromptState } = await import("../src/gate");
+const { promptChoice, resetPromptState } = await import("../src/gate");
 
 const tick = async () => {
   for (let i = 0; i < 20; i++) await new Promise((r) => setTimeout(r, 0));
@@ -46,61 +46,6 @@ beforeEach(() => {
 afterAll(() => {
   process.stdin = origStdin;
   process.stdout = origStdout;
-});
-
-describe("promptOnTerminal", () => {
-  test("a multi-reply chunk answers the current prompt and buffers the rest", async () => {
-    const first = promptOnTerminal("");
-    await tick();
-    stdin.write("a\nb\n");
-    await expect(first).resolves.toBe("a");
-    const second = promptOnTerminal("");
-    await expect(second).resolves.toBe("b");
-  });
-
-  test("a waiting prompt is resolved by the next line", async () => {
-    const reply = promptOnTerminal("");
-    await tick();
-    stdin.write("n\n");
-    await expect(reply).resolves.toBe("n");
-  });
-
-  test("concurrent prompts serialize: one line serves one prompt", async () => {
-    const one = promptOnTerminal("");
-    const two = promptOnTerminal("");
-    await tick();
-    stdin.write("y\n");
-    await expect(one).resolves.toBe("y");
-    await tick();
-    stdin.write("r\n");
-    await expect(two).resolves.toBe("r");
-  });
-
-  test("stdin EOF while a prompt waits rejects with the stdin-closed error", async () => {
-    const reply = promptOnTerminal("");
-    await tick();
-    stdin.end();
-    await expect(reply).rejects.toThrow("stdin closed while waiting for a reply");
-  });
-
-  test("a prompt issued after EOF rejects too", async () => {
-    stdin.end();
-    await tick();
-    await expect(promptOnTerminal("")).rejects.toThrow("stdin closed while waiting for a reply");
-  });
-
-  test("a prompt issued against a destroyed stdin rejects instead of creating a readline", async () => {
-    stdin.destroy();
-    await tick();
-    await expect(promptOnTerminal("")).rejects.toThrow("stdin closed while waiting for a reply");
-  });
-
-  test("resetPromptState while a reply is pending rejects that reply", async () => {
-    const reply = promptOnTerminal("");
-    await tick();
-    resetPromptState();
-    await expect(reply).rejects.toThrow("prompt state reset while a reply was pending");
-  });
 });
 
 const CHOICES = [
@@ -140,6 +85,38 @@ describe("promptChoice — piped (not an interactive terminal)", () => {
     await tick();
     stdin.write("second\n");
     await expect(two).resolves.toEqual({ kind: "text", text: "second" });
+  });
+
+  test("a multi-reply pipe chunk answers the current prompt and buffers the rest for the next", async () => {
+    const one = promptChoice({ message: "one: ", choices: CHOICES });
+    await tick();
+    stdin.write("first\nsecond\n");
+    await expect(one).resolves.toEqual({ kind: "text", text: "first" });
+    const two = promptChoice({ message: "two: ", choices: CHOICES });
+    await expect(two).resolves.toEqual({ kind: "text", text: "second" });
+  });
+
+  test("a prompt issued after EOF rejects too", async () => {
+    stdin.end();
+    await tick();
+    await expect(promptChoice({ message: "gate: ", choices: CHOICES })).rejects.toThrow(
+      "stdin closed while waiting for a reply",
+    );
+  });
+
+  test("a prompt issued against a destroyed stdin rejects instead of creating a readline", async () => {
+    stdin.destroy();
+    await tick();
+    await expect(promptChoice({ message: "gate: ", choices: CHOICES })).rejects.toThrow(
+      "stdin closed while waiting for a reply",
+    );
+  });
+
+  test("resetPromptState while a reply is pending rejects that reply", async () => {
+    const reply = promptChoice({ message: "gate: ", choices: CHOICES });
+    await tick();
+    resetPromptState();
+    await expect(reply).rejects.toThrow("prompt state reset while a reply was pending");
   });
 });
 
