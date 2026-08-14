@@ -209,6 +209,18 @@ already disambiguated the answer, so it is never reparsed), and **Reject and hal
 the run**. Choosing an agent option feeds its `label` — never its `id` — to the
 next iteration's `{{loop.feedback}}`.
 
+At an interactive terminal only, that same pause also draws the iteration's own
+output as a titled box above the list — `<options>`/`<promise>` markers stripped
+and the markdown subset rendered (`src/render.ts`), never wrapped or indented
+beyond what the box itself adds. A piped reply sees no box at all: the message and
+the raw markers stay exactly as they are today. An output that is empty,
+whitespace-only, or nothing but markers shows a dim `(the agent sent no text)`
+notice in place of the box. A `<promise>NAME</promise>` whose name isn't this
+loop's `until:` is stripped like any other and reported as a dim
+`⚠ <node>: agent emitted <promise>NAME</promise>, expected <SIGNAL>` warning —
+never halting the run, and never changing signal detection itself. Nothing here
+touches what is logged: the node log and `nodes.<id>.output` keep the raw text.
+
 An agent invites this by ending its response with a last line of the form
 `<options>[{"id": "sqlite", "label": "Use SQLite", "description": "no server to
 run"}]</options>` — a JSON array of objects with unique, non-empty `id`s (not

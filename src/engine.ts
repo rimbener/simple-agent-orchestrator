@@ -4,11 +4,19 @@ import { join, relative, resolve } from "node:path";
 import { finished } from "node:stream/promises";
 import pc from "picocolors";
 import { GateRejectedError, SaoError } from "./errors";
-import { type Choice, type PromptChoices, parseGateReply, parseLoopReply, promptChoice as defaultPromptChoice } from "./gate";
+import {
+  type Choice,
+  promptChoice as defaultPromptChoice,
+  isInteractive,
+  type PromptChoices,
+  parseGateReply,
+  parseLoopReply,
+} from "./gate";
 import { evaluateWhenBash, executeAiNode, executeBashScript, withRetries } from "./nodes";
 import { AGENT_OPTIONS_INSTRUCTION, type AgentOption, parseAgentOptions } from "./options";
 import { orderNodes } from "./parser";
 import { onShutdown } from "./procs";
+import { renderBlock } from "./render";
 import { getRunner, type Runner, type RunnerNeeds, type RunnerResolver } from "./runners/types";
 import type { AgentSpec, GateNode, LoopNode, LoopStep, Workflow, WorkflowNode } from "./schema";
 import {
@@ -302,18 +310,7 @@ export async function runWorkflow(opts: RunWorkflowOptions): Promise<RunState> {
     releaseRunLock();
   });
 
-  const engine = new Engine(
-    state,
-    paths,
-    runId,
-    aiConfigs,
-    mcpConfigPath,
-    promptChoice,
-    print,
-    execCwd,
-    env,
-    ctx,
-  );
+  const engine = new Engine(state, paths, runId, aiConfigs, mcpConfigPath, promptChoice, print, execCwd, env, ctx);
   try {
     await engine.run(ordered, concurrency);
   } catch (err) {
@@ -1059,7 +1056,7 @@ class Engine {
       const signaled = body.until !== undefined && (instructedOutput?.includes(sentinelToken(body.until)) ?? false);
       signaledOnFinalIteration = signaled;
       if (body.interactive) {
-        const verdict = await this.askLoopGate(node, iteration, signaled, body.until!, agentOptions);
+        const verdict = await this.askLoopGate(node, iteration, signaled, body.until!, agentOptions, instructedOutput);
         if (verdict.kind === "approve") return { output, sessionId };
         feedback = verdict.text;
       } else if (signaled) {
@@ -1143,6 +1140,7 @@ class Engine {
     signaled: boolean,
     signal: string,
     agentOptions: AgentOption[] | undefined,
+    instructedOutput: string | undefined,
   ): Promise<{ kind: "approve" } | { kind: "feedback"; text: string }> {
     const status = signaled ? `agent signaled ${signal}` : "no signal yet";
     const message = `\n[${node.id}] iteration ${iteration} — ${status}`;
@@ -1156,8 +1154,27 @@ class Engine {
       { id: "sao:reject", label: "Reject and halt the run" },
     ];
     const labelById = new Map(options.map((option) => [option.id, option.label]));
+    // Piped runs must stay byte-for-byte unchanged (SPEC: pause block) — the block,
+    // its empty-message notice and the unexpected-signal warning are all interactive-
+    // terminal-only, so a piped run never computes any of them.
+    let block: string | undefined;
+    let blockTitle: string | undefined;
+    if (isInteractive()) {
+      const { block: rendered, signals } = renderBlock(instructedOutput ?? "");
+      for (const name of signals) {
+        if (name !== signal) {
+          this.print(pc.dim(`⚠ ${node.id}: agent emitted ${sentinelToken(name)}, expected ${signal}`));
+        }
+      }
+      if (rendered.trim() === "") {
+        this.print(pc.dim("(the agent sent no text)"));
+      } else {
+        block = rendered;
+        blockTitle = `[${node.id}#${iteration}]`;
+      }
+    }
     for (;;) {
-      const answer = await this.promptChoice({ message, choices });
+      const answer = await this.promptChoice({ message, choices, block, blockTitle });
       if (answer.kind === "choice") {
         if (answer.id === "sao:end-loop") return { kind: "approve" };
         // Stryker disable next-line StringLiteral: the wrap in runOne names the node and drops this inner message by design

@@ -8,7 +8,7 @@ scenarios:
   - "@s-block-atomic-with-its-list"
   - "@s-permission-prompt-unchanged"
   - "@s-block-ctrl-c-unchanged"
-status: todo
+status: done
 paths:
   - src/gate.ts
   - tests/gate-stdin.test.ts

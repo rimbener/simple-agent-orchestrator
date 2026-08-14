@@ -154,7 +154,6 @@ describe("promptChoice — piped (not an interactive terminal)", () => {
     await expect(reply).rejects.toThrow("prompt state reset while a reply was pending");
     await expect(reply).rejects.toMatchObject({ hint: "resetPromptState() torn down mid-prompt" });
   });
-
 });
 
 describe("promptChoice — interactive terminal", () => {
@@ -275,5 +274,103 @@ describe("promptChoice — interactive terminal", () => {
     } finally {
       (process as unknown as { kill: typeof process.kill }).kill = originalKill;
     }
+  });
+
+  test("@s-block-boxed-at-tty: the block is drawn in a titled box before the list of choices", async () => {
+    const { written } = makeInteractive();
+    const reply = promptChoice({
+      message: "gate: ",
+      choices: CHOICES,
+      block: "the rendered question",
+      blockTitle: "[work#1]",
+    });
+    await tick();
+    const out = written();
+    expect(out).toContain("[work#1]");
+    expect(out).toContain("the rendered question");
+    expect(out.indexOf("the rendered question")).toBeLessThan(out.indexOf("Approve"));
+    stdin.write(ENTER);
+    await reply;
+  });
+
+  test("@s-permission-prompt-unchanged: a caller that passes no block draws no box at all", async () => {
+    const { written } = makeInteractive();
+    const reply = promptChoice({ message: "gate: ", choices: CHOICES });
+    await tick();
+    stdin.write(ENTER);
+    await reply;
+    expect(written()).not.toContain("[work#1]");
+  });
+
+  test("@s-block-ctrl-c-unchanged: Ctrl-C at a pause showing a block still re-raises SIGINT", async () => {
+    makeInteractive();
+    const originalKill = process.kill;
+    const calls: unknown[][] = [];
+    (process as unknown as { kill: typeof process.kill }).kill = ((...args: unknown[]) => {
+      calls.push(args);
+      return true;
+    }) as typeof process.kill;
+    try {
+      promptChoice({ message: "gate: ", choices: CHOICES, block: "a question", blockTitle: "[work#1]" });
+      await tick();
+      stdin.write(CTRL_C);
+      await tick();
+      expect(calls).toEqual([[process.pid, "SIGINT"]]);
+    } finally {
+      (process as unknown as { kill: typeof process.kill }).kill = originalKill;
+    }
+  });
+
+  test("@s-block-atomic-with-its-list: the first block and its list are written before anything of the second", async () => {
+    const { written } = makeInteractive();
+    const first = promptChoice({ message: "one: ", choices: CHOICES, block: "first question", blockTitle: "[a#1]" });
+    const second = promptChoice({ message: "two: ", choices: CHOICES, block: "second question", blockTitle: "[b#1]" });
+    await tick();
+    const afterFirstBox = written();
+    expect(afterFirstBox).toContain("first question");
+    expect(afterFirstBox).not.toContain("second question");
+    stdin.write(ENTER); // confirm first pause's list
+    await first;
+    await tick();
+    stdin.write(ENTER); // confirm second pause's list
+    await second;
+    const finalOut = written();
+    expect(finalOut.indexOf("first question")).toBeLessThan(finalOut.indexOf("second question"));
+  });
+});
+
+describe("promptChoice — piped, with a block", () => {
+  test("@s-block-absent-when-piped: the piped path writes nothing from the block, byte-identical to no block", async () => {
+    let withBlock = "";
+    stdout.on("data", (chunk) => {
+      withBlock += chunk.toString();
+    });
+    const reply = promptChoice({
+      message: "gate: ",
+      choices: CHOICES,
+      block: "hidden question",
+      blockTitle: "[work#1]",
+    });
+    await tick();
+    stdin.write("approve\n");
+    await reply;
+
+    resetPromptState();
+    stdin = new PassThrough();
+    stdout = new PassThrough();
+    process.stdin = stdin as unknown as typeof process.stdin;
+    process.stdout = stdout as unknown as typeof process.stdout;
+    let withoutBlock = "";
+    stdout.on("data", (chunk) => {
+      withoutBlock += chunk.toString();
+    });
+    const reply2 = promptChoice({ message: "gate: ", choices: CHOICES });
+    await tick();
+    stdin.write("approve\n");
+    await reply2;
+
+    expect(withBlock).not.toContain("hidden question");
+    expect(withBlock).not.toContain("[work#1]");
+    expect(withBlock).toBe(withoutBlock);
   });
 });

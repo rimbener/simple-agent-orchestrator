@@ -12,7 +12,7 @@ scenarios:
   - "@s-strip-options-unclosed"
   - "@s-strip-promise-any"
   - "@s-strip-reports-signal-names"
-status: todo
+status: done
 paths:
   - src/render.ts
   - src/options.ts

@@ -13,7 +13,7 @@ scenarios:
   - "@s-loop-piped-unchanged"
   - "@s-loop-log-verbatim"
   - "@s-resume-pause-identical"
-status: todo
+status: done
 paths:
   - src/engine.ts
   - tests/engine-m2.test.ts

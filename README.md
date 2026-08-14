@@ -173,6 +173,10 @@ This works the same for any runner, since the declaration travels in the agent's
 own output; a block that can't be read is ignored with a warning, and the pause
 still runs with the run's own entries.
 
+At an interactive terminal, that pause also shows the iteration's own message —
+markdown rendered, `<options>`/`<promise>` markers stripped — in a titled box
+above the list, so the human never has to read the raw tags.
+
 A piped reply (no interactive terminal) renders no list at all: one line picks a
 declared option by typing its exact `id`, which feeds that option's `label` to
 `{{loop.feedback}}` the same as picking it from the list would. A verdict word
