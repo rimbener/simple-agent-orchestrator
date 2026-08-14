@@ -181,11 +181,14 @@ nodes:
     depends_on: [build-slices]
     loop:
       steps:
-        - bash: "workflows/sao-features-orchestrator/scripts/review-ci.sh" # CI once per round
+        - bash: "workflows/sao-features-orchestrator/scripts/review-ci.sh" # CI opening the round
         - agent: ./agents/reviewer_engineering.md
           prompt: "Feature: {{feature}}. Mode: full-review."
         - agent: ./agents/implementer.md
           prompt: "Feature: {{feature}}. Mode: fix-review-findings."
+        # CI again, because the round's LAST act is an implementer edit. Without
+        # this, a loop that ends here signs off on a tree nothing has run
+        - bash: "workflows/sao-features-orchestrator/scripts/review-ci.sh"
       until: REVIEW_CLEAN
       max_iterations: 2
 
@@ -214,7 +217,26 @@ nodes:
           prompt: "Feature: {{feature}}. Mode: report."
         - agent: ./agents/implementer.md
           prompt: "Feature: {{feature}}. Mode: kill-mutants."
-      until: MUTANTS_DEAD
+        # Killing mutants means editing tests and sometimes src/, and StrykerJS
+        # refuses to start on a red suite — so a break here would surface next
+        # iteration as an opaque "failed tests in the initial test run" from inside
+        # Stryker. Fail it here instead, where the error names the test.
+        - bash: "workflows/sao-features-orchestrator/scripts/review-ci.sh"
+      # until_bash, NOT a sentinel — this is the one gate an agent must not be able
+      # to end by asserting. A real run emitted MUTANTS_DEAD while its own output
+      # said Stryker had been blocked from running and mutation.md still listed 42
+      # survivors and 16 no-coverage. The script reads Stryker's machine output
+      # (tmp/<feature>/stryker.log), never the agent-written mutation.md, and fails
+      # closed on a missing, crashed or unparseable log.
+      #
+      # It sees the log written by step 1 of THIS iteration, so it trails the fixes
+      # made in step 3 by one pass: a clean feature still needs a further iteration
+      # to re-run Stryker and observe zero.
+      until_bash: |
+        read -r feature <<'SAO_FEATURE_EOF_{{run_id}}'
+        {{feature}}
+        SAO_FEATURE_EOF_{{run_id}}
+        workflows/sao-features-orchestrator/scripts/mutation-gate.sh "$feature"
       max_iterations: 4
 
   # ── Conditional: mutation fixes touched production source → re-review delta ──
@@ -235,6 +257,7 @@ nodes:
           prompt: "Feature: {{feature}}. Mode: delta-review."
         - agent: ./agents/implementer.md
           prompt: "Feature: {{feature}}. Mode: fix-review-findings."
+        - bash: "workflows/sao-features-orchestrator/scripts/review-ci.sh" # never end on an un-CI'd tree
       until: DELTA_REVIEW_CLEAN
       max_iterations: 2
 

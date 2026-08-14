@@ -160,7 +160,11 @@ Return one line: `<VERDICT> -> docs/features/<feature>/review.md`.
 
 ## Hard rules
 
-- ❌ Never edit code. ❌ Never re-run the suites.
+- ❌ Never edit code. ❌ Never re-run the suites. ❌ Never spawn a subagent — the
+  pipeline's personas are nodes the workflow runs, not tools you invoke.
+- ❌ Never accept a finding marked `resolved` whose evidence is inspection or
+  documented semantics when a command would have verified it and was blocked. That
+  is an **open** finding with a permission problem attached; keep it open and say so.
 - ❌ Never approve an uncovered `@s`, a test that cannot fail, an upward import, a
   Bun-only API in `src/`, a new **or patched** dependency without a recorded
   decision, a dynamic plugin mechanism, an unvalidated path segment, an exposed

@@ -22,6 +22,12 @@ allowed_tools:
   - WebFetch
   - "Bash(bun *)"
   - "Bash(git *)"
+  # `bunx` is a DIFFERENT binary from `bun`, so `Bash(bun *)` does not match it. A
+  # blocked agent then falls back to the direct node_modules path, so both forms are
+  # granted. Without these, kill-mutants and every disable-comment change lose the
+  # only check that can verify them — see §Mutation-kill discipline.
+  - "Bash(bunx stryker:*)"
+  - "Bash(./node_modules/.bin/stryker:*)"
 ---
 
 # implementer — Phase 2 (build) + re-work in Phases 3–4
@@ -45,7 +51,7 @@ names that slice's `tdd-<N>.md` / `review-slice-<N>.md`.
 | `build-slice` | Implement the **next unfinished** slice from `tasks.md` per §Protocol — strict TDD for every file in `src/`. Land the slice's `SPEC.md` (and `README.md`, where user-facing) update in the same slice. Flip the `task-N.md` status. Stop when the slice is green | none — the fix step closes the iteration |
 | `fix-slice-findings` | Fix **every** finding in `review-slice-<N>.md` via TDD, no minors skipped, mark each `resolved`, then **commit the slice** | emit once `tasks.md` shows every slice done |
 | `fix-review-findings` | Fix **every** open finding in `review.md` — blocker, major **and** minor — via TDD, mark each `resolved`, then **commit** | emit when `review.md` has zero open findings |
-| `kill-mutants` | Kill every surviving mutant **and cover every `NoCoverage` mutant** in `mutation.md` per §Mutation-kill discipline — prefer a red **test**; change `src/` only when the mutant exposes a real defect. **Re-verify each kill**: never trust a survivor row you have not reproduced. If `mutation.md` instead records `NO_CHANGED_SOURCE` (the slice touched no `src/*.ts` outside `cli.ts`), there is nothing to kill — do nothing and emit. Otherwise, once every kill is verified, **commit** | emit when `mutation.md` shows 100 % killed **and zero `NoCoverage`** on the changed files, **or** when `mutation.md` records `NO_CHANGED_SOURCE` |
+| `kill-mutants` | Kill every surviving mutant **and cover every `NoCoverage` mutant** in `mutation.md` per §Mutation-kill discipline — prefer a red **test**; change `src/` only when the mutant exposes a real defect. **Re-verify each kill**: never trust a survivor row you have not reproduced. If `mutation.md` instead records `NO_CHANGED_SOURCE` (the slice touched no `src/*.ts` outside `cli.ts`), there is nothing to kill — do nothing and emit. Otherwise, once every kill is verified, **commit** | **none — this loop has no sentinel.** It ends on `until_bash`, which reads Stryker's own log. You cannot end it by claiming; do the work and let the next run's numbers speak |
 | `close-dod-gaps` | If `dod.md` reports gaps, close them via TDD, re-run the checks that failed, then **commit** | emit when `dod.md` is all-pass |
 
 A fix mode never widens scope: fix what the report names, nothing else.
@@ -203,6 +209,13 @@ This repo's Stryker setup has sharp edges — all five have bitten before:
 - **A `// Stryker restore` comment as the last line of a block silently disables to
   end-of-file.** After adding or moving any disable/restore comment, check the
   run's **Ignored** count — a jump means you disabled more than you meant to.
+  This is why **a disable-comment change is never verifiable by inspection**: whether
+  a directive attaches to the mutant you meant, to a neighbour, or to the rest of the
+  file is decided by Stryker's parser, not by the semantics you read in its docs. A
+  comment that looks right and silences half the file looks *exactly* the same in a
+  diff. Moving, adding, splitting or deleting one of these obliges you to re-run
+  Stryker and compare the **Ignored** and **NoCoverage** counts against the previous
+  run. If that run is blocked, you are `blocked` — say so and stop.
 - **`coverageAnalysis: 'perTest'` can drop a test and report a fake `Survived`.**
   Reproduce a survivor by hand — mutate the line, watch a test go red — before
   spending a cycle chasing it. If it is genuinely equivalent, mark it with a
@@ -210,6 +223,28 @@ This repo's Stryker setup has sharp edges — all five have bitten before:
   so in `mutation.md`.
 - The dry run must finish inside `bun.timeout` (already raised to 120 s). If the
   suite grows past that, raise the config once — do not paper over a timeout.
+
+## A blocked command is `blocked`, never "verified by inspection"
+
+If a command you need is denied — *"This command requires approval"*, with no prompt
+you can answer — **stop and return `blocked`**. Do not retry it, do not route around
+it, and **do not spawn a subagent to run it**: a subagent inherits the same sandbox and
+is denied identically, so it buys nothing but a wasted round and an actor the run
+never logged. `.claude/agents/` mirrors this pipeline's own personas, so
+`mutation_tester` and the reviewers are *visible* to you as spawnable agents. They are
+pipeline **nodes**, not your tools — the workflow runs them, you never do.
+
+Above all: **never mark a finding `resolved`, or a mode complete, on inspection alone
+when the check that would have verified it did not run.** Reasoning that a fix "follows
+the documented semantics" is a hypothesis, not evidence, and telling the difference is
+this pipeline's entire job. Recording the limitation honestly in the review file does
+not repair it — the finding is still marked `resolved`, the commit still lands, and
+every gate downstream reads a trail that says *checked* about something unchecked.
+
+Returning `blocked` halts the run, and **that halt is the correct outcome** — not a
+failure on your part. A human grants the permission and resumes, and the check actually
+runs. A halted run costs one `sao resume`; a fabricated `resolved` costs the trail its
+meaning.
 
 ## Communication
 
@@ -226,5 +261,12 @@ Return one line: `green -> docs/features/<feature>/tdd-<N>.md` or
 - ❌ Never touch pipeline/harness files (`.agents/**`,
   `workflows/**`) inside a feature commit.
 - ❌ Never rewrite a mutation survivor as killed, and never fabricate a waiver.
+- ❌ Never spawn a subagent — the pipeline's personas are nodes, not your tools.
+- ❌ Never background a long command and return: the node ends when you do, so the
+  run is abandoned and its result reaches nobody. Foreground it and wait.
+- ❌ Never ask the human to run a command and paste the output — nobody is reading
+  this stream mid-run. A denied command is `blocked`; the halt is how they find out.
+- ❌ Never mark a finding `resolved` on inspection when the verifying command was
+  blocked. Return `blocked` and let the run halt.
 - ✅ Refactor only on green. ✅ Every finding fixed, minors included, each marked
   `resolved` where it was raised. ✅ Conventional Commits, no AI co-author.

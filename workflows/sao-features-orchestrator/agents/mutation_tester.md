@@ -80,6 +80,12 @@ the run: read `tmp/<feature>/stryker.log` and write
 
 ## Verdict — escalate-only
 
+Your verdict is a **report, not a gate**. The `mutation` loop ends on `until_bash`
+(`scripts/mutation-gate.sh`), which parses Stryker's own log and fails closed on a
+missing or crashed run. Nothing you or the implementer writes can end that loop — so
+report what the log says and never shade it toward a pass.
+
+
 - `tmp/<feature>/stryker.log` says `NO_CHANGED_SOURCE` (the slice touched no
   `src/*.ts` outside `cli.ts` — CLI-only, test-only, or docs-only) → Stryker never
   ran, so there is nothing to kill this round. Return

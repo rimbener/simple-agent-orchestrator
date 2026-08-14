@@ -10,5 +10,6 @@
 # the inner loop for a signal that belongs in the review round.
 set -euo pipefail
 
+"$(dirname "$0")/verify-patched-deps.sh"
 bun run typecheck
 bun run test:orchestrator

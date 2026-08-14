@@ -12,6 +12,7 @@
 # in slice-gate.sh.
 set -euo pipefail
 
+"$(dirname "$0")/verify-patched-deps.sh"
 bun run typecheck
 bun run test:orchestrator:ci
 bun run build
