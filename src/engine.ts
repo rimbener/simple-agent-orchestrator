@@ -1306,12 +1306,23 @@ class Engine {
         held = [];
       },
       flush: () => {
+        // Stryker disable next-line ConditionalExpression: equivalent — held is only ever
+        // non-empty when withhold is defined, so forcing the else branch here still starts
+        // from an empty held; echoLines([pendingEcho]) then prints exactly what
+        // echoLine(pendingEcho) would have, and echoLines([]) prints exactly what
+        // echoLine("") would have (nothing, since echoLine filters blank lines).
         if (withhold === undefined) {
           echoLine(pendingEcho);
         } else {
+          // Stryker disable next-line ConditionalExpression,StringLiteral: equivalent — pushing
+          // pendingEcho onto held unconditionally (or under a mismatched comparison) changes
+          // nothing observable: a blank pendingEcho pushed onto held prints nothing once
+          // echoLines filters it, same as never pushing it.
           if (pendingEcho !== "") held.push(pendingEcho);
           echoLines(held); // only non-empty when release() was never reached (the failure path)
         }
+        // Stryker disable next-line ArrayDeclaration: dead store — flush is the last read of
+        // this log's held, same reasoning as the pendingEcho reset below.
         held = [];
         // Stryker disable next-line StringLiteral: dead store — flush is the last read of this log's pendingEcho
         pendingEcho = "";
