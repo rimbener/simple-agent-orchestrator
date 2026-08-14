@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type { AcpLaunch } from "../src/acp";
 import { composeAcpPrompt, ignoredAcpSettings, runAcpHandshake, runAcpTurn } from "../src/acp";
 import { SaoError } from "../src/errors";
-import type { PromptUser } from "../src/gate";
+import type { PromptAnswer, PromptChoices } from "../src/gate";
 
 /** Await a promise that must reject; returns the rejection error. */
 async function rejectionOf(promise: Promise<unknown>): Promise<SaoError> {
@@ -59,6 +59,7 @@ var promptMsgId = null;
 var lastSessionEvent = null;
 var lastMcpServers = [];
 var lastModelId = null;
+var lastPermissionResult = null;
 function handle(msg) {
   if (msg.method === "initialize") {
     if (config.hangInitialize) return;
@@ -131,6 +132,10 @@ function handle(msg) {
     send({ jsonrpc: "2.0", id: msg.id, result: { stopReason: config.stopReason || "end_turn" } });
     if (config.exitAfter) process.exit(0);
   } else if (msg.method === undefined && msg.id === permReqId) {
+    lastPermissionResult = msg.result;
+    if (config.echoPermissionResult) {
+      emitChunk(config.sessionId || "double-session", { text: JSON.stringify(lastPermissionResult) });
+    }
     send({ jsonrpc: "2.0", id: promptMsgId, result: { stopReason: "end_turn" } });
   }
 }
@@ -287,6 +292,12 @@ describe("runAcpTurn", () => {
     expect(result.output).toBe("done");
   });
 
+  test("stderr streams fine with no onOutput wired at all", async () => {
+    const double = withAcpDouble({ stderrLine: "warn: something went sideways", chunks: [{ text: "done" }] });
+    const result = await runAcpTurn(double.launch, { prompt: "hi", cwd: process.cwd(), env: double.env });
+    expect(result.output).toBe("done");
+  });
+
   test("@s-acp-usage-update-dropped: a usage_update notification (opencode telemetry) is dropped without tripping the library's schema", async () => {
     const double = withAcpDouble({ usageUpdate: true, chunks: [{ text: "done" }] });
     const errors: unknown[][] = [];
@@ -305,6 +316,7 @@ describe("runAcpTurn", () => {
     const double = withAcpDouble({ exitImmediately: true });
     const err = await rejectionOf(runAcpTurn(double.launch, { prompt: "hi", cwd: process.cwd(), env: double.env }));
     expect(err).toBeInstanceOf(SaoError);
+    expect(err.message).toBe(`${double.launch.command} exited before completing the turn (code 1)`);
   });
 
   test("a command that fails to spawn rejects with a SaoError", async () => {
@@ -316,23 +328,38 @@ describe("runAcpTurn", () => {
 });
 
 describe("runAcpTurn — the timeout clock pauses for a permission prompt (D5)", () => {
-  test("@s-prompt-user-throw-fails-turn: a promptUser that throws fails the turn and kills the agent", async () => {
+  test("no promptChoice wired at all sends a cancelled outcome, never auto-approving", async () => {
+    const double = withAcpDouble({
+      requestPermission: {
+        title: "risky",
+        options: [{ optionId: "opt-yes", name: "Yes", kind: "allow_once" }],
+      },
+      echoPermissionResult: true,
+    });
+    const result = await runAcpTurn(double.launch, { prompt: "hi", cwd: process.cwd(), env: double.env });
+    expect(JSON.parse(result.output)).toEqual({ outcome: { outcome: "cancelled" } });
+  });
+
+  test("@s-perm-no-terminal-fails: stdin closing while a permission prompt waits fails the turn, kills the agent, and is never auto-approved", async () => {
     const double = withAcpDouble({
       requestPermission: {
         title: "risky",
         options: [{ optionId: "opt-yes", name: "Yes", kind: "allow_once" }],
       },
     });
-    const promptUser: PromptUser = () => Promise.reject(new SaoError("terminal torn down"));
+    const promptChoice: PromptChoices = () =>
+      Promise.reject(
+        new SaoError("stdin closed while waiting for a reply", "no interactive terminal and no reply line"),
+      );
     const original = console.error;
     console.error = () => {};
     let err: SaoError;
     let dead = false;
     try {
       err = await rejectionOf(
-        runAcpTurn(double.launch, { prompt: "hi", cwd: process.cwd(), env: double.env, promptUser }),
+        runAcpTurn(double.launch, { prompt: "hi", cwd: process.cwd(), env: double.env, promptChoice }),
       );
-      // The library re-frames the thrown promptUser error as a client-side request
+      // The library re-frames the thrown promptChoice error as a client-side request
       // error and logs it once the turn has already failed; the log lands on a
       // continuation that can outlive the rejection, so keep it muted until the
       // agent process is confirmed dead.
@@ -348,7 +375,7 @@ describe("runAcpTurn — the timeout clock pauses for a permission prompt (D5)",
       console.error = original;
     }
     expect(err).toBeInstanceOf(SaoError);
-    expect(err.message).toContain("terminal torn down");
+    expect(err.message).toContain("stdin closed while waiting for a reply");
     expect(dead).toBe(true);
   }, 15000);
 
@@ -356,17 +383,51 @@ describe("runAcpTurn — the timeout clock pauses for a permission prompt (D5)",
     const double = withAcpDouble({
       requestPermission: { title: "risky", options: [{ optionId: "opt-yes", name: "Yes", kind: "allow_once" }] },
     });
-    const promptUser: PromptUser = () => new Promise((resolve) => setTimeout(() => resolve("1"), 1500));
+    const promptChoice: PromptChoices = () =>
+      new Promise((resolve) => setTimeout(() => resolve({ kind: "text", text: "1" }), 1500));
     const result = await runAcpTurn(double.launch, {
       prompt: "hi",
       cwd: process.cwd(),
       env: double.env,
       timeoutSec: 1,
       nodeId: "n",
-      promptUser,
+      promptChoice,
     });
     expect(result.exitCode).toBe(0);
   }, 10000);
+
+  test("the permission prompt names the node only when nodeId is set", async () => {
+    const withNode = withAcpDouble({
+      requestPermission: { title: "risky", options: [{ optionId: "opt-yes", name: "Yes", kind: "allow_once" }] },
+    });
+    const messages: string[] = [];
+    await runAcpTurn(withNode.launch, {
+      prompt: "hi",
+      cwd: process.cwd(),
+      env: withNode.env,
+      nodeId: "grill",
+      promptChoice: async (req) => {
+        messages.push(req.message);
+        return { kind: "choice", id: "opt-yes" };
+      },
+    });
+    expect(messages[0]).toBe("\n[grill] permission requested: risky");
+
+    const withoutNode = withAcpDouble({
+      requestPermission: { title: "risky", options: [{ optionId: "opt-yes", name: "Yes", kind: "allow_once" }] },
+    });
+    const messagesNoNode: string[] = [];
+    await runAcpTurn(withoutNode.launch, {
+      prompt: "hi",
+      cwd: process.cwd(),
+      env: withoutNode.env,
+      promptChoice: async (req) => {
+        messagesNoNode.push(req.message);
+        return { kind: "choice", id: "opt-yes" };
+      },
+    });
+    expect(messagesNoNode[0]).toBe("\npermission requested: risky");
+  });
 
   test("@s-timeout-paused-while-queued: a prompt queued behind another's does not time out either, even once the total wait outlasts timeoutSec", async () => {
     const a = withAcpDouble({
@@ -379,8 +440,10 @@ describe("runAcpTurn — the timeout clock pauses for a permission prompt (D5)",
     // second call's own 800ms wait only starts once the first settles, so by the
     // time it resolves, well over 1 second (b's timeoutSec) has elapsed overall.
     let queue: Promise<unknown> = Promise.resolve();
-    const promptUser: PromptUser = () => {
-      const turn = queue.then(() => new Promise<string>((resolve) => setTimeout(() => resolve("1"), 800)));
+    const promptChoice: PromptChoices = () => {
+      const turn = queue.then(
+        () => new Promise<PromptAnswer>((resolve) => setTimeout(() => resolve({ kind: "text", text: "1" }), 800)),
+      );
       queue = turn.then(
         () => undefined,
         () => undefined,
@@ -388,8 +451,8 @@ describe("runAcpTurn — the timeout clock pauses for a permission prompt (D5)",
       return turn;
     };
     const [ra, rb] = await Promise.all([
-      runAcpTurn(a.launch, { prompt: "hi", cwd: process.cwd(), env: a.env, timeoutSec: 1, nodeId: "a", promptUser }),
-      runAcpTurn(b.launch, { prompt: "hi", cwd: process.cwd(), env: b.env, timeoutSec: 1, nodeId: "b", promptUser }),
+      runAcpTurn(a.launch, { prompt: "hi", cwd: process.cwd(), env: a.env, timeoutSec: 1, nodeId: "a", promptChoice }),
+      runAcpTurn(b.launch, { prompt: "hi", cwd: process.cwd(), env: b.env, timeoutSec: 1, nodeId: "b", promptChoice }),
     ]);
     expect(ra.exitCode).toBe(0);
     expect(rb.exitCode).toBe(0);
@@ -510,13 +573,32 @@ describe("runAcpTurn — sessions (task 6)", () => {
     expect(chunks.join("")).toContain("prior conversation history was lost");
   });
 
+  test("lost-session warning does not crash when no onOutput is wired at all", async () => {
+    const double = withAcpDouble({ sessionId: "sess-new", loadSessionFails: true });
+    const result = await runAcpTurn(double.launch, {
+      prompt: "go",
+      cwd: process.cwd(),
+      env: double.env,
+      resumeSessionId: "sess-gone",
+    });
+    expect(result.sessionId).toBe("sess-new");
+  });
+
   test("a process that dies while loading a session still fails the node, not swallowed as a lost session", async () => {
     const double = withAcpDouble({ loadSessionCrashes: true });
+    const chunks: string[] = [];
     const err = await rejectionOf(
-      runAcpTurn(double.launch, { prompt: "go", cwd: process.cwd(), env: double.env, resumeSessionId: "sess-gone" }),
+      runAcpTurn(double.launch, {
+        prompt: "go",
+        cwd: process.cwd(),
+        env: double.env,
+        resumeSessionId: "sess-gone",
+        onOutput: (c) => chunks.push(c),
+      }),
     );
     expect(err).toBeInstanceOf(SaoError);
     expect(err.message).not.toContain("lost session");
+    expect(chunks.join("")).not.toContain("lost session"); // already settled/rejected; no stale warning after
   });
 });
 
@@ -579,6 +661,44 @@ describe("runAcpTurn — MCP passthrough and ignored settings (task 7)", () => {
     ]);
   });
 
+  test("minimal server defs default missing fields: no type/headers on url servers, no command/args/env on stdio servers", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "sao-acp-mcp-minimal-"));
+    const mcpConfigPath = join(dir, "mcp.json");
+    writeFileSync(
+      mcpConfigPath,
+      JSON.stringify({
+        mcpServers: {
+          remote: { url: "https://example.com/mcp", headers: null },
+          local: { env: null },
+          stray: { command: "npx", env: "not-an-object" },
+        },
+      }),
+    );
+    const double = withAcpDouble({ echoMcpServers: true });
+    const result = await runAcpTurn(double.launch, {
+      prompt: "hi",
+      cwd: process.cwd(),
+      env: double.env,
+      mcpConfigPath,
+    });
+    expect(JSON.parse(result.output)).toEqual([
+      { name: "remote", type: "http", url: "https://example.com/mcp", headers: [] },
+      { name: "local", command: "", args: [], env: [] },
+      { name: "stray", command: "npx", args: [], env: [] },
+    ]);
+  });
+
+  test("a malformed mcp.json fails the turn, not as a hang or a silent empty server list", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "sao-acp-mcp-malformed-"));
+    const mcpConfigPath = join(dir, "mcp.json");
+    writeFileSync(mcpConfigPath, "not json at all");
+    const double = withAcpDouble({});
+    const err = await rejectionOf(
+      runAcpTurn(double.launch, { prompt: "hi", cwd: process.cwd(), env: double.env, mcpConfigPath }),
+    );
+    expect(err.message).toContain(`${double.launch.command} failed:`);
+  });
+
   test("@s-no-mcp-key-no-forwarding: without mcpConfigPath, the session is created with no MCP servers", async () => {
     const double = withAcpDouble({ echoMcpServers: true });
     const result = await runAcpTurn(double.launch, { prompt: "hi", cwd: process.cwd(), env: double.env });
@@ -598,6 +718,17 @@ describe("runAcpTurn — MCP passthrough and ignored settings (task 7)", () => {
     expect(chunks.join("")).toBe(
       `⚠ ${double.launch.command} ignores allowed_tools — ACP has no tool-allowlist concept to map it onto\n`,
     );
+    expect(result.exitCode).toBe(0);
+  });
+
+  test("allowed_tools warning does not crash when no onOutput is wired at all", async () => {
+    const double = withAcpDouble({});
+    const result = await runAcpTurn(double.launch, {
+      prompt: "hi",
+      cwd: process.cwd(),
+      env: double.env,
+      allowedTools: ["Bash"],
+    });
     expect(result.exitCode).toBe(0);
   });
 
@@ -651,6 +782,15 @@ describe("runAcpTurn — model selection via session/set_model", () => {
     expect(chunks.join("")).toContain(
       `⚠ ${double.launch.command} cannot select models — model x/y ignored, using its default`,
     );
+    expect(result.output).toBe("ok");
+  });
+
+  test("model-unsupported warning does not crash when no onOutput is wired at all", async () => {
+    const double = withAcpDouble({
+      rejectModel: { code: -32601, message: "Method not found" },
+      chunks: [{ text: "ok" }],
+    });
+    const result = await runAcpTurn(double.launch, { prompt: "hi", cwd: process.cwd(), env: double.env, model: "x/y" });
     expect(result.output).toBe("ok");
     expect(result.exitCode).toBe(0);
   });

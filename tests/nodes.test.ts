@@ -4,6 +4,7 @@ import { existsSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SaoError } from "../src/errors";
+import type { PromptChoices } from "../src/gate";
 import type { AiExecConfig } from "../src/nodes";
 import { evaluateWhenBash, executeAiNode, executeBashScript, runShell, trimBuffer, withRetries } from "../src/nodes";
 import type { Runner, RunnerRequest } from "../src/runners/types";
@@ -318,13 +319,13 @@ describe("executeAiNode", () => {
     expect(req.timeoutSec).toBe(42);
   });
 
-  test("forwards the owning node id and the terminal prompt function from context to the runner", async () => {
+  test("forwards the owning node id and the list-prompt seam from context to the runner", async () => {
     const calls: RunnerRequest[] = [];
-    const promptUser = async (message: string) => message;
-    await executeAiNode("p", config(fakeRunner({}, calls)), { cwd: cwd(), log: () => {}, nodeId: "fix", promptUser });
+    const promptChoice: PromptChoices = async () => ({ kind: "choice", id: "x" });
+    await executeAiNode("p", config(fakeRunner({}, calls)), { cwd: cwd(), log: () => {}, nodeId: "fix", promptChoice });
     const req = calls[0]!;
     expect(req.nodeId).toBe("fix");
-    expect(req.promptUser).toBe(promptUser);
+    expect(req.promptChoice).toBe(promptChoice);
   });
 
   test("leaves optional fields undefined when the config has none", async () => {

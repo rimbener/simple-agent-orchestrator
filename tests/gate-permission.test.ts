@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AcpLaunch } from "../src/acp";
 import { runAcpTurn } from "../src/acp";
-import type { PromptUser } from "../src/gate";
+import type { Choice, PromptChoices } from "../src/gate";
 
 /**
  * A hand-rolled ACP agent that requests permission mid-turn: on `session/prompt`
@@ -66,12 +66,12 @@ const OPTIONS = [
 ];
 
 describe("runAcpTurn — permission requests", () => {
-  test("@s-permission-prompt-numbered: shows the node id, the tool call title, and the offered options numbered; the chosen optionId reaches the agent", async () => {
+  test("@s-perm-agent-options-listed: the list holds the node id, the tool call title, and one entry per option sent, in order, nothing invented", async () => {
     const double = withPermissionDouble({ title: "Write file foo.txt", options: OPTIONS });
-    const messages: string[] = [];
-    const promptUser: PromptUser = async (message) => {
-      messages.push(message);
-      return "1";
+    const seen: { message: string; choices: Choice[] }[] = [];
+    const promptChoice: PromptChoices = async (req) => {
+      seen.push(req);
+      return { kind: "choice", id: "opt-allow" };
     };
     const logged: string[] = [];
     const result = await runAcpTurn(double.launch, {
@@ -79,36 +79,76 @@ describe("runAcpTurn — permission requests", () => {
       cwd: process.cwd(),
       env: double.env,
       nodeId: "write-node",
-      promptUser,
+      promptChoice,
       onOutput: (c) => logged.push(c),
     });
-    expect(messages).toHaveLength(1);
-    expect(messages[0]).toContain("write-node");
-    expect(messages[0]).toContain("Write file foo.txt");
-    expect(messages[0]).toContain("1. Allow");
-    expect(messages[0]).toContain("2. Deny");
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.message).toContain("write-node");
+    expect(seen[0]!.message).toContain("Write file foo.txt");
+    expect(seen[0]!.choices).toEqual([
+      { id: "opt-allow", label: "Allow" },
+      { id: "opt-deny", label: "Deny" },
+    ]);
     expect(result.output).toBe("chosen:opt-allow");
-    // The request/menu/selection text rides the interactive prompt only — never
-    // onOutput too, or a real terminal (print echoes onOutput chunks dim, alongside
-    // the bright interactive prompt) shows the same block twice. onOutput still
-    // carries the turn's actual message content (the double's "chosen:..." reply).
+    // The request/list/selection text rides the interactive prompt only — never
+    // mirrored through onOutput too, matching the gate node's own prompt text,
+    // which likewise never touches the node log (engine.ts's executeGate).
     expect(logged.join("")).not.toContain("Write file foo.txt");
     expect(logged.join("")).not.toContain("selected:");
   });
 
-  test("@s-permission-invalid-reply-reasks: an unparseable or out-of-range reply re-asks; nothing reaches the agent until a valid choice", async () => {
+  test("@s-perm-selection-sent-verbatim: a chosen entry's id reaches the agent unchanged; sao remembers nothing about it", async () => {
     const double = withPermissionDouble({ title: "Run rm -rf", options: OPTIONS });
-    const replies = ["banana", "9", "2"];
-    let calls = 0;
-    const promptUser: PromptUser = async () => replies[calls++]!;
+    const promptChoice: PromptChoices = async () => ({ kind: "choice", id: "opt-deny" });
     const result = await runAcpTurn(double.launch, {
       prompt: "do it",
       cwd: process.cwd(),
       env: double.env,
       nodeId: "n",
-      promptUser,
+      promptChoice,
     });
-    expect(calls).toBe(3);
+    expect(result.output).toBe("chosen:opt-deny");
+  });
+
+  test("@s-perm-piped-index: a piped reply naming a valid 1-based index chooses the option at that position", async () => {
+    const double = withPermissionDouble({ title: "Run rm -rf", options: OPTIONS });
+    const promptChoice: PromptChoices = async () => ({ kind: "text", text: "2" });
+    const result = await runAcpTurn(double.launch, {
+      prompt: "do it",
+      cwd: process.cwd(),
+      env: double.env,
+      nodeId: "n",
+      promptChoice,
+    });
+    expect(result.output).toBe("chosen:opt-deny");
+  });
+
+  test("@s-perm-piped-option-id: a piped reply naming an option's identifier chooses that option", async () => {
+    const double = withPermissionDouble({ title: "Run rm -rf", options: OPTIONS });
+    const promptChoice: PromptChoices = async () => ({ kind: "text", text: "opt-deny" });
+    const result = await runAcpTurn(double.launch, {
+      prompt: "do it",
+      cwd: process.cwd(),
+      env: double.env,
+      nodeId: "n",
+      promptChoice,
+    });
+    expect(result.output).toBe("chosen:opt-deny");
+  });
+
+  test("@s-perm-piped-invalid-reasks / @s-perm-nothing-sent-until-chosen: an unusable piped reply re-asks with no menu written; nothing reaches the agent until a valid choice", async () => {
+    const double = withPermissionDouble({ title: "Run rm -rf", options: OPTIONS });
+    const replies = ["banana", "9", "opt-nonexistent", "2"];
+    let calls = 0;
+    const promptChoice: PromptChoices = async () => ({ kind: "text", text: replies[calls++]! });
+    const result = await runAcpTurn(double.launch, {
+      prompt: "do it",
+      cwd: process.cwd(),
+      env: double.env,
+      nodeId: "n",
+      promptChoice,
+    });
+    expect(calls).toBe(4);
     expect(result.output).toBe("chosen:opt-deny");
   });
 });

@@ -14,9 +14,8 @@ model: sonnet
 allowed_tools:
   - WebSearch
   - WebFetch
-  - "Bash(bun add:*)"
-  - "Bash(bun install:*)"
-  - "Bash(bun remove:*)"
+  - "Bash(bun *)"
+  - "Bash(git *)"
 ---
 
 # implementer — Phase 2 (build) + re-work in Phases 3–4

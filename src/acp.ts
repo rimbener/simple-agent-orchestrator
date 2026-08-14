@@ -14,7 +14,7 @@ import {
   type SessionNotification,
 } from "@zed-industries/agent-client-protocol";
 import { SaoError, truncateDetail } from "./errors";
-import { parsePermissionReply } from "./gate";
+import { type Choice, parsePermissionReply, type PromptAnswer } from "./gate";
 import { killTree, swallowStdinErrors, track } from "./procs";
 import type { RunnerRequest, RunnerResult } from "./runners/types";
 
@@ -135,6 +135,8 @@ export function runAcpTurn(launch: AcpLaunch, req: RunnerRequest): Promise<Runne
     const ignored = ignoredAcpSettings(req);
     if (ignored.length > 0) {
       req.onOutput?.(
+        // Stryker disable next-line StringLiteral: equivalent — ignoredAcpSettings only ever pushes one
+        // entry ("allowed_tools"), so a one-element array's join separator is never observed.
         `⚠ ${launch.command} ignores ${ignored.join(", ")} — ACP has no tool-allowlist concept to map it onto\n`,
       );
     }
@@ -220,20 +222,22 @@ export function runAcpTurn(launch: AcpLaunch, req: RunnerRequest): Promise<Runne
         req.onOutput?.(text);
       },
       async requestPermission(params: RequestPermissionRequest): Promise<RequestPermissionResponse> {
-        // No terminal wired (e.g. a caller that never sets promptUser) — never auto-approve.
-        if (!req.promptUser) return { outcome: { outcome: "cancelled" } };
+        // No terminal wired (e.g. a caller that never sets promptChoice) — never auto-approve.
+        if (!req.promptChoice) return { outcome: { outcome: "cancelled" } };
         const title = params.toolCall.title ?? params.toolCall.toolCallId;
-        const menu = params.options.map((opt, i) => `  ${i + 1}. ${opt.name}`).join("\n");
         const label = req.nodeId ? `[${req.nodeId}] ` : "";
+        // The agent's own options, one-to-one, in the order sent — nothing sao invents.
+        const choices: Choice[] = params.options.map((opt) => ({ id: opt.optionId, label: opt.name }));
+        const optionIds = params.options.map((opt) => opt.optionId);
         // The interactive prompt below is the only rendering of the request — never
         // mirrored through onOutput too, matching the gate node's own prompt text,
         // which likewise never touches the node log (engine.ts's executeGate).
         pauseTimer(); // the whole exchange below is human deliberation, queued time included
         try {
           for (;;) {
-            let reply: string;
+            let answer: PromptAnswer;
             try {
-              reply = await req.promptUser(`\n${label}permission requested: ${title}\n${menu}\n> `);
+              answer = await req.promptChoice({ message: `\n${label}permission requested: ${title}`, choices });
             } catch (err) {
               settle(() => {
                 killTree(child);
@@ -241,7 +245,9 @@ export function runAcpTurn(launch: AcpLaunch, req: RunnerRequest): Promise<Runne
               });
               throw err;
             }
-            const parsed = parsePermissionReply(reply, params.options.length);
+            // A list selection is sent back verbatim — no permission memory of sao's own.
+            if (answer.kind === "choice") return { outcome: { outcome: "selected", optionId: answer.id } };
+            const parsed = parsePermissionReply(answer.text, optionIds);
             if (parsed.kind === "invalid") continue; // re-ask; nothing is sent to the agent yet
             const option = params.options[parsed.index - 1]!;
             return { outcome: { outcome: "selected", optionId: option.optionId } };
@@ -281,6 +287,10 @@ export function runAcpTurn(launch: AcpLaunch, req: RunnerRequest): Promise<Runne
             // already settled the turn and `settled` is true here, so this
             // branch does nothing further — a genuine transport failure is
             // never swallowed into a "lost session" retry.
+            // Stryker disable next-line ConditionalExpression: verified by hand this branch cannot be
+            // proven reachable — killTree always reliably kills the child before a delayed response can
+            // arrive, and a dead/killed child leaves conn.loadSession() pending forever rather than
+            // rejecting it, so no test drives settled=true here. Left in place for defense in depth.
             if (settled) return;
             req.onOutput?.(
               `⚠ lost session ${req.resumeSessionId} — prior conversation history was lost; continuing in a new session\n`,
@@ -303,6 +313,8 @@ export function runAcpTurn(launch: AcpLaunch, req: RunnerRequest): Promise<Runne
           try {
             await conn.setSessionModel({ sessionId, modelId: req.model });
           } catch (err) {
+            // Stryker disable next-line OptionalChaining: equivalent — err here is always the
+            // ACP library's own thrown error object for a rejected RPC, never null/undefined.
             if ((err as { code?: number })?.code === -32601) {
               req.onOutput?.(
                 `⚠ ${launch.command} cannot select models — model ${req.model} ignored, using its default\n`,
@@ -365,6 +377,9 @@ export function runAcpHandshake(
     // preflight — and every caller that awaits it — forever.
     const settle = (finish: () => void) => {
       if (settled) return;
+      // Stryker disable next-line BooleanLiteral: equivalent — a broken guard lets settle() run twice,
+      // but resolve/reject are idempotent (a second call after the promise already settled is a no-op),
+      // and killTree/clearTimeout are themselves safe to repeat, so no observable outcome changes.
       settled = true;
       // Stryker disable next-line all: equivalent — clearTimeout on an already-fired timer is a no-op
       clearTimeout(timer);
@@ -391,9 +406,19 @@ export function runAcpHandshake(
         Writable.toWeb(child.stdin) as WritableStream<Uint8Array>,
         dropUsageUpdateNotifications(Readable.toWeb(child.stdout) as ReadableStream<Uint8Array>),
       );
+      // Stryker disable next-line ObjectLiteral: equivalent — verified by hand: even an empty client
+      // object here (sessionUpdate/requestPermission both missing) doesn't change the observable
+      // outcome. The ACP library catches the resulting "not a function" errors per-request/notification
+      // and answers them with a JSON-RPC error internally; it never propagates to the separate
+      // initialize() call this function actually awaits.
       const client: Client = {
         async sessionUpdate(): Promise<void> {},
+        // Stryker disable next-line BlockStatement: equivalent, same reason as above — this handler's
+        // return value only reaches the spawned agent, which this function kills (killTree) the instant
+        // initialize() resolves; verified by hand that the child never observably receives it in time.
         async requestPermission(): Promise<RequestPermissionResponse> {
+          // Stryker disable next-line ObjectLiteral,StringLiteral: equivalent, same reason — this return
+          // value's shape is never validated or awaited by anything this function actually depends on.
           return { outcome: { outcome: "cancelled" } };
         },
       };

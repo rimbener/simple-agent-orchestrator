@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { preflightAiConfigs, runWorkflow, sentinelInstruction, sentinelToken } from "../src/engine";
 import { SaoError } from "../src/errors";
+import type { Choice, PromptAnswer } from "../src/gate";
+import { AGENT_OPTIONS_INSTRUCTION } from "../src/options";
 import { loadWorkflow } from "../src/parser";
 import type { Runner, RunnerRequest } from "../src/runners/types";
 
@@ -37,13 +39,13 @@ function scriptedRunner(outputs: string[], calls: RunnerRequest[] = []): Runner 
   };
 }
 
-/** promptUser returning scripted replies in order; records every question. */
-function scriptedPrompts(replies: string[], questions: string[] = []) {
+/** promptChoice returning scripted answers in order; records every request. */
+function scriptedChoices(answers: PromptAnswer[], requests: { message: string; choices: Choice[] }[] = []) {
   let i = 0;
-  return async (message: string) => {
-    questions.push(message);
-    if (i >= replies.length) throw new Error("promptUser called more times than scripted");
-    return replies[i++]!;
+  return async (req: { message: string; choices: Choice[] }) => {
+    requests.push(req);
+    if (i >= answers.length) throw new Error("promptChoice called more times than scripted");
+    return answers[i++]!;
   };
 }
 
@@ -470,7 +472,7 @@ nodes:
 });
 
 describe("interactive loops", () => {
-  test("pauses every iteration; feedback threads into {{loop.feedback}}; bare approve on a signaled iteration ends it", async () => {
+  test("@s-loop-piped-freeform-is-feedback: pauses every iteration; feedback threads into {{loop.feedback}}; bare approve on a signaled iteration ends it", async () => {
     const { dir, path } = setup(`
 name: interactive
 nodes:
@@ -483,10 +485,17 @@ nodes:
 `);
     const calls: RunnerRequest[] = [];
     const runner = scriptedRunner(["question one?", `done ${sentinelToken("SETTLED")}`], calls);
-    const questions: string[] = [];
+    const requests: { message: string; choices: Choice[] }[] = [];
     const state = await run(path, dir, {
       resolveRunner: () => runner,
-      promptUser: scriptedPrompts(["blue, not red", "a"], questions),
+      // piped path: no options declared, so these are plain verdict/feedback lines.
+      promptChoice: scriptedChoices(
+        [
+          { kind: "text", text: "blue, not red" },
+          { kind: "text", text: "a" },
+        ],
+        requests,
+      ),
     });
     expect(state.status).toBe("succeeded");
     expect(state.nodes.grill!.iterations).toBe(2);
@@ -494,8 +503,8 @@ nodes:
     expect(state.nodes.grill!.lastFeedback).toBe("blue, not red"); // persisted for M3 resume
     expect(calls[0]!.prompt).toContain("feedback: []");
     expect(calls[1]!.prompt).toContain("feedback: [blue, not red]");
-    expect(questions[0]).toContain("no signal yet");
-    expect(questions[1]).toContain("agent signaled SETTLED");
+    expect(requests[0]!.message).toContain("no signal yet");
+    expect(requests[1]!.message).toContain("agent signaled SETTLED");
   });
 
   test("empty replies at the loop gate re-ask instead of becoming feedback", async () => {
@@ -511,17 +520,20 @@ nodes:
 `);
     const calls: RunnerRequest[] = [];
     const runner = scriptedRunner([`ok ${sentinelToken("SETTLED")}`], calls);
-    const questions: string[] = [];
+    const requests: { message: string; choices: Choice[] }[] = [];
     const state = await run(path, dir, {
       resolveRunner: () => runner,
-      promptUser: scriptedPrompts(["", "   ", "a"], questions),
+      promptChoice: scriptedChoices(
+        [{ kind: "text", text: "" }, { kind: "text", text: "   " }, { kind: "text", text: "a" }],
+        requests,
+      ),
     });
     expect(state.status).toBe("succeeded");
-    expect(questions).toHaveLength(3); // two re-asks, then the approve
+    expect(requests).toHaveLength(3); // two re-asks, then the approve
     expect(calls).toHaveLength(1); // never advanced an iteration on an empty reply
   });
 
-  test("approving an unsignaled iteration re-asks instead of ending the loop", async () => {
+  test("@s-loop-piped-unsignaled-approve-reasks: approving an unsignaled iteration re-asks instead of ending the loop", async () => {
     const { dir, path } = setup(`
 name: eagerapprove
 nodes:
@@ -533,17 +545,24 @@ nodes:
       interactive: true
 `);
     const runner = scriptedRunner(["no signal here", `yes ${sentinelToken("SETTLED")}`]);
-    const questions: string[] = [];
+    const requests: { message: string; choices: Choice[] }[] = [];
     const printed: string[] = [];
     const state = await run(path, dir, {
       resolveRunner: () => runner,
       // iteration 1: "a" (invalid, unsignaled) → re-ask → feedback; iteration 2: approve.
-      promptUser: scriptedPrompts(["a", "keep going", "a"], questions),
+      promptChoice: scriptedChoices(
+        [
+          { kind: "text", text: "a" },
+          { kind: "text", text: "keep going" },
+          { kind: "text", text: "a" },
+        ],
+        requests,
+      ),
       print: (line) => printed.push(line),
     });
     expect(state.status).toBe("succeeded");
     expect(state.nodes.grill!.iterations).toBe(2);
-    expect(questions).toHaveLength(3);
+    expect(requests).toHaveLength(3);
     expect(
       printed.some((line) => line.includes("has not emitted <promise>SETTLED</promise>") && line.includes("grill")),
     ).toBe(true);
@@ -564,7 +583,7 @@ nodes:
     const calls: RunnerRequest[] = [];
     const runner = scriptedRunner(["whatever"], calls);
     try {
-      await run(path, dir, { resolveRunner: () => runner, promptUser: scriptedPrompts(["r"]) });
+      await run(path, dir, { resolveRunner: () => runner, promptChoice: scriptedChoices([{ kind: "text", text: "r" }]) });
       throw new Error("should have thrown");
     } catch (err) {
       expect(err).toBeInstanceOf(SaoError);
@@ -592,9 +611,9 @@ nodes:
       interactive: true
 `);
     const runner = scriptedRunner(["question?"]);
-    await expect(run(path, dir, { resolveRunner: () => runner, promptUser: scriptedPrompts(["r"]) })).rejects.toThrow(
-      "rejected",
-    );
+    await expect(
+      run(path, dir, { resolveRunner: () => runner, promptChoice: scriptedChoices([{ kind: "text", text: "r" }]) }),
+    ).rejects.toThrow("rejected");
     const runsDir = join(dir, ".sao", "runs");
     const runId = (await import("node:fs")).readdirSync(runsDir)[0]!;
     const saved = JSON.parse(readFileSync(join(runsDir, runId, "state.json"), "utf8"));
@@ -632,7 +651,10 @@ nodes:
 `);
     const runner = scriptedRunner([`done ${sentinelToken("SETTLED")}`]);
     try {
-      await run(path, dir, { resolveRunner: () => runner, promptUser: scriptedPrompts(["please tweak the copy"]) });
+      await run(path, dir, {
+        resolveRunner: () => runner,
+        promptChoice: scriptedChoices([{ kind: "text", text: "please tweak the copy" }]),
+      });
       throw new Error("should have thrown");
     } catch (err) {
       const message = (err as SaoError).message;
@@ -657,34 +679,417 @@ nodes:
       interactive: true
 `);
     const runner = scriptedRunner([`done ${sentinelToken("DONE")}`]);
-    const questions: string[] = [];
+    const requests: { message: string; choices: Choice[] }[] = [];
     try {
       await run(path, dir, {
         resolveRunner: () => runner,
         // iter 1 (signaled): feedback + create the marker so iter 2's step is skipped.
         // iter 2 (all steps skipped): "a" must NOT be accepted — the engine re-asks;
         // the follow-up feedback ends iteration 2 and the loop exhausts.
-        promptUser: async (message: string) => {
-          questions.push(message);
-          if (questions.length === 1) {
+        promptChoice: async (req) => {
+          requests.push(req);
+          if (requests.length === 1) {
             writeFileSync(join(dir, "skip-now"), "");
-            return "not yet, keep going";
+            return { kind: "text", text: "not yet, keep going" };
           }
-          if (questions.length === 2) return "a"; // stale token must not make this approvable
-          return "still not right";
+          if (requests.length === 2) return { kind: "text", text: "a" }; // stale token must not make this approvable
+          return { kind: "text", text: "still not right" };
         },
       });
       throw new Error("should have thrown");
     } catch (err) {
       expect((err as Error).message).toContain("max_iterations");
     }
-    expect(questions[1]).toContain("no signal yet"); // the stale iter-1 token did not count
-    expect(questions).toHaveLength(3); // the invalid approve forced a re-ask
+    expect(requests[1]!.message).toContain("no signal yet"); // the stale iter-1 token did not count
+    expect(requests).toHaveLength(3); // the invalid approve forced a re-ask
+  });
+});
+
+describe("interactive loop options", () => {
+  test("@s-loop-instruction-appended: the options instruction rides beside the sentinel, only on interactive loops", async () => {
+    const interactiveCalls: RunnerRequest[] = [];
+    const interactiveWorkflow = setup(`
+name: withoptions
+nodes:
+  - id: grill
+    loop:
+      prompt: "ask"
+      until: SETTLED
+      max_iterations: 1
+      interactive: true
+`);
+    await run(interactiveWorkflow.path, interactiveWorkflow.dir, {
+      resolveRunner: () => scriptedRunner([`done ${sentinelToken("SETTLED")}`], interactiveCalls),
+      promptChoice: scriptedChoices([{ kind: "choice", id: "sao:end-loop" }]),
+    });
+    expect(interactiveCalls[0]!.prompt).toContain(AGENT_OPTIONS_INSTRUCTION);
+
+    const plainCalls: RunnerRequest[] = [];
+    const plainWorkflow = setup(`
+name: withoutoptions
+nodes:
+  - id: work
+    loop:
+      prompt: "ask"
+      until: DONE
+      max_iterations: 1
+`);
+    await run(plainWorkflow.path, plainWorkflow.dir, {
+      resolveRunner: () => scriptedRunner([`done ${sentinelToken("DONE")}`], plainCalls),
+    });
+    expect(plainCalls[0]!.prompt).not.toContain(AGENT_OPTIONS_INSTRUCTION);
+
+    // Multi-step loops: only the last AI step carries the sentinel, so only it
+    // may also carry the options instruction.
+    const stepsCalls: RunnerRequest[] = [];
+    const stepsWorkflow = setup(`
+name: stepsoptions
+nodes:
+  - id: cycle
+    loop:
+      steps:
+        - prompt: "first"
+        - prompt: "second"
+      until: SETTLED
+      max_iterations: 1
+      interactive: true
+`);
+    await run(stepsWorkflow.path, stepsWorkflow.dir, {
+      resolveRunner: () => scriptedRunner(["first output", `second ${sentinelToken("SETTLED")}`], stepsCalls),
+      promptChoice: scriptedChoices([{ kind: "choice", id: "sao:end-loop" }]),
+    });
+    expect(stepsCalls[0]!.prompt).not.toContain(AGENT_OPTIONS_INSTRUCTION);
+    expect(stepsCalls[1]!.prompt).toContain(AGENT_OPTIONS_INSTRUCTION);
+  });
+
+  test("@s-loop-options-listed: the agent's declared options come first, in order, ahead of the run's own entries", async () => {
+    const { dir, path } = setup(`
+name: declared
+nodes:
+  - id: grill
+    loop:
+      prompt: "ask"
+      until: SETTLED
+      max_iterations: 1
+      interactive: true
+`);
+    const output = `${sentinelToken("SETTLED")}\n<options>[{"id": "sqlite", "label": "Use SQLite", "description": "no server to run"}, {"id": "postgres", "label": "Use Postgres"}]</options>`;
+    const requests: { message: string; choices: Choice[] }[] = [];
+    const state = await run(path, dir, {
+      resolveRunner: () => scriptedRunner([output]),
+      promptChoice: scriptedChoices([{ kind: "choice", id: "sao:end-loop" }], requests),
+    });
+    expect(requests[0]!.choices).toEqual([
+      { id: "sqlite", label: "Use SQLite", description: "no server to run" },
+      { id: "postgres", label: "Use Postgres", description: undefined },
+      { id: "sao:end-loop", label: "End the loop" },
+      { id: "sao:feedback", label: "Write feedback instead", collectsText: true },
+      { id: "sao:reject", label: "Reject and halt the run" },
+    ]);
+    const log = readFileSync(join(dir, ".sao", "runs", state.id, "logs", "grill.1.log"), "utf8");
+    expect(log).not.toContain("could not read the agent's declared options"); // it parsed fine
+  });
+
+  test("@s-loop-option-feeds-label: choosing an agent's option feeds its label, not its id, to the next iteration", async () => {
+    const { dir, path } = setup(`
+name: feedslabel
+nodes:
+  - id: grill
+    loop:
+      prompt: "ask; feedback: [{{loop.feedback}}]"
+      until: SETTLED
+      max_iterations: 2
+      interactive: true
+`);
+    const calls: RunnerRequest[] = [];
+    const runner = scriptedRunner(
+      [
+        `question? <options>[{"id": "sqlite", "label": "Use SQLite"}, {"id": "postgres", "label": "Use Postgres"}]</options>`,
+        `done ${sentinelToken("SETTLED")}`,
+      ],
+      calls,
+    );
+    const state = await run(path, dir, {
+      resolveRunner: () => runner,
+      promptChoice: scriptedChoices([
+        { kind: "choice", id: "postgres" },
+        { kind: "choice", id: "sao:end-loop" },
+      ]),
+    });
+    expect(state.status).toBe("succeeded");
+    expect(state.nodes.grill!.lastFeedback).toBe("Use Postgres"); // the chosen option's label, not the first declared one's
+    expect(calls[1]!.prompt).toContain("feedback: [Use Postgres]");
+  });
+
+  test("@s-loop-end-entry-only-when-signaled: the end-the-loop entry appears only once the agent has signaled", async () => {
+    const { dir, path } = setup(`
+name: endentry
+nodes:
+  - id: grill
+    loop:
+      prompt: "ask"
+      until: SETTLED
+      max_iterations: 2
+      interactive: true
+`);
+    const runner = scriptedRunner(["no signal yet", `done ${sentinelToken("SETTLED")}`]);
+    const requests: { message: string; choices: Choice[] }[] = [];
+    const state = await run(path, dir, {
+      resolveRunner: () => runner,
+      promptChoice: scriptedChoices(
+        [
+          { kind: "text", text: "keep going" },
+          { kind: "choice", id: "sao:end-loop" },
+        ],
+        requests,
+      ),
+    });
+    expect(state.status).toBe("succeeded"); // ending on the signaled iteration succeeds with its output
+    expect(requests[0]!.choices).toEqual([
+      { id: "sao:feedback", label: "Write feedback instead", collectsText: true },
+      { id: "sao:reject", label: "Reject and halt the run" },
+    ]);
+    expect(requests[1]!.choices.map((c) => c.id)).toContain("sao:end-loop");
+  });
+
+  test("@s-loop-feedback-entry: writing feedback is always offered and collects text for the next iteration", async () => {
+    const { dir, path } = setup(`
+name: feedbackentry
+nodes:
+  - id: grill
+    loop:
+      prompt: "ask; feedback: [{{loop.feedback}}]"
+      until: SETTLED
+      max_iterations: 2
+      interactive: true
+`);
+    const calls: RunnerRequest[] = [];
+    const runner = scriptedRunner(["question?", `done ${sentinelToken("SETTLED")}`], calls);
+    const requests: { message: string; choices: Choice[] }[] = [];
+    const state = await run(path, dir, {
+      resolveRunner: () => runner,
+      promptChoice: scriptedChoices(
+        [
+          { kind: "text", text: "add a docs note first", from: "sao:feedback" },
+          { kind: "choice", id: "sao:end-loop" },
+        ],
+        requests,
+      ),
+    });
+    expect(state.status).toBe("succeeded");
+    expect(requests[0]!.choices.find((c) => c.id === "sao:feedback")).toEqual({
+      id: "sao:feedback",
+      label: "Write feedback instead",
+      collectsText: true,
+    });
+    expect(calls[1]!.prompt).toContain("feedback: [add a docs note first]");
+  });
+
+  test("@s-loop-feedback-keeps-verdict-words: feedback text that reads like a verdict stays text, never a verdict", async () => {
+    const { dir, path } = setup(`
+name: keepsverdict
+nodes:
+  - id: grill
+    loop:
+      prompt: "ask; feedback: [{{loop.feedback}}]"
+      until: SETTLED
+      max_iterations: 2
+      interactive: true
+`);
+    const calls: RunnerRequest[] = [];
+    const runner = scriptedRunner(["question?", `done ${sentinelToken("SETTLED")}`], calls);
+    const state = await run(path, dir, {
+      resolveRunner: () => runner,
+      promptChoice: scriptedChoices([
+        { kind: "text", text: "approve", from: "sao:feedback" },
+        { kind: "choice", id: "sao:end-loop" },
+      ]),
+    });
+    expect(state.status).toBe("succeeded"); // never ended or halted by the verdict-looking word
+    expect(calls[1]!.prompt).toContain("feedback: [approve]");
+  });
+
+  test("@s-loop-feedback-entry: an empty give-feedback answer re-asks the same iteration", async () => {
+    const { dir, path } = setup(`
+name: loopemptyfeedback
+nodes:
+  - id: grill
+    loop:
+      prompt: "ask; feedback: [{{loop.feedback}}]"
+      until: SETTLED
+      max_iterations: 2
+      interactive: true
+`);
+    const calls: RunnerRequest[] = [];
+    const runner = scriptedRunner(["question?", `done ${sentinelToken("SETTLED")}`], calls);
+    const requests: { message: string; choices: Choice[] }[] = [];
+    const state = await run(path, dir, {
+      resolveRunner: () => runner,
+      promptChoice: scriptedChoices(
+        [
+          { kind: "text", text: "", from: "sao:feedback" },
+          { kind: "text", text: "  ", from: "sao:feedback" },
+          { kind: "text", text: "add a docs note first", from: "sao:feedback" },
+          { kind: "choice", id: "sao:end-loop" },
+        ],
+        requests,
+      ),
+    });
+    expect(state.status).toBe("succeeded");
+    expect(requests).toHaveLength(4);
+    expect(calls[1]!.prompt).toContain("feedback: [add a docs note first]");
+  });
+
+  test("@s-loop-reject-entry: rejecting from the list halts the run, marking node and run rejected", async () => {
+    const { dir, path } = setup(`
+name: rejectentry
+nodes:
+  - id: grill
+    loop:
+      prompt: "ask"
+      until: SETTLED
+      max_iterations: 3
+      interactive: true
+`);
+    const runner = scriptedRunner(["question?"]);
+    const requests: { message: string; choices: Choice[] }[] = [];
+    await expect(
+      run(path, dir, {
+        resolveRunner: () => runner,
+        promptChoice: scriptedChoices([{ kind: "choice", id: "sao:reject" }], requests),
+      }),
+    ).rejects.toThrow('rejected at node "grill"');
+    expect(requests[0]!.choices.map((c) => c.id)).toContain("sao:reject");
+    const runsDir = join(dir, ".sao", "runs");
+    const runId = (await import("node:fs")).readdirSync(runsDir)[0]!;
+    const saved = JSON.parse(readFileSync(join(runsDir, runId, "state.json"), "utf8"));
+    expect(saved.status).toBe("rejected");
+    expect(saved.nodes.grill.status).toBe("rejected");
+  });
+
+  test("@s-loop-no-options-fallback: an agent that declares nothing behaves exactly as before", async () => {
+    const { dir, path } = setup(`
+name: nooptions
+nodes:
+  - id: grill
+    loop:
+      prompt: "ask"
+      until: SETTLED
+      max_iterations: 1
+      interactive: true
+`);
+    const runner = scriptedRunner([`done ${sentinelToken("SETTLED")}`]);
+    const requests: { message: string; choices: Choice[] }[] = [];
+    const state = await run(path, dir, {
+      resolveRunner: () => runner,
+      promptChoice: scriptedChoices([{ kind: "choice", id: "sao:end-loop" }], requests),
+    });
+    expect(state.status).toBe("succeeded");
+    expect(requests[0]!.choices.map((c) => c.id)).toEqual(["sao:end-loop", "sao:feedback", "sao:reject"]);
+    const log = readFileSync(join(dir, ".sao", "runs", state.id, "logs", "grill.1.log"), "utf8");
+    expect(log).not.toContain("could not read the agent's declared options"); // no <options> tag at all: the ordinary case, silent
+  });
+
+  test("@s-loop-piped-option-id: a piped reply matching a declared option's id feeds its label to the next iteration", async () => {
+    const { dir, path } = setup(`
+name: pipedoptionid
+nodes:
+  - id: grill
+    loop:
+      prompt: "ask; feedback: [{{loop.feedback}}]"
+      until: SETTLED
+      max_iterations: 2
+      interactive: true
+`);
+    const calls: RunnerRequest[] = [];
+    const runner = scriptedRunner(
+      [
+        `question? <options>[{"id": "sqlite", "label": "Use SQLite"}, {"id": "postgres", "label": "Use Postgres"}]</options>`,
+        `done ${sentinelToken("SETTLED")}`,
+      ],
+      calls,
+    );
+    const state = await run(path, dir, {
+      resolveRunner: () => runner,
+      promptChoice: scriptedChoices([
+        { kind: "text", text: "postgres" },
+        { kind: "text", text: "approve" },
+      ]),
+    });
+    expect(state.status).toBe("succeeded");
+    expect(state.nodes.grill!.lastFeedback).toBe("Use Postgres"); // the option's label, not its id
+    expect(calls[1]!.prompt).toContain("feedback: [Use Postgres]");
+  });
+
+  test("@s-loop-piped-verdict-precedence: a verdict word wins over an identical declared option id", async () => {
+    const { dir, path } = setup(`
+name: pipedprecedence
+nodes:
+  - id: grill
+    loop:
+      prompt: "ask"
+      until: SETTLED
+      max_iterations: 1
+      interactive: true
+`);
+    const calls: RunnerRequest[] = [];
+    const runner = scriptedRunner(
+      [`done ${sentinelToken("SETTLED")} <options>[{"id": "a", "label": "Use SQLite"}]</options>`],
+      calls,
+    );
+    const state = await run(path, dir, {
+      resolveRunner: () => runner,
+      promptChoice: scriptedChoices([{ kind: "text", text: "a" }]),
+    });
+    expect(state.status).toBe("succeeded"); // "a" approved the signaled iteration, never became feedback "Use SQLite"
+    expect(state.nodes.grill!.iterations).toBe(1);
+    expect(calls).toHaveLength(1);
+  });
+
+  test("@s-loop-malformed-fallback: a declaration that cannot be read warns and falls back, never failing the iteration", async () => {
+    const { dir, path } = setup(`
+name: malformed
+nodes:
+  - id: grill
+    loop:
+      prompt: "ask"
+      until: SETTLED
+      max_iterations: 1
+      interactive: true
+`);
+    const runner = scriptedRunner([`done <options>not json</options> ${sentinelToken("SETTLED")}`]);
+    const requests: { message: string; choices: Choice[] }[] = [];
+    const state = await run(path, dir, {
+      resolveRunner: () => runner,
+      promptChoice: scriptedChoices([{ kind: "choice", id: "sao:end-loop" }], requests),
+    });
+    expect(state.status).toBe("succeeded");
+    expect(requests[0]!.choices.map((c) => c.id)).toEqual(["sao:end-loop", "sao:feedback", "sao:reject"]);
+    const log = readFileSync(join(dir, ".sao", "runs", state.id, "logs", "grill.1.log"), "utf8");
+    expect(log).toContain("could not read the agent's declared options");
+    expect(log).toContain("grill");
+  });
+
+  test("a non-interactive loop never attempts to parse or warn about a declared options block", async () => {
+    const { dir, path } = setup(`
+name: noninteractive
+nodes:
+  - id: grill
+    loop:
+      prompt: "ask"
+      until: SETTLED
+      max_iterations: 1
+`);
+    const runner = scriptedRunner([`done <options>not json</options> ${sentinelToken("SETTLED")}`]);
+    const state = await run(path, dir, { resolveRunner: () => runner });
+    expect(state.status).toBe("succeeded");
+    const log = readFileSync(join(dir, ".sao", "runs", state.id, "logs", "grill.1.log"), "utf8");
+    expect(log).not.toContain("could not read the agent's declared options");
   });
 });
 
 describe("gate nodes", () => {
-  test("approve continues with output 'approved'", async () => {
+  test("@s-gate-approve: the list offers approve/reject/give-feedback; confirming approve continues", async () => {
     const { dir, path } = setup(`
 name: gateok
 nodes:
@@ -695,42 +1100,22 @@ nodes:
     depends_on: [ship]
     bash: "echo gate said {{nodes.ship.output}}"
 `);
-    const state = await run(path, dir, { promptUser: scriptedPrompts(["a"]) });
+    const requests: { message: string; choices: Choice[] }[] = [];
+    const state = await run(path, dir, {
+      promptChoice: scriptedChoices([{ kind: "choice", id: "sao:approve" }], requests),
+    });
     expect(state.status).toBe("succeeded");
     expect(state.nodes.ship!.output).toBe("approved");
     expect(state.nodes.after!.output).toBe("gate said approved");
+    expect(requests[0]!.choices.map((c) => c.id)).toEqual(["sao:approve", "sao:reject", "sao:feedback"]);
+    expect(requests[0]!.choices.map((c) => c.label)).toEqual(["Approve", "Reject", "Give feedback"]);
+    expect(requests[0]!.choices.find((c) => c.id === "sao:feedback")!.collectsText).toBe(true);
+    expect(requests[0]!.message).toContain("Ship it?");
+    expect(requests[0]!.message).toContain("[ship]");
+    expect(requests[0]!.message).not.toContain("[a]pprove");
   });
 
-  test("feedback becomes the gate's output for downstream templates", async () => {
-    const { dir, path } = setup(`
-name: gatefeedback
-nodes:
-  - id: ship
-    gate:
-      message: "Ship it?"
-  - id: after
-    depends_on: [ship]
-    bash: "echo {{nodes.ship.output}}"
-`);
-    const state = await run(path, dir, { promptUser: scriptedPrompts(["rename the flag first"]) });
-    expect(state.nodes.after!.output).toBe("rename the flag first");
-  });
-
-  test("empty replies re-ask until a real answer arrives", async () => {
-    const { dir, path } = setup(`
-name: gateempty
-nodes:
-  - id: ship
-    gate:
-      message: "Ship it?"
-`);
-    const questions: string[] = [];
-    const state = await run(path, dir, { promptUser: scriptedPrompts(["", "  ", "a"], questions) });
-    expect(state.status).toBe("succeeded");
-    expect(questions).toHaveLength(3);
-  });
-
-  test("reject halts the run as rejected; dependents stay pending", async () => {
+  test("@s-gate-reject: rejecting from the list halts the run as rejected; dependents stay pending", async () => {
     const { dir, path } = setup(`
 name: gatereject
 nodes:
@@ -741,12 +1126,123 @@ nodes:
     depends_on: [ship]
     bash: "echo never"
 `);
-    await expect(run(path, dir, { promptUser: scriptedPrompts(["r"]) })).rejects.toThrow('rejected at node "ship"');
+    await expect(
+      run(path, dir, { promptChoice: scriptedChoices([{ kind: "choice", id: "sao:reject" }]) }),
+    ).rejects.toThrow('rejected at node "ship"');
     const runsDir = join(dir, ".sao", "runs");
     const runId = (await import("node:fs")).readdirSync(runsDir)[0]!;
     const saved = JSON.parse(readFileSync(join(runsDir, runId, "state.json"), "utf8"));
     expect(saved.status).toBe("rejected");
     expect(saved.nodes.after.status).toBe("pending");
+  });
+
+  test("@s-gate-feedback: give-feedback collects text that becomes the node's output", async () => {
+    const { dir, path } = setup(`
+name: gatefeedback
+nodes:
+  - id: ship
+    gate:
+      message: "Ship it?"
+  - id: after
+    depends_on: [ship]
+    bash: "echo {{nodes.ship.output}}"
+`);
+    const state = await run(path, dir, {
+      promptChoice: scriptedChoices([{ kind: "text", text: "rename the flag first", from: "sao:feedback" }]),
+    });
+    expect(state.status).toBe("succeeded");
+    expect(state.nodes.after!.output).toBe("rename the flag first");
+  });
+
+  test("an empty give-feedback answer re-asks the same gate", async () => {
+    const { dir, path } = setup(`
+name: gateemptyfeedback
+nodes:
+  - id: ship
+    gate:
+      message: "Ship it?"
+`);
+    const requests: { message: string; choices: Choice[] }[] = [];
+    const state = await run(path, dir, {
+      promptChoice: scriptedChoices(
+        [
+          { kind: "text", text: "", from: "sao:feedback" },
+          { kind: "text", text: "  ", from: "sao:feedback" },
+          { kind: "choice", id: "sao:approve" },
+        ],
+        requests,
+      ),
+    });
+    expect(state.status).toBe("succeeded");
+    expect(requests).toHaveLength(3);
+  });
+
+  test("@s-gate-feedback-keeps-verdict-words: feedback text that reads like a verdict stays text", async () => {
+    const { dir, path } = setup(`
+name: gateverdictword
+nodes:
+  - id: ship
+    gate:
+      message: "Ship it?"
+`);
+    const state = await run(path, dir, {
+      promptChoice: scriptedChoices([{ kind: "text", text: "yes", from: "sao:feedback" }]),
+    });
+    expect(state.status).toBe("succeeded");
+    expect(state.nodes.ship!.output).toBe("yes");
+  });
+
+  test("@s-gate-piped-unchanged: piped replies with no list selection keep today's vocabulary", async () => {
+    for (const [reply, expected] of [
+      ["a", "approved"],
+      ["approve", "approved"],
+      ["y", "approved"],
+      ["yes", "approved"],
+    ] as const) {
+      const { dir, path } = setup(`
+name: gatepiped
+nodes:
+  - id: ship
+    gate:
+      message: "Ship it?"
+`);
+      const state = await run(path, dir, {
+        promptChoice: scriptedChoices([{ kind: "text", text: reply }]),
+      });
+      expect(state.nodes.ship!.output).toBe(expected);
+    }
+    for (const reply of ["r", "reject", "n", "no"]) {
+      const { dir, path } = setup(`
+name: gatepipedreject
+nodes:
+  - id: ship
+    gate:
+      message: "Ship it?"
+`);
+      await expect(
+        run(path, dir, { promptChoice: scriptedChoices([{ kind: "text", text: reply }]) }),
+      ).rejects.toThrow('rejected at node "ship"');
+    }
+    const { dir, path } = setup(`
+name: gatepipedfeedback
+nodes:
+  - id: ship
+    gate:
+      message: "Ship it?"
+`);
+    const requests: { message: string; choices: Choice[] }[] = [];
+    const state = await run(path, dir, {
+      promptChoice: scriptedChoices(
+        [
+          { kind: "text", text: "" },
+          { kind: "text", text: "  " },
+          { kind: "text", text: "leave the copy alone" },
+        ],
+        requests,
+      ),
+    });
+    expect(state.nodes.ship!.output).toBe("leave the copy alone");
+    expect(requests).toHaveLength(3);
   });
 
   test("gate messages are interpolated", async () => {
@@ -760,9 +1256,12 @@ nodes:
     gate:
       message: "Ship {{feature}}?"
 `);
-    const questions: string[] = [];
-    await run(path, dir, { vars: { feature: "dark-mode" }, promptUser: scriptedPrompts(["a"], questions) });
-    expect(questions[0]).toContain("Ship dark-mode?");
+    const requests: { message: string; choices: Choice[] }[] = [];
+    await run(path, dir, {
+      vars: { feature: "dark-mode" },
+      promptChoice: scriptedChoices([{ kind: "choice", id: "sao:approve" }], requests),
+    });
+    expect(requests[0]!.message).toContain("Ship dark-mode?");
   });
 });
 
@@ -863,8 +1362,8 @@ nodes:
       message: "never asked"
 `);
     const state = await run(path, dir, {
-      promptUser: async () => {
-        throw new Error("promptUser must not be called");
+      promptChoice: async () => {
+        throw new Error("promptChoice must not be called");
       },
     });
     expect(state.nodes.ship!.status).toBe("skipped");
@@ -980,9 +1479,9 @@ nodes:
     await expect(
       run(path, dir, {
         concurrency: 2,
-        promptUser: async () => {
+        promptChoice: async () => {
           await new Promise((resolve) => setTimeout(resolve, 300)); // let boom fail first
-          return "r";
+          return { kind: "choice", id: "sao:reject" } as const;
         },
       }),
     ).rejects.toThrow('failed at node "boom"'); // the first error wins
@@ -1071,8 +1570,8 @@ nodes:
     const started = Date.now();
     await expect(
       run(path, dir, {
-        promptUser: async () => {
-          throw new Error("promptUser must not be called");
+        promptChoice: async () => {
+          throw new Error("promptChoice must not be called");
         },
       }),
     ).rejects.toThrow("timed out after 1s");

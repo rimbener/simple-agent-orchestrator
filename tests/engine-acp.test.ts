@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { preflightAiConfigs, preflightRunnerEnvironments, type ResolvedAiConfig, runWorkflow } from "../src/engine";
 import { SaoError } from "../src/errors";
+import type { PromptChoices } from "../src/gate";
 import { loadWorkflow } from "../src/parser";
 import type { Runner, RunnerNeeds, RunnerRequest } from "../src/runners/types";
 import type { Workflow } from "../src/schema";
@@ -244,7 +245,7 @@ nodes:
 });
 
 describe("permission-prompt plumbing", () => {
-  test("the engine passes the owning node id and its terminal prompt function to the runner", async () => {
+  test("the engine passes the owning node id and its list-prompt seam to the runner", async () => {
     const { dir, path } = setup(`
 name: plumbing
 nodes:
@@ -259,10 +260,10 @@ nodes:
         return { output: "done", exitCode: 0 };
       },
     };
-    const promptUser = async (message: string) => message;
-    await run(path, dir, { resolveRunner: () => runner, promptUser });
+    const promptChoice: PromptChoices = async () => ({ kind: "choice", id: "x" });
+    await run(path, dir, { resolveRunner: () => runner, promptChoice });
     expect(calls[0]!.nodeId).toBe("fix");
-    expect(calls[0]!.promptUser).toBe(promptUser);
+    expect(calls[0]!.promptChoice).toBe(promptChoice);
   });
 });
 

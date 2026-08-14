@@ -58,6 +58,24 @@ describe("parseLoopReply", () => {
   test("empty replies still re-ask", () => {
     expect(parseLoopReply("  ")).toEqual({ kind: "empty" });
   });
+
+  test("@s-loop-piped-option-id: an exact match on a declared option's id becomes feedback naming its label", () => {
+    const options = [
+      { id: "sqlite", label: "Use SQLite" },
+      { id: "postgres", label: "Use Postgres" },
+    ];
+    expect(parseLoopReply("postgres", options)).toEqual({ kind: "feedback", text: "Use Postgres" });
+  });
+
+  test("@s-loop-piped-verdict-precedence: a verdict word wins over an identical declared option id", () => {
+    const options = [{ id: "a", label: "Use SQLite" }];
+    expect(parseLoopReply("a", options)).toEqual({ kind: "approve" });
+  });
+
+  test("@s-loop-piped-freeform-is-feedback: text matching no verdict and no declared id is feedback verbatim", () => {
+    const options = [{ id: "sqlite", label: "Use SQLite" }];
+    expect(parseLoopReply("keep going", options)).toEqual({ kind: "feedback", text: "keep going" });
+  });
 });
 
 describe("parsePermissionReply", () => {
@@ -67,13 +85,22 @@ describe("parsePermissionReply", () => {
     [" 3 ", 3],
     ["12", 12],
   ])("%p selects option index %d out of matching offered options", (reply, index) => {
-    expect(parsePermissionReply(reply, index)).toEqual({ kind: "selected", index });
+    const ids = Array.from({ length: index }, (_, i) => `id-${i + 1}`);
+    expect(parsePermissionReply(reply, ids)).toEqual({ kind: "selected", index });
   });
 
   test.each([["0"], ["4"], ["-1"], ["a"], ["1.5"], [""], ["  "]])(
     "%p is invalid against 3 offered options",
     (reply) => {
-      expect(parsePermissionReply(reply, 3)).toEqual({ kind: "invalid" });
+      expect(parsePermissionReply(reply, ["id-1", "id-2", "id-3"])).toEqual({ kind: "invalid" });
     },
   );
+
+  test("@s-perm-piped-option-id: an exact optionId match selects that option's index", () => {
+    expect(parsePermissionReply("opt-deny", ["opt-allow", "opt-deny"])).toEqual({ kind: "selected", index: 2 });
+  });
+
+  test("text matching neither an index nor a declared id is invalid", () => {
+    expect(parsePermissionReply("opt-nonexistent", ["opt-allow", "opt-deny"])).toEqual({ kind: "invalid" });
+  });
 });

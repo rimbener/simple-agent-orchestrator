@@ -327,21 +327,21 @@ nodes:
     gate:
       message: "go?"
 `);
-    const err = await rejection(run(path, dir, { promptUser: async () => "r" }));
+    const err = await rejection(run(path, dir, { promptChoice: async () => ({ kind: "choice", id: "sao:reject" }) }));
     expect(err.message).toContain("rejected");
     const loaded = loadRun(dir, onlyRunId(dir));
     expect(loaded.state.status).toBe("rejected");
-    const questions: string[] = [];
+    const requests: { message: string; choices: unknown }[] = [];
     const state = await run(path, dir, {
       resume: loaded,
-      promptUser: async (message) => {
-        questions.push(message);
-        return "a";
+      promptChoice: async (req) => {
+        requests.push(req);
+        return { kind: "choice", id: "sao:approve" };
       },
     });
     expect(state.status).toBe("succeeded");
-    expect(questions).toHaveLength(1);
-    expect(questions[0]).toContain("go?");
+    expect(requests).toHaveLength(1);
+    expect(requests[0]!.message).toContain("go?");
   });
 });
 
@@ -639,7 +639,7 @@ nodes:
     await rejection(
       run(path, dir, {
         resolveRunner: useRunner(["draft", new SaoError("crash")], firstCalls),
-        promptUser: async () => "make it blue",
+        promptChoice: async () => ({ kind: "text", text: "make it blue" }),
       }),
     );
     const loaded = loadRun(dir, onlyRunId(dir));
@@ -648,11 +648,46 @@ nodes:
     const resumeCalls: RunnerRequest[] = [];
     const state = await run(path, dir, {
       resolveRunner: useRunner(["blue <promise>SETTLED</promise>"], resumeCalls),
-      promptUser: async () => "a",
+      promptChoice: async () => ({ kind: "text", text: "a" }),
       resume: loaded,
     });
     expect(state.status).toBe("succeeded");
     expect(resumeCalls[0]!.prompt).toContain("consider [make it blue]");
+  });
+
+  test("@s-loop-reject-entry: a rejected interactive loop iteration re-asks the same decision on resume", async () => {
+    const { dir, path } = setup(`
+name: res-loop-reject
+nodes:
+  - id: grill
+    loop:
+      prompt: "ask"
+      until: SETTLED
+      max_iterations: 3
+      interactive: true
+`);
+    const err = await rejection(
+      run(path, dir, {
+        resolveRunner: useRunner(["question?"]),
+        promptChoice: async () => ({ kind: "choice", id: "sao:reject" }),
+      }),
+    );
+    expect(err.message).toContain("rejected");
+    const loaded = loadRun(dir, onlyRunId(dir));
+    expect(loaded.state.status).toBe("rejected");
+
+    // The rejected iteration (unsignaled) re-runs in full on resume and pauses for
+    // the same decision again before the loop can proceed to a second, signaled one.
+    const resumeAnswers = [{ kind: "text", text: "keep going" }, { kind: "choice", id: "sao:end-loop" }] as const;
+    let resumeCall = 0;
+    const resumeCalls: RunnerRequest[] = [];
+    const state = await run(path, dir, {
+      resolveRunner: useRunner(["question again?", "done <promise>SETTLED</promise>"], resumeCalls),
+      promptChoice: async () => resumeAnswers[resumeCall++]!,
+      resume: loaded,
+    });
+    expect(state.status).toBe("succeeded");
+    expect(resumeCalls).toHaveLength(2);
   });
 
   test("the resume hint is consumed once: a retry after a failed resumed attempt restarts at iteration 1", async () => {
@@ -882,7 +917,7 @@ nodes:
     const calls: RunnerRequest[] = [];
     const state = await run(path, dir, {
       resolveRunner: useRunner(["is it public?", "done <promise>SETTLED</promise>"], calls),
-      promptUser: async () => replies[call++]!,
+      promptChoice: async () => ({ kind: "text", text: replies[call++]! }),
     });
     expect(state.status).toBe("succeeded");
     expect(calls).toHaveLength(2);
