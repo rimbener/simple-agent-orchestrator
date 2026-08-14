@@ -215,7 +215,7 @@ nodes:
         - agent: ./agents/implementer.md
           prompt: "Feature: {{feature}}. Mode: kill-mutants."
       until: MUTANTS_DEAD
-      max_iterations: 2
+      max_iterations: 4
 
   # ── Conditional: mutation fixes touched production source → re-review delta ──
   # tests/ is not src/, so this predicate is exactly "the fix was not test-only".
