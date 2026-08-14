@@ -12,7 +12,7 @@ scenarios:
   - "@s-withheld-remainder-released"
   - "@s-withheld-released-on-failure"
   - "@s-no-withholding-when-piped"
-status: todo
+status: done
 paths:
   - src/runners/types.ts
   - src/runners/claude.ts

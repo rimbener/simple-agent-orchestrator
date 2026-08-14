@@ -683,6 +683,10 @@ describe("findExecutableOnPath / preflight", () => {
   test("claudeRunner.preflight passes on this machine (claude installed)", () => {
     expect(() => claudeRunner.preflight!({ needsSessionResume: false })).not.toThrow();
   });
+
+  test("@s-runner-granularity-declared: claudeRunner declares per-message final-output streaming", () => {
+    expect(claudeRunner.finalOutputStreaming).toBe("per-message");
+  });
 });
 
 describe("getRunner", () => {

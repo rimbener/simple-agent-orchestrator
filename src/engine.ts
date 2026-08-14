@@ -764,6 +764,8 @@ interface NodeResult {
 
 interface NodeLog {
   log: (chunk: string) => void;
+  /** Drops the last occurrence of finalOutput from the withheld echo, then echoes the remainder. No-op unless withholding. */
+  release: (finalOutput: string) => void;
   flush: () => void;
   close: () => Promise<void>;
 }
@@ -991,7 +993,9 @@ class Engine {
       const loopCtx: TemplateContext = { ...this.ctx, loop: { feedback, iteration } };
       // Append mode: a retried loop node must not truncate the previous attempt's
       // iteration logs — they are the evidence for why the attempt failed.
-      const iterLog = this.makeLog(`${node.id}.${iteration}.log`, `${node.id}#${iteration}`);
+      const withhold =
+        body.interactive && isInteractive() ? (this.instructedRunnerGranularity(node) ?? "whole-turn") : undefined;
+      const iterLog = this.makeLog(`${node.id}.${iteration}.log`, `${node.id}#${iteration}`, withhold);
       let untilBashPassed = false;
       // Signal detection uses ONLY the output of the execution that carried the
       // sentinel instruction this iteration — never bash output, never a previous
@@ -1038,6 +1042,9 @@ class Engine {
             iterLog.log(`⚠ ${node.id}: could not read the agent's declared options — showing the default choices\n`);
           }
         }
+        // Before until_bash, not in the finally: flush() there runs after the pause and
+        // would release too late — the box needs the final message gone from the echo now.
+        iterLog.release(instructedOutput ?? "");
         if (body.until_bash !== undefined) {
           untilBashPassed = await evaluateWhenBash(interpolate(body.until_bash, loopCtx), {
             cwd: this.execCwd,
@@ -1076,6 +1083,15 @@ class Engine {
       `loop hit max_iterations (${body.max_iterations}) ${reason}`,
       "this is the escalation point: fix the underlying problem, then re-run",
     );
+  }
+
+  /** The runner whose declaration governs this iteration's withholding — the one carrying instructedOutput. */
+  private instructedRunnerGranularity(node: LoopNode): Runner["finalOutputStreaming"] {
+    if (node.loop.prompt !== undefined) return this.aiConfigs.get(node.id)?.runner.finalOutputStreaming;
+    const steps = node.loop.steps!;
+    const lastAiIndex = steps.reduce((last, step, index) => (step.kind === "ai" ? index : last), -1);
+    if (lastAiIndex === -1) return undefined;
+    return this.aiConfigs.get(`${node.id}#${lastAiIndex}`)?.runner.finalOutputStreaming;
   }
 
   private async executeSteps(
@@ -1210,7 +1226,14 @@ class Engine {
     }
   }
 
-  private makeLog(fileName: string, echoLabel: string): NodeLog {
+  /**
+   * `withhold` set means an interactive-loop iteration at a TTY: the echo is held back
+   * (per-message: one message behind; whole-turn: the whole iteration) and only released
+   * by `release()`, minus the final message, so the pause's box is the only place the
+   * final message appears. Unset means today's behaviour: every completed line echoes
+   * immediately, and `release()` is a no-op.
+   */
+  private makeLog(fileName: string, echoLabel: string, withhold?: "per-message" | "whole-turn"): NodeLog {
     // Always append: a resumed run (or a retried loop) re-opens existing log files,
     // and the earlier attempt's output is the evidence for why it failed.
     const logStream = createWriteStream(join(this.paths.logsDir, fileName), { flags: "a" });
@@ -1220,20 +1243,53 @@ class Engine {
     const echoLine = (line: string) => {
       if (line.trim()) this.print(pc.dim(`  [${echoLabel}] `) + line);
     };
+    const echoLines = (lines: string[]) => {
+      for (const line of lines) echoLine(line);
+    };
+    // Lines not yet echoed: for "per-message" this is only the most recent onOutput
+    // call (the previous ones already echoed on rotation); for "whole-turn" it is
+    // every line seen this iteration.
+    let held: string[] = [];
     return {
       log: (chunk: string) => {
         logStream.write(chunk);
         pendingEcho += chunk;
         const lines = pendingEcho.split("\n");
         pendingEcho = lines.pop()!; // split() always yields at least one element
-        for (const line of lines) echoLine(line);
         if (pendingEcho.length > 8192) {
-          echoLine(pendingEcho); // don't buffer a runaway newline-less line forever
+          lines.push(pendingEcho); // don't buffer a runaway newline-less line forever
           pendingEcho = "";
         }
+        if (withhold === undefined) {
+          echoLines(lines);
+        } else if (withhold === "whole-turn") {
+          held.push(...lines);
+        } else {
+          // per-message: this call's lines become the new held ones — echo what was held before
+          const previous = held;
+          held = lines;
+          echoLines(previous);
+        }
+      },
+      release: (finalOutput: string) => {
+        if (withhold === undefined) return;
+        // A message that never got a trailing newline (e.g. whole-turn deltas that only
+        // add up to the final text) is still the tail of what must be searched.
+        if (pendingEcho !== "") {
+          held.push(pendingEcho);
+          pendingEcho = "";
+        }
+        echoLines(dropLastOccurrence(held, finalOutput));
+        held = [];
       },
       flush: () => {
-        echoLine(pendingEcho);
+        if (withhold === undefined) {
+          echoLine(pendingEcho);
+        } else {
+          if (pendingEcho !== "") held.push(pendingEcho);
+          echoLines(held); // only non-empty when release() was never reached (the failure path)
+        }
+        held = [];
         // Stryker disable next-line StringLiteral: dead store — flush is the last read of this log's pendingEcho
         pendingEcho = "";
       },
@@ -1243,6 +1299,25 @@ class Engine {
       },
     };
   }
+}
+
+/**
+ * Removes the last contiguous run of lines matching finalOutput from held, trailing
+ * whitespace per line ignored (the echo path already drops blank lines). A miss
+ * (finalOutput blank, or no match) returns held unchanged — showing it once too many
+ * beats swallowing real output.
+ */
+function dropLastOccurrence(held: string[], finalOutput: string): string[] {
+  const trimEnd = (line: string) => line.replace(/[ \t]+$/, "");
+  const target = finalOutput.split("\n").map(trimEnd);
+  if (target.every((line) => line === "")) return held;
+  const normalized = held.map(trimEnd);
+  for (let start = normalized.length - target.length; start >= 0; start--) {
+    if (target.every((line, offset) => normalized[start + offset] === line)) {
+      return [...held.slice(0, start), ...held.slice(start + target.length)];
+    }
+  }
+  return held;
 }
 
 function resolveInputs(workflow: Workflow, vars: Record<string, string>, resuming: boolean): Record<string, string> {

@@ -221,6 +221,17 @@ loop's `until:` is stripped like any other and reported as a dim
 never halting the run, and never changing signal detection itself. Nothing here
 touches what is logged: the node log and `nodes.<id>.output` keep the raw text.
 
+At that same terminal, the iteration's live echo is **withheld and released at the
+pause**, minus the final message, so the message appears exactly once — inside the
+box, never also as a scrolled dim line. How much narration streams live before that
+depends on the runner's declared `finalOutputStreaming` (see Runner interface,
+below): a `per-message` runner's earlier messages still scroll live, lagging by one
+message; a `whole-turn` runner (or one that declares nothing) holds the whole
+iteration until the pause. Either way a wrong or missing declaration only shows the
+message twice, never zero times, and a failing iteration echoes whatever it was
+holding rather than discarding it. A piped run withholds nothing — every chunk
+echoes exactly as it arrives, unchanged by this.
+
 An agent invites this by ending its response with a last line of the form
 `<options>[{"id": "sqlite", "label": "Use SQLite", "description": "no server to
 run"}]</options>` — a JSON array of objects with unique, non-empty `id`s (not
@@ -387,6 +398,13 @@ export interface Runner {
     sessionId?: string;
     exitCode: number;
   }>;
+  // How the runner streams its final output — a liveness hint for withholding an
+  // interactive loop's echo (see above), never a correctness contract. "per-message":
+  // onOutput fires once per complete agent message, the last of which is the final
+  // output (claude, codex). "whole-turn": onOutput fires with partial chunks that only
+  // add up to the final output at the end (opencode). Unset means "whole-turn" — the
+  // conservative default, so a runner that declares nothing is still shown once, not zero times.
+  finalOutputStreaming?: "per-message" | "whole-turn";
 }
 ```
 

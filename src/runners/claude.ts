@@ -133,6 +133,7 @@ const INSTALL_HINT = "install Claude Code: https://claude.com/claude-code";
 /** Headless Claude Code: `claude -p --output-format stream-json` (stream-json requires --verbose). */
 export const claudeRunner: Runner = {
   name: "claude",
+  finalOutputStreaming: "per-message",
 
   // validate-and-run parity: a missing binary must fail preflight, before any node
   // (or its side effects) runs — not mid-flight at the first AI node.

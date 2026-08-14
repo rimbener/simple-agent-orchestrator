@@ -1404,6 +1404,284 @@ nodes:
   });
 });
 
+describe("message appears exactly once", () => {
+  test("@s-question-appears-once-per-message: a per-message runner's final message is not also streamed", async () => {
+    const { dir, path } = setup(`
+name: oncepermessage
+nodes:
+  - id: grill
+    loop:
+      prompt: "ask"
+      until: SETTLED
+      max_iterations: 1
+      interactive: true
+`);
+    const finalText = `please decide ${sentinelToken("SETTLED")}`;
+    const runner: Runner = {
+      name: "streaming",
+      finalOutputStreaming: "per-message",
+      async run(req) {
+        req.onOutput?.("narration one\n");
+        req.onOutput?.(`${finalText}\n`); // real per-message adapters always terminate the message
+        return { output: finalText, exitCode: 0 };
+      },
+    };
+    const printed: string[] = [];
+    const requests: LoopGateRequest[] = [];
+    await withInteractiveTerminal(() =>
+      run(path, dir, {
+        resolveRunner: () => runner,
+        promptChoice: scriptedChoices([{ kind: "choice", id: "sao:end-loop" }], requests),
+        print: (line) => printed.push(line),
+      }),
+    );
+    expect(printed.some((line) => line.includes("narration one"))).toBe(true);
+    expect(printed.some((line) => line.includes("please decide"))).toBe(false);
+    expect(requests[0]!.block).toContain("please decide");
+  });
+
+  test("@s-runner-granularity-defaults: an undeclared runner is treated as whole-turn — its final message appears once", async () => {
+    const { dir, path } = setup(`
+name: defaultgranularity
+nodes:
+  - id: grill
+    loop:
+      prompt: "ask"
+      until: SETTLED
+      max_iterations: 1
+      interactive: true
+`);
+    const finalText = `please decide ${sentinelToken("SETTLED")}`;
+    const undeclaredRunner: Runner = {
+      name: "undeclared",
+      async run(req) {
+        req.onOutput?.("please "); // partial chunks that only add up to the final text
+        req.onOutput?.(`decide ${sentinelToken("SETTLED")}`);
+        return { output: finalText, exitCode: 0 };
+      },
+    };
+    const printed: string[] = [];
+    const requests: LoopGateRequest[] = [];
+    await withInteractiveTerminal(() =>
+      run(path, dir, {
+        resolveRunner: () => undeclaredRunner,
+        promptChoice: scriptedChoices([{ kind: "choice", id: "sao:end-loop" }], requests),
+        print: (line) => printed.push(line),
+      }),
+    );
+    expect(printed.some((line) => line.includes("please decide"))).toBe(false);
+    expect(requests[0]!.block).toContain("please decide");
+  });
+
+  test("@s-question-appears-once-whole-turn: a whole-turn runner's partial chunks never echo — only the box shows them", async () => {
+    const { dir, path } = setup(`
+name: oncewholeturn
+nodes:
+  - id: grill
+    loop:
+      prompt: "ask"
+      until: SETTLED
+      max_iterations: 1
+      interactive: true
+`);
+    const finalText = `please decide ${sentinelToken("SETTLED")}`;
+    const runner: Runner = {
+      name: "wholeturn",
+      finalOutputStreaming: "whole-turn",
+      async run(req) {
+        req.onOutput?.("please "); // ACP-style deltas: many partial chunks, no line breaks
+        req.onOutput?.("decide ");
+        req.onOutput?.(sentinelToken("SETTLED"));
+        return { output: finalText, exitCode: 0 };
+      },
+    };
+    const printed: string[] = [];
+    const requests: LoopGateRequest[] = [];
+    await withInteractiveTerminal(() =>
+      run(path, dir, {
+        resolveRunner: () => runner,
+        promptChoice: scriptedChoices([{ kind: "choice", id: "sao:end-loop" }], requests),
+        print: (line) => printed.push(line),
+      }),
+    );
+    expect(printed.some((line) => line.includes("please decide"))).toBe(false);
+    expect(requests[0]!.block).toContain("please decide");
+  });
+
+  test("@s-narration-still-streams: a per-message runner's narration scrolls live, in order, before the block", async () => {
+    const { dir, path } = setup(`
+name: narrationstreams
+nodes:
+  - id: grill
+    loop:
+      prompt: "ask"
+      until: SETTLED
+      max_iterations: 1
+      interactive: true
+`);
+    const finalText = `decide now ${sentinelToken("SETTLED")}`;
+    const runner: Runner = {
+      name: "narrating",
+      finalOutputStreaming: "per-message",
+      async run(req) {
+        req.onOutput?.("first narration\n");
+        req.onOutput?.("second narration\n");
+        req.onOutput?.(`${finalText}\n`);
+        return { output: finalText, exitCode: 0 };
+      },
+    };
+    const printed: string[] = [];
+    await withInteractiveTerminal(() =>
+      run(path, dir, {
+        resolveRunner: () => runner,
+        promptChoice: async () => {
+          printed.push("BOX");
+          return { kind: "choice", id: "sao:end-loop" };
+        },
+        print: (line) => printed.push(line),
+      }),
+    );
+    const firstIdx = printed.findIndex((line) => line.includes("first narration"));
+    const secondIdx = printed.findIndex((line) => line.includes("second narration"));
+    const boxIdx = printed.indexOf("BOX");
+    expect(firstIdx).toBeGreaterThanOrEqual(0);
+    expect(secondIdx).toBeGreaterThan(firstIdx);
+    expect(boxIdx).toBeGreaterThan(secondIdx);
+    expect(printed.some((line) => line.includes("decide now"))).toBe(false);
+  });
+
+  test("@s-repeated-text-keeps-earlier-copy: only the last occurrence of the repeated final message is withheld", async () => {
+    const { dir, path } = setup(`
+name: repeatedtext
+nodes:
+  - id: grill
+    loop:
+      prompt: "ask"
+      until: SETTLED
+      max_iterations: 1
+      interactive: true
+`);
+    const text = `please decide ${sentinelToken("SETTLED")}`;
+    const runner: Runner = {
+      name: "repeat",
+      finalOutputStreaming: "whole-turn",
+      async run(req) {
+        req.onOutput?.(`${text}\n`);
+        req.onOutput?.(`${text}\n`);
+        return { output: text, exitCode: 0 };
+      },
+    };
+    const printed: string[] = [];
+    const requests: LoopGateRequest[] = [];
+    await withInteractiveTerminal(() =>
+      run(path, dir, {
+        resolveRunner: () => runner,
+        promptChoice: scriptedChoices([{ kind: "choice", id: "sao:end-loop" }], requests),
+        print: (line) => printed.push(line),
+      }),
+    );
+    const echoCount = printed.filter((line) => line.includes("please decide")).length;
+    expect(echoCount).toBe(1); // the earlier copy is still echoed
+    expect(requests[0]!.block).toContain("please decide"); // and the box shows it once more
+  });
+
+  test("@s-withheld-remainder-released: diagnostics that are not the final message are still echoed", async () => {
+    const { dir, path } = setup(`
+name: withheldremainder
+nodes:
+  - id: grill
+    loop:
+      prompt: "ask"
+      until: SETTLED
+      max_iterations: 1
+      interactive: true
+`);
+    const finalText = `please decide ${sentinelToken("SETTLED")}`;
+    const runner: Runner = {
+      name: "diagnosing",
+      finalOutputStreaming: "whole-turn",
+      async run(req) {
+        req.onOutput?.("warning: something odd happened\n");
+        req.onOutput?.(`${finalText}\n`);
+        return { output: finalText, exitCode: 0 };
+      },
+    };
+    const printed: string[] = [];
+    await withInteractiveTerminal(() =>
+      run(path, dir, {
+        resolveRunner: () => runner,
+        promptChoice: scriptedChoices([{ kind: "choice", id: "sao:end-loop" }]),
+        print: (line) => printed.push(line),
+      }),
+    );
+    expect(printed.some((line) => line.includes("warning: something odd happened"))).toBe(true);
+    expect(printed.some((line) => line.includes("please decide"))).toBe(false);
+  });
+
+  test("@s-withheld-released-on-failure: a failing iteration echoes what it withheld instead of discarding it", async () => {
+    const { dir, path } = setup(`
+name: withheldfails
+nodes:
+  - id: grill
+    loop:
+      prompt: "ask"
+      until: SETTLED
+      max_iterations: 1
+      interactive: true
+`);
+    const runner: Runner = {
+      name: "failing",
+      finalOutputStreaming: "whole-turn",
+      async run(req) {
+        req.onOutput?.("partial output before failure\n");
+        throw new Error("boom");
+      },
+    };
+    const printed: string[] = [];
+    await withInteractiveTerminal(async () => {
+      await expect(
+        run(path, dir, {
+          resolveRunner: () => runner,
+          promptChoice: scriptedChoices([]),
+          print: (line) => printed.push(line),
+        }),
+      ).rejects.toThrow('failed at node "grill"');
+    });
+    expect(printed.some((line) => line.includes("partial output before failure"))).toBe(true);
+  });
+
+  test("@s-no-withholding-when-piped: a piped run echoes every chunk as it arrives, exactly as before this feature", async () => {
+    const { dir, path } = setup(`
+name: pipedstreaming
+nodes:
+  - id: grill
+    loop:
+      prompt: "ask"
+      until: SETTLED
+      max_iterations: 1
+      interactive: true
+`);
+    const finalText = `please decide ${sentinelToken("SETTLED")}`;
+    const runner: Runner = {
+      name: "streaming",
+      finalOutputStreaming: "per-message",
+      async run(req) {
+        req.onOutput?.("narration one\n");
+        req.onOutput?.(`${finalText}\n`);
+        return { output: finalText, exitCode: 0 };
+      },
+    };
+    const printed: string[] = [];
+    await run(path, dir, {
+      resolveRunner: () => runner,
+      promptChoice: scriptedChoices([{ kind: "text", text: "a" }]),
+      print: (line) => printed.push(line),
+    });
+    expect(printed.some((line) => line.includes("narration one"))).toBe(true);
+    expect(printed.some((line) => line.includes("please decide"))).toBe(true);
+  });
+});
+
 describe("gate nodes", () => {
   test("@s-gate-approve: the list offers approve/reject/give-feedback; confirming approve continues", async () => {
     const { dir, path } = setup(`

@@ -133,6 +133,7 @@ export class CodexStreamCollector {
 export const codexRunner: Runner = {
   name: "codex",
   supportsSessionResume: false,
+  finalOutputStreaming: "per-message",
 
   // validate-and-run parity: a missing binary must fail preflight, before any node
   // (or its side effects) runs — not mid-flight at the first AI node.

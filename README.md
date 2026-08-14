@@ -175,7 +175,10 @@ still runs with the run's own entries.
 
 At an interactive terminal, that pause also shows the iteration's own message —
 markdown rendered, `<options>`/`<promise>` markers stripped — in a titled box
-above the list, so the human never has to read the raw tags.
+above the list, so the human never has to read the raw tags. That message prints
+exactly once: the live dim `[<node>#<iteration>]` echo holds it back and releases
+everything else at the pause, so narration still streams while the final message
+appears only in the box.
 
 A piped reply (no interactive terminal) renders no list at all: one line picks a
 declared option by typing its exact `id`, which feeds that option's `label` to
