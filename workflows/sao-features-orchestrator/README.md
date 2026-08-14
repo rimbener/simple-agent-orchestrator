@@ -90,8 +90,16 @@ restricting the agent to only that list. No agent uses `bypassPermissions`.
 
 | Agent | Effective grant |
 | --- | --- |
-| `implementer` | `WebSearch`, `WebFetch`, `Bash(bun add:*)`, `Bash(bun install:*)`, `Bash(bun remove:*)` |
+| `implementer` | `WebSearch`, `WebFetch`, `"Bash(bun *)"`, `Bash(bun add:*)`, `Bash(bun install:*)`, `Bash(bun remove:*)`, `Bash(git add:*)`, `Bash(git commit:*)` |
 | everyone else | `WebSearch`, `WebFetch` |
+
+The git grant is not obvious, and it is specific to sao's worktree isolation: a run's
+worktree holds a `.git` **file**, not a directory, pointing at
+`<main-repo>/.git/worktrees/<run-id>`. Staging therefore writes an index **outside**
+the worktree, which reads as an out-of-sandbox write and comes back as *"This command
+requires approval"* with no prompt a headless agent can answer. Only the implementer
+commits (`fix-slice-findings` closes each slice), so only it needs the grant — the
+reviewers' `git diff` / `git log` are reads and never needed one.
 
 > ⚠ **The cascade is override, not merge.** [`engine.ts`](../../src/engine.ts) resolves
 > `allowed_tools` with a `??` chain, so the first non-nullish wins. An agent that

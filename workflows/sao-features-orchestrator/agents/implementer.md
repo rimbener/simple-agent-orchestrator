@@ -2,12 +2,18 @@
 name: implementer
 description: "Implements ONE sao feature by strict TDD (Red→Green→Refactor), one vertical slice at a time, guided by the approved gherkin-scenarios.md. The only agent that edits code."
 model: sonnet
-# The only agent that installs dependencies, so the only one that needs to leave
-# Claude Code's sandbox. Headless `claude -p` auto-denies anything that "requires
-# approval", so under plain acceptEdits `bun add` fails and the slice blocks
-# before its first RED test. These entries pre-approve exactly the package
-# commands — everything else stays governed by the acceptEdits default, since
-# --allowedTools is additive, not restrictive.
+# The only agent that installs dependencies and the only one that commits, so the
+# only one that needs to leave Claude Code's sandbox. Headless `claude -p` auto-denies
+# anything that "requires approval", so under plain acceptEdits those commands fail
+# and the slice blocks. These entries pre-approve exactly them — everything else stays
+# governed by the acceptEdits default, since --allowedTools is additive, not
+# restrictive.
+#
+# The git entries are load-bearing for a reason specific to sao: a run's worktree has
+# a `.git` **file**, not a directory, pointing at <main-repo>/.git/worktrees/<run-id>.
+# Staging therefore writes an index OUTSIDE the worktree, which reads as an
+# out-of-sandbox write and is denied with "This command requires approval" and no
+# prompt to answer. Read-only git (status, diff, log) never needed a grant.
 #
 # ⚠ WebSearch/WebFetch are repeated from the workflow defaults ON PURPOSE: the
 # cascade is override, not merge, so declaring allowed_tools here would drop them.
