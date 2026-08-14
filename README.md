@@ -162,6 +162,11 @@ nodes:
       message: "Build green. Merge?"
 ```
 
+At an interactive terminal, a gate's message is rendered in the same titled box as
+an interactive loop's — markdown rendered, `<options>`/`<promise>` markers
+stripped — above the approve/reject/feedback list. A piped reply sees no box: the
+message and any raw markers stay exactly as they are today.
+
 An interactive loop's agent may end its response with a last line of the form
 `<options>[{"id": "sqlite", "label": "Use SQLite", "description": "no server to
 run"}]</options>` (ids unique and non-empty, not prefixed `sao:`; `description`
@@ -172,6 +177,13 @@ feeds its `label` — not its `id` — to the next iteration's `{{loop.feedback}
 This works the same for any runner, since the declaration travels in the agent's
 own output; a block that can't be read is ignored with a warning, and the pause
 still runs with the run's own entries.
+
+At an interactive terminal, that pause also shows the iteration's own message —
+markdown rendered, `<options>`/`<promise>` markers stripped — in a titled box
+above the list, so the human never has to read the raw tags. That message prints
+exactly once: the live dim `[<node>#<iteration>]` echo holds it back and releases
+everything else at the pause, so narration still streams while the final message
+appears only in the box.
 
 A piped reply (no interactive terminal) renders no list at all: one line picks a
 declared option by typing its exact `id`, which feeds that option's `label` to

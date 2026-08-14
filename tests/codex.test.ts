@@ -533,4 +533,8 @@ printf '\\251"}}\\n'
       restore();
     }
   });
+
+  test("@s-runner-granularity-declared: codexRunner declares per-message final-output streaming", () => {
+    expect(codexRunner.finalOutputStreaming).toBe("per-message");
+  });
 });

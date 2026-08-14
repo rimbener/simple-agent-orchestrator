@@ -1,5 +1,5 @@
 import { createInterface, type Interface } from "node:readline";
-import { select as clackSelect, text as clackText, isCancel } from "@clack/prompts";
+import { select as clackSelect, text as clackText, isCancel, note } from "@clack/prompts";
 import { SaoError } from "./errors";
 import type { AgentOption } from "./options";
 
@@ -8,8 +8,17 @@ export type Choice = { id: string; label: string; description?: string; collects
 
 export type PromptAnswer = { kind: "choice"; id: string } | { kind: "text"; text: string; from?: string };
 
-/** The list-prompt seam: one call per pause, offering `choices` alongside `message`. */
-export type PromptChoices = (req: { message: string; choices: Choice[] }) => Promise<PromptAnswer>;
+/**
+ * The list-prompt seam: one call per pause, offering `choices` alongside `message`.
+ * `block`/`blockTitle` (already-rendered text) are drawn in a titled box ahead of the
+ * list, but only on the interactive path — the piped path ignores both entirely.
+ */
+export type PromptChoices = (req: {
+  message: string;
+  choices: Choice[];
+  block?: string;
+  blockTitle?: string;
+}) => Promise<PromptAnswer>;
 
 export type GateReply =
   | { kind: "approve" }
@@ -151,7 +160,8 @@ async function readReplyLine(message: string): Promise<string> {
   });
 }
 
-function isInteractive(): boolean {
+/** The single interactive-terminal predicate every pause decision shares (SPEC: pause block). */
+export function isInteractive(): boolean {
   return Boolean(process.stdin.isTTY) && Boolean(process.stdout.isTTY);
 }
 
@@ -178,7 +188,16 @@ function reraiseSigint(): Promise<never> {
   return new Promise<never>(() => {});
 }
 
-async function runListPrompt(req: { message: string; choices: Choice[] }): Promise<PromptAnswer> {
+async function runListPrompt(req: {
+  message: string;
+  choices: Choice[];
+  block?: string;
+  blockTitle?: string;
+}): Promise<PromptAnswer> {
+  // Stryker disable next-line ObjectLiteral: equivalent — @clack/prompts' note() defaults its own
+  // `output` option to the live `process.stdout` (`s?.output ?? process.stdout`, read at call time),
+  // the exact same value this passes explicitly.
+  if (req.block !== undefined) note(req.block, req.blockTitle, { output: process.stdout });
   const picked = await clackSelect<string>({
     message: req.message,
     options: req.choices.map((c) => ({ value: c.id, label: c.label, hint: c.description })),

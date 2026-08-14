@@ -133,6 +133,7 @@ const INSTALL_HINT = "install Claude Code: https://claude.com/claude-code";
 /** Headless Claude Code: `claude -p --output-format stream-json` (stream-json requires --verbose). */
 export const claudeRunner: Runner = {
   name: "claude",
+  finalOutputStreaming: "per-message",
 
   // validate-and-run parity: a missing binary must fail preflight, before any node
   // (or its side effects) runs — not mid-flight at the first AI node.
@@ -223,8 +224,11 @@ export const claudeRunner: Runner = {
           // Stryker disable next-line ConditionalExpression: unreachable under bun — non-ENOENT spawn failures throw synchronously from spawn() instead of emitting an async error event
           if (err.code === "ENOENT") {
             reject(new SaoError("claude CLI not found on PATH", INSTALL_HINT));
-          } /* Stryker disable next-line all: unreachable under bun — non-ENOENT spawn failures (EACCES, ENOEXEC) throw synchronously from spawn() instead of emitting an async error event */ else {
-            // Stryker disable next-line all: unreachable under bun, as above
+          }
+          // Stryker disable next-line BlockStatement: unreachable under bun, as above — non-ENOENT
+          // spawn failures (EACCES, ENOEXEC) throw synchronously from spawn() instead of emitting an async error event
+          else {
+            // Stryker disable next-line StringLiteral: unreachable under bun, as above
             reject(new SaoError(`failed to spawn claude: ${err.message}`));
           }
         });

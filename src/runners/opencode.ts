@@ -9,6 +9,7 @@ const LAUNCH = { command: "opencode", args: ["acp"] };
 /** opencode speaks ACP directly: `opencode acp` (spec D7) — everything else lives in src/acp.ts. */
 export const opencodeRunner: Runner = {
   name: "opencode",
+  finalOutputStreaming: "whole-turn",
 
   // validate-and-run parity: a missing binary, a failed handshake, or a capability
   // gap must all fail preflight, before any node (or its side effects) runs — not

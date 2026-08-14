@@ -209,6 +209,29 @@ already disambiguated the answer, so it is never reparsed), and **Reject and hal
 the run**. Choosing an agent option feeds its `label` — never its `id` — to the
 next iteration's `{{loop.feedback}}`.
 
+At an interactive terminal only, that same pause also draws the iteration's own
+output as a titled box above the list — `<options>`/`<promise>` markers stripped
+and the markdown subset rendered (`src/render.ts`), never wrapped or indented
+beyond what the box itself adds. A piped reply sees no box at all: the message and
+the raw markers stay exactly as they are today. An output that is empty,
+whitespace-only, or nothing but markers shows a dim `(the agent sent no text)`
+notice in place of the box. A `<promise>NAME</promise>` whose name isn't this
+loop's `until:` is stripped like any other and reported as a dim
+`⚠ <node>: agent emitted <promise>NAME</promise>, expected <SIGNAL>` warning —
+never halting the run, and never changing signal detection itself. Nothing here
+touches what is logged: the node log and `nodes.<id>.output` keep the raw text.
+
+At that same terminal, the iteration's live echo is **withheld and released at the
+pause**, minus the final message, so the message appears exactly once — inside the
+box, never also as a scrolled dim line. How much narration streams live before that
+depends on the runner's declared `finalOutputStreaming` (see Runner interface,
+below): a `per-message` runner's earlier messages still scroll live, lagging by one
+message; a `whole-turn` runner (or one that declares nothing) holds the whole
+iteration until the pause. Either way a wrong or missing declaration only shows the
+message twice, never zero times, and a failing iteration echoes whatever it was
+holding rather than discarding it. A piped run withholds nothing — every chunk
+echoes exactly as it arrives, unchanged by this.
+
 An agent invites this by ending its response with a last line of the form
 `<options>[{"id": "sqlite", "label": "Use SQLite", "description": "no server to
 run"}]</options>` — a JSON array of objects with unique, non-empty `id`s (not
@@ -271,6 +294,14 @@ node's output verbatim even if it reads like a verdict word such as "yes" or
 "approve" — picking a list entry already disambiguated the answer, so it is never
 reparsed). The old `[a]pprove / [r]eject / or type feedback` letter prompt is gone
 from this path.
+
+At an interactive terminal only, that pause also draws the gate's own interpolated
+message as a titled box above the list — same stripping and rendering as an
+interactive loop's pause (`src/render.ts`), since a gate's message can interpolate
+a loop node's output and so carry the same `<promise>` marker. A gate has no
+`until:` signal of its own, so a stripped token is simply removed — no unexpected-
+name warning applies here. A piped reply sees no box: the message and any raw
+markers stay exactly as they are today.
 
 Piped replies are a separate input channel that renders no menu at all, and are
 where the deleted letter prompt's vocabulary now lives: `a`, `approve`, `y`, `yes`
@@ -375,6 +406,13 @@ export interface Runner {
     sessionId?: string;
     exitCode: number;
   }>;
+  // How the runner streams its final output — a liveness hint for withholding an
+  // interactive loop's echo (see above), never a correctness contract. "per-message":
+  // onOutput fires once per complete agent message, the last of which is the final
+  // output (claude, codex). "whole-turn": onOutput fires with partial chunks that only
+  // add up to the final output at the end (opencode). Unset means "whole-turn" — the
+  // conservative default, so a runner that declares nothing is still shown once, not zero times.
+  finalOutputStreaming?: "per-message" | "whole-turn";
 }
 ```
 

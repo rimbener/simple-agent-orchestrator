@@ -348,4 +348,8 @@ nodes:
       restore();
     }
   });
+
+  test("@s-runner-granularity-declared: opencodeRunner declares whole-turn final-output streaming", () => {
+    expect(opencodeRunner.finalOutputStreaming).toBe("whole-turn");
+  });
 });

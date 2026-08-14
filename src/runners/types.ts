@@ -54,6 +54,16 @@ export interface Runner {
    * ACP runners supersede this static path with the handshake in preflight().
    */
   supportsSessionResume?: boolean;
+  /**
+   * How the runner streams its final output — a liveness hint for withholding an
+   * interactive loop's echo (M2), never a correctness contract: a wrong or missing
+   * declaration only shows the final message twice, never zero times.
+   * "per-message": onOutput fires once per complete agent message, the last of
+   * which is result.output (claude, codex). "whole-turn": onOutput fires with
+   * partial chunks that only add up to result.output at the end (opencode).
+   * Unset means "whole-turn" — the conservative default.
+   */
+  finalOutputStreaming?: "per-message" | "whole-turn";
 }
 
 export type RunnerResolver = (name: string) => Runner;

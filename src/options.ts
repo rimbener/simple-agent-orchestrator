@@ -10,7 +10,8 @@ const AgentOptionSchema = z.object({
 
 const AgentOptionsSchema = z.array(AgentOptionSchema).min(1);
 
-const OPTIONS_BLOCK = /<options>([\s\S]*?)<\/options>/g;
+/** Reused by src/render.ts so the pause block can never diverge from what the picker consumes. */
+export const OPTIONS_BLOCK = /<options>([\s\S]*?)<\/options>/g;
 
 /** Instruction the engine appends beside sentinelInstruction() for interactive loops. */
 export const AGENT_OPTIONS_INSTRUCTION =
@@ -32,8 +33,9 @@ export function parseAgentOptions(text: string): AgentOption[] | undefined {
     // always participates in a match, so lastMatch[1] is never nullish; the fallback never runs.
     parsed = JSON.parse(lastMatch[1] ?? "");
   } catch {
-    // Stryker disable next-line BlockStatement: equivalent — parsed stays undefined either way, and
-    // safeParse(undefined) fails the same schema check below, returning undefined regardless.
+    // Stryker disable next-line BlockStatement: equivalent — parsed stays undefined either way (the
+    // throw happens mid-assignment, before parsed is set), and safeParse(undefined) below fails the
+    // same schema check regardless, returning undefined either way.
     return undefined;
   }
 
