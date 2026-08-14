@@ -37,9 +37,12 @@ diff_files="$(git diff --name-only "$base"...HEAD -- src)" \
 # `|| true`: a no-match grep exits 1, which set -e would turn into a script
 # failure instead of the NO_CHANGED_SOURCE branch below. git diff's own failure is
 # already caught above, so this can only be swallowing a genuine empty match.
+# Both exclusions mirror stryker.conf.mjs's `mutate` list, which --mutate replaces
+# wholesale. Keep them in step with that file: an entry dropped here comes back as
+# NoCoverage for every mutant in it, and the mutation gate fails closed on that.
 changed="$(printf '%s\n' "$diff_files" \
   | grep -E '\.ts$' \
-  | grep -v '^src/cli\.ts$' \
+  | grep -vE '^src/(cli|interactive-choices)\.ts$' \
   | paste -sd, - || true)"
 
 if [ -z "$changed" ]; then
