@@ -105,3 +105,87 @@ a pending reply) are now asserted through `promptChoice`'s piped branch instead,
 so `readReplyLine`'s buffered/EOF/reset paths keep their coverage through the
 surviving seam. `bun run typecheck`, `bun run test:orchestrator`, and
 `bun run build` all green after the change.
+
+---
+
+## Delta review — mutation-fix round
+
+Mode: delta-review. Diff: `git diff aabfb9c2..HEAD` (`aabfb9c2` = `mut-start-sha`,
+the commit above whose full-review this section continues), scoped to
+`src/acp.ts`, `src/engine.ts`, `src/gate.ts`, `src/options.ts` and their test
+files, per `mutation.md`'s "100% mutation score, 0 survived" result for this
+feature's in-scope files. This single commit (`57df5ca`) is entirely: (a) new
+test cases that extend coverage into previously-`NoCoverage` branches, and (b)
+`// Stryker disable next-line <mutator>: <reason>` comments over the mutants
+that new coverage exposed as genuinely equivalent. **No behavior changed** — every
+non-test `+` line in the diff is a comment, except `src/options.ts`'s
+`} catch {` being split across two lines to give the disable comment a line to
+attach to (confirmed: `git diff --stat` shows only comment/test hunks, no `-`
+line removes any prior logic).
+
+### Dependency diff (mandatory, re-checked for this delta)
+
+`git diff aabfb9c2..HEAD -- package.json bun.lock patches/` is empty — no
+dependency change in this round; the full-review's dependency verdict above
+still stands.
+
+### [code] TDD — spot-verified, not just accepted on the mutation report's word
+
+Rather than trust `mutation.md`'s "all 5 prior survivors resolved" narrative
+at face value — its own "Kill round" table lists 5 rows but the diff actually
+adds ~20 new `Stryker disable` annotations across the four files, i.e. the
+table under-documents what this round actually found and suppressed — each new
+equivalence claim was read against the surrounding code by hand:
+
+- `src/acp.ts:290` (loadSession catch, `if (settled) return;`), `:316`
+  (`(err as {code?:number})?.code`), `:380` (`settled = true` in
+  `runAcpHandshake`'s `settle`), `:409-421` (the preflight-only `client` stub's
+  `sessionUpdate`/`requestPermission` bodies) — all correctly scoped to
+  `runAcpHandshake`, whose stub client is provably never observed past
+  `initialize()` (the function kills the child and resolves/rejects
+  immediately after). Reasoning holds.
+- `src/gate.ts:123` (`stdinClosed = true` in the `"close"` handler — redundant
+  with `ensureReadline`'s own re-derivation) and `:127` (`waiting !== undefined`
+  guard — a paused `rl` never emits `"close"`), `:158-167` (`listMaxItems`'s
+  return value is dominated by `@clack/prompts`' own row-based clamp), `:191`
+  (`chosen?.collectsText` — `chosen` is always found since `picked` is always
+  one of `req.choices`' own ids), `:237/:241` (`removeAllListeners` before
+  `rl.close()` — the close is what actually stops further `"line"`/`"close"`
+  emission, not the listener removal) — traced through `ensureReadline` and
+  `resetPromptState` line by line; all hold.
+- `src/engine.ts:1031/1037` (`instructedOutput ?? ""` fallback content is
+  unobservable — no string without a literal `<options>` substring changes
+  `parseAgentOptions`'s or `.includes()`'s result) and `:1165/1172/1188` (the
+  `"feedback"` tag on the returned union is never itself branched on by
+  `askLoopGate`'s caller, which only checks `verdict.kind === "approve"`,
+  confirmed by reading the call site at `engine.ts:1063`) — hold.
+- `src/options.ts:25` (`lastMatch === undefined` guard — `lastMatch[1]` on
+  `undefined` throws, caught by the same `try/catch` two lines down, same
+  `return undefined` either way) — holds.
+
+No case where an "equivalent" claim actually masks an observable behavior
+change; none should have been left to a killing test instead.
+
+New tests bite rather than restate the implementation: `tests/options.test.ts`'s
+exact `toBe` on `AGENT_OPTIONS_INSTRUCTION`, `tests/gate-stdin.test.ts`'s exact
+`hint` match and the TTY/non-TTY `isInteractive()` combination test, and
+`tests/acp.test.ts`'s exact permission-prompt message with/without `nodeId` all
+assert precise UX strings per this repo's rubric, not just "doesn't throw".
+`lastPermissionResult`/`echoPermissionResult` added to the ACP double
+(`tests/acp.test.ts:62,135-137`) live inside the double's own spawned
+child-process script (`DOUBLE_SCRIPT`), not shared test-file module scope — no
+`--rerun-each=2` leakage risk. `tests/gate-stdin.test.ts`'s new tests run under
+the existing `beforeEach` (fresh `PassThrough` pair + `resetPromptState()` per
+test), so the new `isTTY` mutation in one test cannot bleed into the next.
+
+### [arch] / [perf] / [security] — no change to re-litigate
+
+Purely comments and tests; the full-review's architecture, performance, and
+security verdicts above are unaffected. Performance: N/A (no runtime code
+changed). Security: N/A (no new subprocess, path, git, or persistence surface;
+no new dependency).
+
+### Verdict
+
+**APPROVED** — mutation-fix round holds up under hand-verification; no new
+findings.
