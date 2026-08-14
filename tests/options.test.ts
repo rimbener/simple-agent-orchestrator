@@ -8,6 +8,15 @@ describe("AGENT_OPTIONS_INSTRUCTION", () => {
     expect(AGENT_OPTIONS_INSTRUCTION).toContain("unique");
     expect(AGENT_OPTIONS_INSTRUCTION).toContain("sao:");
   });
+
+  test("is the exact instruction text, word for word", () => {
+    expect(AGENT_OPTIONS_INSTRUCTION).toBe(
+      "\n\nIf it would help the human decide, end your response with a last line of the form " +
+        '<options>[{"id": "...", "label": "...", "description": "..."}]</options> holding a JSON array of the ' +
+        "options you want to offer (description is optional). Ids must be unique and must not start with " +
+        '"sao:" (reserved).',
+    );
+  });
 });
 
 describe("parseAgentOptions", () => {

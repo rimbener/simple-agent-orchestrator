@@ -22,12 +22,19 @@ export const AGENT_OPTIONS_INSTRUCTION =
 export function parseAgentOptions(text: string): AgentOption[] | undefined {
   const matches = [...text.matchAll(OPTIONS_BLOCK)];
   const lastMatch = matches.at(-1);
+  // Stryker disable next-line ConditionalExpression: equivalent — lastMatch[1] on undefined throws,
+  // caught below, same "return undefined" result either way.
   if (lastMatch === undefined) return undefined;
 
   let parsed: unknown;
   try {
+    // Stryker disable next-line StringLiteral: equivalent — the single capturing group in OPTIONS_BLOCK
+    // always participates in a match, so lastMatch[1] is never nullish; the fallback never runs.
     parsed = JSON.parse(lastMatch[1] ?? "");
-  } catch {
+  }
+  // Stryker disable next-line BlockStatement: equivalent — parsed stays undefined either way, and
+  // safeParse(undefined) fails the same schema check below, returning undefined regardless.
+  catch {
     return undefined;
   }
 

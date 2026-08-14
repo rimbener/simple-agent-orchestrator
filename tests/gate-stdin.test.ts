@@ -69,11 +69,33 @@ describe("promptChoice — piped (not an interactive terminal)", () => {
     expect(written).not.toContain("Give feedback");
   });
 
+  test("a TTY stdin paired with a non-TTY stdout is still piped, not interactive", async () => {
+    (stdin as unknown as { isTTY: boolean }).isTTY = true;
+    let written = "";
+    stdout.on("data", (chunk) => {
+      written += chunk.toString();
+    });
+    const reply = promptChoice({ message: "gate: ", choices: CHOICES });
+    await tick();
+    stdin.write("approve\n");
+    await expect(reply).resolves.toEqual({ kind: "text", text: "approve" });
+    expect(written).not.toContain("Approve");
+  });
+
   test("@s-list-stdin-closed-fails: stdin closed with no reply line fails with the existing error", async () => {
     const reply = promptChoice({ message: "gate: ", choices: CHOICES });
     await tick();
     stdin.end();
     await expect(reply).rejects.toThrow("stdin closed while waiting for a reply");
+  });
+
+  test("@s-list-stdin-closed-fails: the rejection names an interactive terminal or piped replies in its hint", async () => {
+    const reply = promptChoice({ message: "gate: ", choices: CHOICES });
+    await tick();
+    stdin.end();
+    await expect(reply).rejects.toMatchObject({
+      hint: "gates, interactive loops, and permission prompts need an interactive terminal (or piped replies, one line per prompt)",
+    });
   });
 
   test("@s-list-serialized-across-branches: two queued prompts never interleave a reply", async () => {
@@ -85,6 +107,19 @@ describe("promptChoice — piped (not an interactive terminal)", () => {
     await tick();
     stdin.write("second\n");
     await expect(two).resolves.toEqual({ kind: "text", text: "second" });
+  });
+
+  test("a second prompt reuses the existing readline interface instead of layering a new one on stdin", async () => {
+    const one = promptChoice({ message: "one: ", choices: CHOICES });
+    await tick();
+    stdin.write("first\n");
+    await one;
+    const listenersAfterFirst = stdin.listenerCount("data");
+    const two = promptChoice({ message: "two: ", choices: CHOICES });
+    await tick();
+    expect(stdin.listenerCount("data")).toBe(listenersAfterFirst);
+    stdin.write("second\n");
+    await two;
   });
 
   test("a multi-reply pipe chunk answers the current prompt and buffers the rest for the next", async () => {
@@ -117,7 +152,9 @@ describe("promptChoice — piped (not an interactive terminal)", () => {
     await tick();
     resetPromptState();
     await expect(reply).rejects.toThrow("prompt state reset while a reply was pending");
+    await expect(reply).rejects.toMatchObject({ hint: "resetPromptState() torn down mid-prompt" });
   });
+
 });
 
 describe("promptChoice — interactive terminal", () => {
@@ -190,6 +227,40 @@ describe("promptChoice — interactive terminal", () => {
       await tick();
       expect(calls).toEqual([[process.pid, "SIGINT"]]);
       // The pause never settles on its own — the process is expected to exit first.
+      let settled = false;
+      reply.then(
+        () => {
+          settled = true;
+        },
+        () => {
+          settled = true;
+        },
+      );
+      await tick();
+      expect(settled).toBe(false);
+    } finally {
+      (process as unknown as { kill: typeof process.kill }).kill = originalKill;
+    }
+  });
+
+  test("Ctrl-C during the follow-up text prompt also re-raises SIGINT instead of resolving", async () => {
+    makeInteractive();
+    const originalKill = process.kill;
+    const calls: unknown[][] = [];
+    (process as unknown as { kill: typeof process.kill }).kill = ((...args: unknown[]) => {
+      calls.push(args);
+      return true;
+    }) as typeof process.kill;
+    try {
+      const reply = promptChoice({ message: "gate: ", choices: CHOICES });
+      await tick();
+      stdin.write(DOWN + DOWN); // Approve -> Reject -> Give feedback
+      await tick();
+      stdin.write(ENTER); // confirm "Give feedback", entering the follow-up text prompt
+      await tick();
+      stdin.write(CTRL_C);
+      await tick();
+      expect(calls).toEqual([[process.pid, "SIGINT"]]);
       let settled = false;
       reply.then(
         () => {

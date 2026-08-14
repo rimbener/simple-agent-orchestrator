@@ -775,7 +775,7 @@ nodes:
 `);
     const output = `${sentinelToken("SETTLED")}\n<options>[{"id": "sqlite", "label": "Use SQLite", "description": "no server to run"}, {"id": "postgres", "label": "Use Postgres"}]</options>`;
     const requests: { message: string; choices: Choice[] }[] = [];
-    await run(path, dir, {
+    const state = await run(path, dir, {
       resolveRunner: () => scriptedRunner([output]),
       promptChoice: scriptedChoices([{ kind: "choice", id: "sao:end-loop" }], requests),
     });
@@ -786,6 +786,8 @@ nodes:
       { id: "sao:feedback", label: "Write feedback instead", collectsText: true },
       { id: "sao:reject", label: "Reject and halt the run" },
     ]);
+    const log = readFileSync(join(dir, ".sao", "runs", state.id, "logs", "grill.1.log"), "utf8");
+    expect(log).not.toContain("could not read the agent's declared options"); // it parsed fine
   });
 
   test("@s-loop-option-feeds-label: choosing an agent's option feeds its label, not its id, to the next iteration", async () => {
@@ -843,7 +845,10 @@ nodes:
       ),
     });
     expect(state.status).toBe("succeeded"); // ending on the signaled iteration succeeds with its output
-    expect(requests[0]!.choices.map((c) => c.id)).not.toContain("sao:end-loop");
+    expect(requests[0]!.choices).toEqual([
+      { id: "sao:feedback", label: "Write feedback instead", collectsText: true },
+      { id: "sao:reject", label: "Reject and halt the run" },
+    ]);
     expect(requests[1]!.choices.map((c) => c.id)).toContain("sao:end-loop");
   });
 
@@ -981,6 +986,8 @@ nodes:
     });
     expect(state.status).toBe("succeeded");
     expect(requests[0]!.choices.map((c) => c.id)).toEqual(["sao:end-loop", "sao:feedback", "sao:reject"]);
+    const log = readFileSync(join(dir, ".sao", "runs", state.id, "logs", "grill.1.log"), "utf8");
+    expect(log).not.toContain("could not read the agent's declared options"); // no <options> tag at all: the ordinary case, silent
   });
 
   test("@s-loop-piped-option-id: a piped reply matching a declared option's id feeds its label to the next iteration", async () => {
@@ -1061,6 +1068,23 @@ nodes:
     const log = readFileSync(join(dir, ".sao", "runs", state.id, "logs", "grill.1.log"), "utf8");
     expect(log).toContain("could not read the agent's declared options");
     expect(log).toContain("grill");
+  });
+
+  test("a non-interactive loop never attempts to parse or warn about a declared options block", async () => {
+    const { dir, path } = setup(`
+name: noninteractive
+nodes:
+  - id: grill
+    loop:
+      prompt: "ask"
+      until: SETTLED
+      max_iterations: 1
+`);
+    const runner = scriptedRunner([`done <options>not json</options> ${sentinelToken("SETTLED")}`]);
+    const state = await run(path, dir, { resolveRunner: () => runner });
+    expect(state.status).toBe("succeeded");
+    const log = readFileSync(join(dir, ".sao", "runs", state.id, "logs", "grill.1.log"), "utf8");
+    expect(log).not.toContain("could not read the agent's declared options");
   });
 });
 

@@ -1028,9 +1028,15 @@ class Engine {
           instructedOutput = stepsResult.instructedOutput;
         }
         if (body.interactive) {
+          // Stryker disable next-line StringLiteral: equivalent — parseAgentOptions returns undefined
+          // for any text with no <options> tag, so this fallback's exact content is unobservable; only
+          // whether instructedOutput is nullish matters.
           agentOptions = parseAgentOptions(instructedOutput ?? "");
           // A block that fails to parse is still a declaration attempt — worth a warning.
           // Absence of any <options> tag is the ordinary no-options case: silent.
+          // Stryker disable next-line StringLiteral: equivalent — this fallback's exact content is
+          // unobservable, same reason as the parseAgentOptions fallback above: any text without a literal
+          // "<options>" substring makes .includes() false regardless of what the fallback is.
           if (agentOptions === undefined && (instructedOutput ?? "").includes("<options>")) {
             iterLog.log(`⚠ ${node.id}: could not read the agent's declared options — showing the default choices\n`);
           }
@@ -1156,10 +1162,15 @@ class Engine {
         if (answer.id === "sao:end-loop") return { kind: "approve" };
         // Stryker disable next-line StringLiteral: the wrap in runOne names the node and drops this inner message by design
         if (answer.id === "sao:reject") throw new GateRejectedError("rejected by the human at the interactive loop");
+        // Stryker disable next-line StringLiteral: equivalent — the caller (runOne) only branches on
+        // verdict.kind === "approve"; any other value, including this literal, falls through to the
+        // same feedback = verdict.text assignment, so the "feedback" tag itself is never checked.
         return { kind: "feedback", text: labelById.get(answer.id)! };
       }
       if (answer.from === "sao:feedback") {
         if (answer.text.trim() === "") continue; // empty answer re-asks the same iteration
+        // Stryker disable next-line StringLiteral: equivalent, same reason as above — only
+        // verdict.kind === "approve" is ever checked by the caller.
         return { kind: "feedback", text: answer.text };
       }
       // piped path only (no `from`): the human never picked from a list, so the
@@ -1174,6 +1185,9 @@ class Engine {
       }
       // Stryker disable next-line StringLiteral: the wrap in runOne names the node and drops this inner message by design
       if (reply.kind === "reject") throw new GateRejectedError("rejected by the human at the interactive loop");
+      // Stryker disable next-line StringLiteral: equivalent — the caller (runOne) only branches on
+      // verdict.kind === "approve"; any other value, including this literal, falls through to the same
+      // feedback = verdict.text assignment, so the "feedback" tag itself is never checked.
       if (reply.kind === "feedback") return { kind: "feedback", text: reply.text };
       // empty reply → ask again
     }

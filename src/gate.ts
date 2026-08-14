@@ -36,8 +36,14 @@ export function parseGateReply(reply: string): GateReply {
  * win first, so an agent-declared option id colliding with one (e.g. "a") can never
  * cost the human the loop's exit path.
  */
+// Stryker disable next-line ArrayDeclaration: equivalent — a non-empty default is still an array
+// of AgentOption objects; option.id is only ever compared to result.text below, and any element
+// lacking that shape (e.g. a bare string) can never satisfy the comparison, so it behaves as empty.
 export function parseLoopReply(reply: string, options: AgentOption[] = []): GateReply {
   const result = parse(reply, LOOP_APPROVALS, LOOP_REJECTIONS);
+  // Stryker disable next-line ConditionalExpression: equivalent — when kind !== "feedback", result.text
+  // is undefined, and AgentOptionSchema requires a non-empty id, so option.id === result.text can never
+  // match below; falling through returns `result` unchanged either way.
   if (result.kind !== "feedback") return result;
   const match = options.find((option) => option.id === result.text);
   return match ? { kind: "feedback", text: match.label } : result;
@@ -114,7 +120,13 @@ function ensureReadline(): void {
   rl.on("close", () => {
     // stdin EOF (CI, exhausted pipe). Without this, a pending question would leave
     // the drained event loop to exit the process with code 0 — a false success.
+    // Stryker disable next-line BooleanLiteral: equivalent — by the time this fires the stream
+    // has already ended or been destroyed, so ensureReadline's own top check re-derives the same
+    // stdinClosed=true on the next call regardless of what this assignment does.
     stdinClosed = true;
+    // Stryker disable next-line ConditionalExpression: equivalent — rl is only ever paused (waiting
+    // undefined) or resumed with waiting set synchronously in the same tick (readReplyLine); a paused
+    // stream never emits "close", so this handler only ever runs with waiting defined.
     if (waiting !== undefined) {
       const turn = waiting;
       waiting = undefined;
@@ -143,8 +155,15 @@ function isInteractive(): boolean {
   return Boolean(process.stdin.isTTY) && Boolean(process.stdout.isTTY);
 }
 
+// Stryker disable next-line BlockStatement: equivalent — @clack/prompts' select() clamps its own
+// rendered viewport to process.stdout.rows regardless of maxItems (verified by hand: passing 1000,
+// undefined, or this formula's value all render identically at a fixed rows), so this function's
+// return value is never the binding constraint.
 function listMaxItems(): number | undefined {
   const rows = process.stdout.rows;
+  // Stryker disable next-line MethodExpression,ArithmeticOperator: equivalent, same reason above —
+  // clack's own rows-based cap always wins, so neither the max/min choice nor the -4/+4 offset changes
+  // what renders.
   return rows ? Math.max(3, rows - 4) : undefined;
 }
 
@@ -169,6 +188,9 @@ async function runListPrompt(req: { message: string; choices: Choice[] }): Promi
   });
   if (isCancel(picked)) return reraiseSigint();
   const chosen = req.choices.find((c) => c.id === picked);
+  // Stryker disable next-line OptionalChaining: equivalent — picked is always one of req.choices'
+  // own ids (clackSelect only resolves to a value we gave it, or the isCancel path above), so chosen
+  // is never undefined here.
   if (!chosen?.collectsText) return { kind: "choice", id: picked };
   const typed = await clackText({
     message: chosen.label,
@@ -212,7 +234,13 @@ export function resetPromptState(): void {
     );
   }
   if (rl !== undefined) {
+    // Stryker disable next-line StringLiteral: equivalent — rl.close() below fully detaches the
+    // interface from its stream regardless of which events we unregister first (verified by hand: a
+    // closed rl never fires "line" again even with its listeners left in place).
     rl.removeAllListeners("line");
+    // Stryker disable next-line StringLiteral: equivalent — close() emits "close" synchronously, so an
+    // un-removed handler here would run inline; by then waiting is already undefined (reset above) and
+    // the unconditional stdinClosed = false a few lines down overrides whatever it sets regardless.
     rl.removeAllListeners("close");
     rl.close();
     rl = undefined;
