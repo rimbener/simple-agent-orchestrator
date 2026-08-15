@@ -421,6 +421,28 @@ sleep 30
     }
   }, 15000);
 
+  test("SAO_CODEX_TURN_GRACE_MS's configured value is honored, not just its presence", async () => {
+    // A late chunk that lands well inside the configured grace window must still be
+    // captured — if the grace delay collapsed to ~0ms, the kill would land before this
+    // chunk arrives and "second" would never overwrite "first".
+    const restore = withStubCodex(`#!/bin/sh
+cat > /dev/null
+echo '{"type":"item.completed","item":{"type":"agent_message","text":"first"}}'
+echo '{"type":"turn.completed","usage":{}}'
+sleep 0.3
+echo '{"type":"item.completed","item":{"type":"agent_message","text":"second"}}'
+sleep 30
+`);
+    process.env.SAO_CODEX_TURN_GRACE_MS = "2000";
+    try {
+      const result = await codexRunner.run({ prompt: "p", cwd: process.cwd() });
+      expect(result.output).toBe("second");
+    } finally {
+      delete process.env.SAO_CODEX_TURN_GRACE_MS;
+      restore();
+    }
+  }, 15000);
+
   test("output before turn.completed does not start the grace timer early", async () => {
     // If the grace timer started on the FIRST chunk (before the turn actually ends),
     // it would kill the process — and settle — well before "final" is ever emitted.

@@ -331,7 +331,7 @@ nodes:
     expect(err.message).toContain("rejected");
     const loaded = loadRun(dir, onlyRunId(dir));
     expect(loaded.state.status).toBe("rejected");
-    const requests: { message: string; choices: unknown }[] = [];
+    const requests: { message: string; choices: unknown, block?: string }[] = [];
     const state = await run(path, dir, {
       resume: loaded,
       promptChoice: async (req) => {
@@ -341,7 +341,7 @@ nodes:
     });
     expect(state.status).toBe("succeeded");
     expect(requests).toHaveLength(1);
-    expect(requests[0]!.message).toContain("go?");
+    expect(requests[0]!.block).toContain("go?");
   });
 });
 
