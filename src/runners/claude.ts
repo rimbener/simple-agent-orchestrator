@@ -221,14 +221,9 @@ export const claudeRunner: Runner = {
 
       child.on("error", (err: NodeJS.ErrnoException) => {
         settle(() => {
-          // Stryker disable next-line ConditionalExpression: unreachable under bun — non-ENOENT spawn failures throw synchronously from spawn() instead of emitting an async error event
           if (err.code === "ENOENT") {
             reject(new SaoError("claude CLI not found on PATH", INSTALL_HINT));
-          }
-          // Stryker disable next-line BlockStatement: unreachable under bun, as above — non-ENOENT
-          // spawn failures (EACCES, ENOEXEC) throw synchronously from spawn() instead of emitting an async error event
-          else {
-            // Stryker disable next-line StringLiteral: unreachable under bun, as above
+          } else {
             reject(new SaoError(`failed to spawn claude: ${err.message}`));
           }
         });

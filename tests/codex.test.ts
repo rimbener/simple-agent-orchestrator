@@ -421,6 +421,27 @@ sleep 30
     }
   }, 15000);
 
+  test("output before turn.completed does not start the grace timer early", async () => {
+    // If the grace timer started on the FIRST chunk (before the turn actually ends),
+    // it would kill the process — and settle — well before "final" is ever emitted.
+    const restore = withStubCodex(`#!/bin/sh
+cat > /dev/null
+echo '{"type":"item.completed","item":{"type":"agent_message","text":"partial"}}'
+sleep 0.3
+echo '{"type":"item.completed","item":{"type":"agent_message","text":"final"}}'
+echo '{"type":"turn.completed","usage":{}}'
+`);
+    process.env.SAO_CODEX_TURN_GRACE_MS = "100";
+    try {
+      const result = await codexRunner.run({ prompt: "p", cwd: process.cwd() });
+      expect(result.output).toBe("final");
+      expect(result.exitCode).toBe(0);
+    } finally {
+      delete process.env.SAO_CODEX_TURN_GRACE_MS;
+      restore();
+    }
+  }, 15000);
+
   test("a hang after turn.failed still fails the node via the grace path", async () => {
     const restore = withStubCodex(`#!/bin/sh
 cat > /dev/null
@@ -460,6 +481,24 @@ sleep 30
       expect(err.hint).toBe("install the Codex CLI: npm install -g @openai/codex");
     } finally {
       process.env.PATH = oldPath;
+    }
+  });
+
+  test("a non-ENOENT spawn failure (EACCES) surfaces the spawn message, not the install hint", async () => {
+    // A shebang line pointing at a non-executable interpreter: the OS finds "codex"
+    // on PATH (it has +x) but fails to exec it — EACCES, delivered async, not thrown.
+    const interpDir = mkdtempSync(join(tmpdir(), "sao-codex-interp-"));
+    const interp = join(interpDir, "interp");
+    writeFileSync(interp, "#!/bin/sh\necho hi\n");
+    chmodSync(interp, 0o644);
+    const restore = withStubCodex(`#!${interp}\n`);
+    try {
+      const err = await rejectionOf(codexRunner.run({ prompt: "hi", cwd: process.cwd() }));
+      expect(err).toBeInstanceOf(SaoError);
+      expect(err.message.startsWith("failed to spawn codex: ")).toBe(true);
+      expect(err.hint).toBeUndefined();
+    } finally {
+      restore();
     }
   });
 

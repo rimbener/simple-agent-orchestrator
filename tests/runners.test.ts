@@ -641,6 +641,24 @@ printf '\\251"}\\n'
       process.env.PATH = oldPath;
     }
   });
+
+  test("a non-ENOENT spawn failure (EACCES) surfaces the spawn message, not the install hint", async () => {
+    // A shebang line pointing at a non-executable interpreter: the OS finds "claude"
+    // on PATH (it has +x) but fails to exec it — EACCES, delivered async, not thrown.
+    const interpDir = mkdtempSync(join(tmpdir(), "sao-interp-"));
+    const interp = join(interpDir, "interp");
+    writeFileSync(interp, "#!/bin/sh\necho hi\n");
+    chmodSync(interp, 0o644);
+    const restore = withStubClaude(`#!${interp}\n`);
+    try {
+      const err = await rejectionOf(claudeRunner.run({ prompt: "hi", cwd: process.cwd() }));
+      expect(err).toBeInstanceOf(SaoError);
+      expect(err.message.startsWith("failed to spawn claude: ")).toBe(true);
+      expect(err.hint).toBeUndefined();
+    } finally {
+      restore();
+    }
+  });
 });
 
 describe("findExecutableOnPath / preflight", () => {

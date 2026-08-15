@@ -32,19 +32,14 @@ export function parseAgentOptions(text: string): AgentOption[] | undefined {
     // Stryker disable next-line StringLiteral: equivalent — the single capturing group in OPTIONS_BLOCK
     // always participates in a match, so lastMatch[1] is never nullish; the fallback never runs.
     parsed = JSON.parse(lastMatch[1] ?? "");
-    // KNOWN SURVIVOR: the catch block's BlockStatement mutant (`} catch {}`) is equivalent — the
-    // throw happens mid-assignment so parsed stays undefined either way, and safeParse(undefined)
-    // below fails the same schema check, returning undefined regardless.
-    //
-    // It cannot be silenced with `disable next-line`. The mutant sits on the `} catch {` line, the
-    // same brace-continuation shape as `} else if` / `} finally`, which that directive cannot reach.
-    // Verified against three real Stryker runs — comment inside the block, comment as the try's last
-    // line, and `catch` on its own line — all left it Survived (the last is also undone by
-    // `bun run format`). Silencing it needs a `disable`/`restore` RANGE pair, whose own end-of-file
-    // trap makes that a deliberate change, not a drive-by one.
+    // Stryker disable BlockStatement: the catch block's `} catch {}` mutant is equivalent — the throw
+    // happens mid-assignment so parsed stays undefined either way, and safeParse(undefined) below
+    // fails the same schema check, returning undefined regardless. `disable next-line` can't reach
+    // the `} catch {` brace-continuation line, so this uses a disable/restore range instead.
   } catch {
     return undefined;
   }
+  // Stryker restore BlockStatement
 
   const result = AgentOptionsSchema.safeParse(parsed);
   if (!result.success) return undefined;
