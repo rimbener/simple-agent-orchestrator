@@ -28,14 +28,15 @@ export function parseAgentOptions(text: string): AgentOption[] | undefined {
   if (lastMatch === undefined) return undefined;
 
   let parsed: unknown;
+  // Stryker disable BlockStatement: the catch block's `} catch {}` mutant is equivalent — the throw
+  // happens mid-assignment so parsed stays undefined either way, and safeParse(undefined) below
+  // fails the same schema check, returning undefined regardless. The disable has to sit before
+  // `try`: babel attaches a comment above `} catch {` to the previous statement as trailing
+  // comments, which stryker's directive bookkeeper never reads.
   try {
     // Stryker disable next-line StringLiteral: equivalent — the single capturing group in OPTIONS_BLOCK
     // always participates in a match, so lastMatch[1] is never nullish; the fallback never runs.
     parsed = JSON.parse(lastMatch[1] ?? "");
-    // Stryker disable BlockStatement: the catch block's `} catch {}` mutant is equivalent — the throw
-    // happens mid-assignment so parsed stays undefined either way, and safeParse(undefined) below
-    // fails the same schema check, returning undefined regardless. `disable next-line` can't reach
-    // the `} catch {` brace-continuation line, so this uses a disable/restore range instead.
   } catch {
     return undefined;
   }

@@ -42,6 +42,14 @@ if (process.env.ACP_DOUBLE_PIDFILE) fs.writeFileSync(process.env.ACP_DOUBLE_PIDF
 function send(obj) {
   process.stdout.write(JSON.stringify(obj) + "\\n");
 }
+function finishTurn(id) {
+  var result = { jsonrpc: "2.0", id: id, result: { stopReason: config.stopReason || "end_turn" } };
+  if (config.delayPromptResult) {
+    setTimeout(function () { send(result); }, config.delayPromptResult);
+  } else {
+    send(result);
+  }
+}
 function emitChunk(sessionId, chunk) {
   var content = { type: "text", text: chunk.text };
   var update;
@@ -49,6 +57,8 @@ function emitChunk(sessionId, chunk) {
     update = { sessionUpdate: "agent_thought_chunk", content: content };
   } else if (chunk.kind === "tool_call") {
     update = { sessionUpdate: "tool_call", toolCallId: chunk.toolCallId || "tc-1", title: chunk.text || "tool" };
+  } else if (chunk.kind === "image") {
+    update = { sessionUpdate: "agent_message_chunk", content: { type: "image", data: chunk.data || "", mimeType: chunk.mimeType || "image/png" } };
   } else {
     update = { sessionUpdate: "agent_message_chunk", content: content };
   }
@@ -65,6 +75,10 @@ function handle(msg) {
     if (config.hangInitialize) return;
     if (config.initializeFails) {
       send({ jsonrpc: "2.0", id: msg.id, error: { code: -32000, message: "handshake refused" } });
+      return;
+    }
+    if (config.strictProtocol && (!msg.params || msg.params.protocolVersion !== 1)) {
+      send({ jsonrpc: "2.0", id: msg.id, error: { code: -32602, message: "client must advertise protocolVersion 1" } });
       return;
     }
     if (config.emitSessionUpdateBeforeInit) {
@@ -98,19 +112,38 @@ function handle(msg) {
   } else if (msg.method === "session/prompt") {
     if (config.hang) return;
     promptMsgId = msg.id;
+    if (config.strictPromptType) {
+      var blocks = (msg.params && msg.params.prompt) || [];
+      var badType = blocks.some(function (b) { return b.type !== "text"; });
+      if (badType) {
+        send({ jsonrpc: "2.0", id: msg.id, error: { code: -32602, message: "expected only text content blocks" } });
+        return;
+      }
+    }
     if (config.requestPermission) {
       permReqId = "perm-1";
-      send({
+      var permissionMsg = {
         jsonrpc: "2.0",
         id: permReqId,
         method: "session/request_permission",
         params: { sessionId: config.sessionId || "double-session", options: config.requestPermission.options, toolCall: { toolCallId: "tc-1", title: config.requestPermission.title } },
-      });
+      };
+      if (config.delayPermission) {
+        setTimeout(function () { send(permissionMsg); }, config.delayPermission);
+      } else {
+        send(permissionMsg);
+      }
       return;
     }
     if (config.stderrLine) process.stderr.write(config.stderrLine + "\\n");
     if (config.usageUpdate) {
       send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: config.sessionId || "double-session", update: { sessionUpdate: "usage_update", used: 16686, size: 200000, cost: { input: 1, output: 2 } } } });
+    }
+    if (config.foreignUsageUpdate) {
+      send({ jsonrpc: "2.0", method: "custom/event", params: { update: { sessionUpdate: "usage_update" } } });
+    }
+    if (config.garbageLine) {
+      process.stdout.write("not valid json\\n");
     }
     var chunks = config.chunks || [];
     if (config.echoPrompt) {
@@ -129,14 +162,14 @@ function handle(msg) {
       chunks = [{ text: String(lastModelId) }];
     }
     for (var i = 0; i < chunks.length; i++) emitChunk(config.sessionId || "double-session", chunks[i]);
-    send({ jsonrpc: "2.0", id: msg.id, result: { stopReason: config.stopReason || "end_turn" } });
+    finishTurn(msg.id);
     if (config.exitAfter) process.exit(0);
   } else if (msg.method === undefined && msg.id === permReqId) {
     lastPermissionResult = msg.result;
     if (config.echoPermissionResult) {
       emitChunk(config.sessionId || "double-session", { text: JSON.stringify(lastPermissionResult) });
     }
-    send({ jsonrpc: "2.0", id: promptMsgId, result: { stopReason: "end_turn" } });
+    finishTurn(promptMsgId);
   }
 }
 var buf = "";
@@ -312,6 +345,62 @@ describe("runAcpTurn", () => {
     expect(errors).toEqual([]);
   });
 
+  test("drops only genuine session/update usage_update notifications, never a foreign message shaped like one", async () => {
+    const double = withAcpDouble({ foreignUsageUpdate: true, chunks: [{ text: "done" }] });
+    const errors: unknown[][] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => errors.push(args);
+    try {
+      const result = await runAcpTurn(double.launch, { prompt: "hi", cwd: process.cwd(), env: double.env });
+      expect(result.output).toBe("done");
+      await wait(50); // the library's complaint lands on a continuation after the turn resolves
+    } finally {
+      console.error = original;
+    }
+    // A usage_update-shaped payload under a non-session/update method is forwarded
+    // untouched (the library flags the unknown method); only the real telemetry is
+    // dropped. A drop-by-shape-only implementation would silently swallow it.
+    expect(errors.length).toBeGreaterThan(0);
+  });
+
+  test("an unparseable NDJSON line is forwarded untouched, never silently dropped", async () => {
+    const double = withAcpDouble({ garbageLine: true, chunks: [{ text: "done" }] });
+    const errors: unknown[][] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => errors.push(args);
+    try {
+      const result = await runAcpTurn(double.launch, { prompt: "hi", cwd: process.cwd(), env: double.env });
+      expect(result.output).toBe("done");
+      await wait(50); // the library's parse complaint lands on a continuation after the turn resolves
+    } finally {
+      console.error = original;
+    }
+    // Only a JSON.parse failure on the line itself may drop it; a line that merely
+    // fails to match "session/update usage_update" must reach the library unchanged
+    // so its own "Failed to parse JSON message" complaint fires.
+    expect(errors.some((args) => String(args[0]).includes("Failed to parse JSON message"))).toBe(true);
+  });
+
+  test("non-text content blocks are ignored, never concatenated into turn output as noise", async () => {
+    const double = withAcpDouble({
+      chunks: [{ kind: "image", data: "aGVsbG8=" }, { text: "done" }],
+    });
+    const result = await runAcpTurn(double.launch, { prompt: "hi", cwd: process.cwd(), env: double.env });
+    expect(result.output).toBe("done");
+  });
+
+  test("advertises the negotiated protocol version when initializing the turn", async () => {
+    const double = withAcpDouble({ strictProtocol: true, chunks: [{ text: "ok" }] });
+    const result = await runAcpTurn(double.launch, { prompt: "hi", cwd: process.cwd(), env: double.env });
+    expect(result.output).toBe("ok");
+  });
+
+  test("sends the prompt as text content blocks the agent's schema accepts", async () => {
+    const double = withAcpDouble({ strictPromptType: true, echoPrompt: true });
+    const result = await runAcpTurn(double.launch, { prompt: "do it", cwd: process.cwd(), env: double.env });
+    expect(result.output).toBe("do it");
+  });
+
   test("a process that exits before completing the handshake rejects instead of hanging", async () => {
     const double = withAcpDouble({ exitImmediately: true });
     const err = await rejectionOf(runAcpTurn(double.launch, { prompt: "hi", cwd: process.cwd(), env: double.env }));
@@ -457,6 +546,60 @@ describe("runAcpTurn — the timeout clock pauses for a permission prompt (D5)",
     expect(ra.exitCode).toBe(0);
     expect(rb.exitCode).toBe(0);
   }, 10000);
+
+  test("@s-timeout-no-budget-prompt: a permission prompt on a turn with no timeout must not fabricate a paused clock", async () => {
+    const double = withAcpDouble({
+      requestPermission: { title: "risky", options: [{ optionId: "opt-yes", name: "Yes", kind: "allow_once" }] },
+      // A sluggish agent response gives a broken (NaN) re-armed clock time to fire;
+      // a turn with no timeout budget must never arm one in the first place.
+      delayPromptResult: 300,
+    });
+    const result = await runAcpTurn(double.launch, {
+      prompt: "hi",
+      cwd: process.cwd(),
+      env: double.env,
+      promptChoice: async () => ({ kind: "choice", id: "opt-yes" }),
+    });
+    expect(result.exitCode).toBe(0);
+  }, 10000);
+
+  test("@s-timeout-fast-answer: a prompt answered well inside the budget must not clamp the remainder to zero", async () => {
+    const double = withAcpDouble({
+      requestPermission: { title: "risky", options: [{ optionId: "opt-yes", name: "Yes", kind: "allow_once" }] },
+      // A sluggish agent response guarantees a broken 0ms clock fires before it:
+      // only a correct pause (a real remainder, not zero) keeps the turn alive.
+      delayPromptResult: 300,
+    });
+    const result = await runAcpTurn(double.launch, {
+      prompt: "hi",
+      cwd: process.cwd(),
+      env: double.env,
+      timeoutSec: 1,
+      promptChoice: async () => ({ kind: "text", text: "1" }),
+    });
+    expect(result.exitCode).toBe(0);
+  }, 10000);
+
+  test("@s-timeout-resumes-after-prompt: once the human answers, the clock starts again and still fires", async () => {
+    const double = withAcpDouble({
+      requestPermission: { title: "risky", options: [{ optionId: "opt-yes", name: "Yes", kind: "allow_once" }] },
+      // The pause must hand back exactly the time the human took — neither erase
+      // it (0ms clock, no timeout) nor extend it (a buggy "resume" never fires).
+      delayPermission: 500,
+      delayPromptResult: 800,
+    });
+    const err = await rejectionOf(
+      runAcpTurn(double.launch, {
+        prompt: "hi",
+        cwd: process.cwd(),
+        env: double.env,
+        timeoutSec: 1,
+        promptChoice: async () => ({ kind: "text", text: "1" }),
+      }),
+    );
+    expect(err).toBeInstanceOf(SaoError);
+    expect(err.message).toContain("timed out after 1s");
+  }, 10000);
 });
 
 describe("runAcpHandshake", () => {
@@ -464,6 +607,12 @@ describe("runAcpHandshake", () => {
     const double = withAcpDouble({ agentCapabilities: { loadSession: true } });
     const capabilities = await runAcpHandshake(double.launch, { cwd: process.cwd(), env: double.env });
     expect(capabilities).toEqual({ loadSession: true });
+  });
+
+  test("advertises the negotiated protocol version during the handshake too", async () => {
+    const double = withAcpDouble({ strictProtocol: true, agentCapabilities: { loadSession: true } });
+    const capabilities = await runAcpHandshake(double.launch, { cwd: process.cwd(), env: double.env });
+    expect(capabilities.loadSession).toBe(true);
   });
 
   test("a process that exits before completing the handshake rejects", async () => {

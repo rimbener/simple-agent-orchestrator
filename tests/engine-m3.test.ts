@@ -12,6 +12,23 @@ import { worktreeRelPath } from "../src/worktree";
 
 const quiet = () => {};
 
+// isInteractive() (src/gate.ts) reads the real process streams. Force it false by
+// default so the file's piped behaviour never depends on whether bun test itself
+// happens to run from a terminal; interactive tests opt in explicitly.
+function setTTY(value: boolean): void {
+  (process.stdin as unknown as { isTTY?: boolean }).isTTY = value;
+  (process.stdout as unknown as { isTTY?: boolean }).isTTY = value;
+}
+
+async function withInteractiveTerminal<T>(fn: () => Promise<T>): Promise<T> {
+  setTTY(true);
+  try {
+    return await fn();
+  } finally {
+    setTTY(false);
+  }
+}
+
 function setup(yaml: string): { dir: string; path: string } {
   const dir = mkdtempSync(join(tmpdir(), "sao-m3-"));
   const path = join(dir, "workflow.yaml");
@@ -331,14 +348,16 @@ nodes:
     expect(err.message).toContain("rejected");
     const loaded = loadRun(dir, onlyRunId(dir));
     expect(loaded.state.status).toBe("rejected");
-    const requests: { message: string; choices: unknown, block?: string }[] = [];
-    const state = await run(path, dir, {
-      resume: loaded,
-      promptChoice: async (req) => {
-        requests.push(req);
-        return { kind: "choice", id: "sao:approve" };
-      },
-    });
+    const requests: { message: string; choices: unknown; block?: string }[] = [];
+    const state = await withInteractiveTerminal(() =>
+      run(path, dir, {
+        resume: loaded,
+        promptChoice: async (req) => {
+          requests.push(req);
+          return { kind: "choice", id: "sao:approve" };
+        },
+      }),
+    );
     expect(state.status).toBe("succeeded");
     expect(requests).toHaveLength(1);
     expect(requests[0]!.block).toContain("go?");

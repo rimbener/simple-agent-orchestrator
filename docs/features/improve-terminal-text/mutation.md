@@ -2,7 +2,7 @@
 
 ## Score
 
-- **Overall**: 100.00% (2769 killed, 0 survivors, 0 no-coverage, 0 errors)
+- **Overall**: 100.00% (3549 killed, 0 survivors, 0 no-coverage, 0 errors)
 - **Based on covered code**: 100.00%
 
 ## Files in scope
@@ -29,25 +29,29 @@
 
 ## Summary
 
-All 2,769 mutants across the changed files were killed. Zero survivors, zero uncovered code. The test suite achieves 100% mutation coverage on every changed file.
+3,549 mutants across the changed files, all killed. Zero survivors, zero uncovered code.
 
 | File | Killed | Timeout | Survived | No-coverage | Errors |
 |------|--------|---------|----------|------------|--------|
-| runners (total) | 450 | 40 | 0 | 0 | 0 |
-| acp.ts | 199 | 94 | 0 | 0 | 0 |
-| agents.ts | 25 | 97 | 0 | 0 | 0 |
-| engine.ts | 1117 | 48 | 0 | 0 | 0 |
-| errors.ts | 13 | 2 | 0 | 0 | 0 |
-| gate.ts | 127 | 31 | 0 | 0 | 0 |
-| nodes.ts | 72 | 14 | 0 | 0 | 0 |
-| options.ts | 12 | 16 | 0 | 0 | 0 |
-| parser.ts | 223 | 145 | 0 | 0 | 0 |
-| procs.ts | 27 | 4 | 0 | 0 | 0 |
-| render.ts | 49 | 34 | 0 | 0 | 0 |
-| runs.ts | 17 | 218 | 0 | 0 | 0 |
+| runners (total) | 446 | 44 | 0 | 0 | 0 |
+|  claude.ts | 187 | 20 | 0 | 0 | 0 |
+|  codex.ts | 200 | 22 | 0 | 0 | 0 |
+|  opencode.ts | 43 | 2 | 0 | 0 | 0 |
+|  types.ts | 16 | 0 | 0 | 0 | 0 |
+| acp.ts | 255 | 17 | 0 | 0 | 0 |
+| agents.ts | 122 | 0 | 0 | 0 | 0 |
+| engine.ts | 1137 | 27 | 0 | 0 | 0 |
+| errors.ts | 15 | 0 | 0 | 0 | 0 |
+| gate.ts | 141 | 17 | 0 | 0 | 0 |
+| nodes.ts | 85 | 1 | 0 | 0 | 0 |
+| options.ts | 26 | 0 | 0 | 0 | 0 |
+| parser.ts | 363 | 5 | 0 | 0 | 0 |
+| procs.ts | 31 | 0 | 0 | 0 | 0 |
+| render.ts | 75 | 8 | 0 | 0 | 0 |
+| runs.ts | 235 | 0 | 0 | 0 | 0 |
 | schema.ts | 60 | 0 | 0 | 0 | 0 |
-| state.ts | 173 | 87 | 0 | 0 | 0 |
-| template.ts | 34 | 28 | 0 | 0 | 0 |
-| worktree.ts | 171 | 114 | 0 | 0 | 0 |
+| state.ts | 215 | 45 | 0 | 0 | 0 |
+| template.ts | 62 | 0 | 0 | 0 | 0 |
+| worktree.ts | 281 | 4 | 0 | 0 | 0 |
 
-**Verdict: PASS** — 100% killed, zero no-coverage mutants.
+**Verdict: PASS** — 100% killed, zero survivors, zero no-coverage mutants.

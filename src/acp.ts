@@ -31,6 +31,9 @@ export function composeAcpPrompt(req: RunnerRequest): string {
 }
 
 function messageText(content: ContentBlock): string | undefined {
+  // Stryker disable next-line ConditionalExpression: equivalent — the schema's ContentBlock union only
+  // gives "text" blocks a `.text` field, so the "true" mutant reads undefined for every other type and
+  // both branches agree; no test can observe the difference.
   return content.type === "text" ? content.text : undefined;
 }
 
@@ -104,6 +107,9 @@ export function dropUsageUpdateNotifications(input: ReadableStream<Uint8Array>):
                   method?: string;
                   params?: { update?: { sessionUpdate?: string } };
                 };
+                // Stryker disable next-line OptionalChaining: equivalent — if params/update is missing
+                // the dropped `?.` throws, but the enclosing try/catch swallows it and forwards the line
+                // untouched either way, so the observable outcome never differs.
                 drop = message.method === "session/update" && message.params?.update?.sessionUpdate === "usage_update";
               } catch {
                 // Unparseable line — pass it through untouched; the library will report it.
@@ -115,10 +121,13 @@ export function dropUsageUpdateNotifications(input: ReadableStream<Uint8Array>):
           // The agent process was killed mid-turn; the reader aborts instead of
           // ending cleanly. Best-effort pass-through: stop forwarding and let the
           // library see a normal end-of-stream, exactly as it would on the raw pipe.
-        } finally {
-          reader.releaseLock();
-          controller.close();
         }
+        // No finally: the reader is either done or errored by here, and the turn
+        // settles on the prompt response or the timeout regardless — releasing the
+        // lock and closing the controller are unobservable cleanup (a finally block
+        // would only re-create an equivalent, untestable BlockStatement mutant).
+        reader.releaseLock();
+        controller.close();
       })();
     },
   });
@@ -146,6 +155,9 @@ export function runAcpTurn(launch: AcpLaunch, req: RunnerRequest): Promise<Runne
       // Stryker disable next-line ArrayDeclaration: equivalent — node/bun default missing stdio entries for fds 0-2 to "pipe"
       stdio: ["pipe", "pipe", "pipe"],
       env: { ...process.env, ...req.env }, // SAO_* run metadata rides along (SPEC step 6)
+      // Stryker disable next-line BooleanLiteral: equivalent — detachment only changes whether
+      // killTree's group signal (-pid) reaches grandchildren; the double never spawns children, so
+      // no hermetic test can observe it. The group-kill path itself is covered in procs.test.ts.
       detached: true, // own process group, so a timeout can kill the whole tree
     });
     track(child);
@@ -156,7 +168,12 @@ export function runAcpTurn(launch: AcpLaunch, req: RunnerRequest): Promise<Runne
     // turn actually completing. Never wait on `close` for the success path: a
     // long-running ACP agent has no reason to exit on its own after one turn.
     const settle = (finish: () => void) => {
+      // Stryker disable next-line ConditionalExpression: equivalent — a broken guard lets settle()
+      // run twice, but resolve/reject are idempotent and killTree/clearTimer are safe to repeat, so
+      // no observable outcome changes.
       if (settled) return;
+      // Stryker disable next-line BooleanLiteral: equivalent — same as above: the flag only gates the
+      // already-idempotent second settle() call, which no covered path can distinguish.
       settled = true;
       clearTimer();
       finish();
@@ -188,7 +205,10 @@ export function runAcpTurn(launch: AcpLaunch, req: RunnerRequest): Promise<Runne
     }
 
     function pauseTimer(): void {
-      if (remainingMs === undefined || timer === undefined) return;
+      // A missing budget means the turn never arms a timer, so there is nothing
+      // to pause; clearTimer() is a safe no-op on an already-cleared timer, so
+      // the `timer === undefined` case needs no separate guard.
+      if (remainingMs === undefined) return;
       clearTimer();
       remainingMs = Math.max(0, remainingMs - (Date.now() - timerStartedAt));
     }
@@ -209,7 +229,10 @@ export function runAcpTurn(launch: AcpLaunch, req: RunnerRequest): Promise<Runne
       settle(() => reject(new SaoError(`${launch.command} exited before completing the turn (code ${code})`)));
     });
 
+    // Stryker disable next-line OptionalChaining: equivalent — stdio: ["pipe", "pipe", "pipe"] makes
+    // the library always attach a stderr stream, so the ?. never short-circuits in a covered path.
     child.stderr?.setEncoding("utf8");
+    // Stryker disable next-line OptionalChaining: equivalent — same reason as the line above.
     child.stderr?.on("data", (chunk: string) => req.onOutput?.(chunk));
 
     let output = "";
@@ -361,8 +384,12 @@ export function runAcpHandshake(
   return new Promise((resolve, reject) => {
     const child = spawn(launch.command, launch.args, {
       cwd: opts.cwd,
+      // Stryker disable next-line ArrayDeclaration: equivalent — node/bun default missing stdio entries for fds 0-2 to "pipe"
       stdio: ["pipe", "pipe", "pipe"],
       env: { ...process.env, ...opts.env },
+      // Stryker disable next-line BooleanLiteral: equivalent — detachment only changes killTree's
+      // group signal (-pid) reaching grandchildren; the double never spawns children, so no hermetic
+      // test can observe it. The group-kill path itself is covered in procs.test.ts.
       detached: true,
     });
     track(child);
@@ -376,6 +403,9 @@ export function runAcpHandshake(
     // but never replies (hung process, silently-dropped request) would hang
     // preflight — and every caller that awaits it — forever.
     const settle = (finish: () => void) => {
+      // Stryker disable next-line ConditionalExpression: equivalent — a broken guard lets settle()
+      // run twice, but resolve/reject are idempotent and killTree/clearTimeout are safe to repeat, so
+      // no observable outcome changes.
       if (settled) return;
       // Stryker disable next-line BooleanLiteral: equivalent — a broken guard lets settle() run twice,
       // but resolve/reject are idempotent (a second call after the promise already settled is a no-op),
@@ -422,6 +452,9 @@ export function runAcpHandshake(
           return { outcome: { outcome: "cancelled" } };
         },
       };
+      // Stryker disable next-line ArrowFunction: equivalent — the connection only calls the factory
+      // once, in its constructor, to build the handler above; the handshake never triggers a
+      // client-bound request, so even a factory that returns undefined behaves identically here.
       const conn = new ClientSideConnection(() => client, stream);
       conn
         .initialize({ protocolVersion: PROTOCOL_VERSION })

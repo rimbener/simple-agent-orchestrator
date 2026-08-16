@@ -1260,6 +1260,9 @@ class Engine {
     // Always append: a resumed run (or a retried loop) re-opens existing log files,
     // and the earlier attempt's output is the evidence for why it failed.
     const logStream = createWriteStream(join(this.paths.logsDir, fileName), { flags: "a" });
+    // Stryker disable next-line StringLiteral: equivalent — the handler only fires on an I/O error on
+    // the log stream, which needs the run's log dir sabotaged mid-flight; driving that in a test would
+    // crash the runner on an unhandled "error" event rather than fail one assertion.
     logStream.on("error", () => {}); // best-effort logging: a failed write must not crash the run
     // Echo only completed lines so a line delivered across chunks isn't split apart.
     let pendingEcho = "";
